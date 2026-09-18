@@ -10,9 +10,20 @@ import {
   rememberDevice,
   knownDevices,
   forgetDevice,
+  verifyAdvertisedIdentity,
   bytesToBase64,
   base64ToBytes
 } from './identity.js';
+import {
+  buildEnvelope,
+  openEnvelope,
+  buildMessageEnvelope,
+  openMessageEnvelope,
+  generateContentKey,
+  encryptBody,
+  createBodyDecryptor,
+  cipherLayout
+} from './relay.js';
 
 const $ = (sel) => document.querySelector(sel);
 const peerRows = $('#peerRows');
@@ -65,8 +76,72 @@ const state = {
   wakeLockTimer: null,
   theme: 'system',
   panelReturnFocus: null,
-  panelReturnKey: null
+  panelReturnKey: null,
+  forceRelay: false,
+  // Last known record for every device we know of, online or not: presence,
+  // room away lists, and server lookups all feed it. Offline devices seen in the
+  // last 24h can still be sent to through the relay.
+  deviceRecords: new Map(),    // deviceId -> { ...record, online, lastSeen }
+  pendingRequests: new Map(),  // requestId / blobId -> { resolve, reject, timer }
+  relayInbound: new Set(),     // blob ids already being fetched, so a repeat notice is ignored
+  sealKeyCache: new Map()      // advertised identity -> verified seal key bytes (or null)
 };
+
+// How long to wait for a direct link before handing a file to the relay. Short,
+// because on a network where ICE never succeeds this is pure dead time.
+const P2P_WAIT_WITH_RELAY_MS = 5000;
+// Chat is interactive, so it waits even less for a link that is still coming up.
+const CHAT_P2P_WAIT_MS = 2500;
+// Once a direct link has failed to come up for a message, the following ones to
+// that device go straight to the relay for this long rather than each paying
+// the wait again. The link keeps retrying in the background meanwhile.
+const RELAY_STICKY_MS = 30000;
+// The signaling server refuses WebSocket frames above 256 KiB.
+const MAX_RELAY_FRAME_CHARS = 250 * 1024;
+// Matches the relay's maximum age: a device last seen longer ago than this can
+// no longer be sent to, because anything left for it would age out first.
+const RECENT_WINDOW_MS = 24 * 60 * 60 * 1000;
+
+function recordDevice(record, online) {
+  if (!record?.id || record.id === state.self?.id) return;
+  const previous = state.deviceRecords.get(record.id);
+  state.deviceRecords.set(record.id, {
+    ...previous,
+    ...record,
+    online,
+    lastSeen: online ? Date.now() : (record.lastSeen || previous?.lastSeen || Date.now())
+  });
+}
+
+/** A device that is offline but was seen recently enough to still be sent to. */
+function isRecentlySeen(deviceId) {
+  const record = state.deviceRecords.get(deviceId);
+  return Boolean(record) && !state.peers.has(deviceId) && record.lastSeen >= Date.now() - RECENT_WINDOW_MS;
+}
+
+// Asks the server for the signed records of devices we know about. The records
+// are verified client-side before anything is sealed to them, exactly as a
+// live one would be, so the server cannot substitute a key.
+function lookupDevices(deviceIds) {
+  const ids = [...new Set(deviceIds)].filter(id => id && id !== state.self?.id).slice(0, 200);
+  if (!ids.length || !relayEnabled()) return Promise.resolve([]);
+  const requestId = crypto.randomUUID();
+  return awaitReply(`lookup:${requestId}`, () => wsSend({ type: 'lookup-devices', requestId, deviceIds: ids }), 8000)
+    .then(reply => {
+      for (const device of reply.devices || []) recordDevice(device, Boolean(device.online) && state.peers.has(device.id));
+      renderPeers();
+      return reply.devices || [];
+    })
+    .catch(() => []);
+}
+
+function formatAgo(timestamp) {
+  const seconds = Math.max(0, Math.round((Date.now() - timestamp) / 1000));
+  if (seconds < 60) return 'just now';
+  const minutes = Math.round(seconds / 60);
+  if (minutes < 60) return `${minutes}m ago`;
+  return `${Math.round(minutes / 60)}h ago`;
+}
 
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
@@ -152,7 +227,12 @@ function connectWebSocket() {
       deviceId: state.identity.deviceId,
       name: deviceName(),
       platform: detectPlatform(),
-      browser: detectBrowser()
+      browser: detectBrowser(),
+      // Published so others can seal a relayed file to this device. The server
+      // passes these through untouched; receivers verify them, not the server.
+      identityKey: state.identity.identityKey,
+      sealKey: state.identity.sealKey,
+      sealKeySignature: state.identity.sealKeySignature
     });
     serverState.textContent = 'Signaling connected';
     serverState.classList.add('online');
@@ -168,12 +248,27 @@ function connectWebSocket() {
       document.title = `${msg.self.name} · aria-drop`;
       renderPeers();
       rejoinRooms();
+      // Recover records for devices we have talked to, so ones that are offline
+      // right now can still be listed and sent to.
+      lookupDevices([...Object.keys(knownDevices()), ...state.deviceRecords.keys()]);
+      return;
+    }
+
+    if (msg.type === 'devices-found') {
+      settleRequest(`lookup:${msg.requestId}`, msg);
       return;
     }
 
     if (msg.type === 'presence') {
       const previousOnline = new Set(state.peers.keys());
       state.peers = new Map(msg.peers.filter(p => p.id !== state.self?.id).map(p => [p.id, p]));
+      for (const peer of state.peers.values()) recordDevice(peer, true);
+      // Anyone who just dropped off stays addressable through the relay.
+      for (const id of previousOnline) {
+        if (!state.peers.has(id) && state.deviceRecords.has(id)) {
+          recordDevice({ ...state.deviceRecords.get(id), lastSeen: Date.now() }, false);
+        }
+      }
       renderPeers();
       renderRooms();
       reconcileLinks(previousOnline);
@@ -183,9 +278,19 @@ function connectWebSocket() {
 
     if (msg.type === 'rooms') {
       state.rooms = new Map(msg.rooms.map(room => [room.id, room]));
+      for (const room of state.rooms.values()) {
+        for (const member of room.away || []) {
+          if (!state.peers.has(member.id)) recordDevice(member, false);
+        }
+      }
       for (const roomId of [...state.joinedRoomIds]) {
         const room = state.rooms.get(roomId);
-        if (room && !room.members.some(m => m.id === state.self?.id)) state.joinedRoomIds.delete(roomId);
+        // Right after a reconnect the server lists this device as away until
+        // its rejoin lands. That still counts as being in the room; treating it
+        // as a leave would drop room messages that arrive in that gap.
+        const self = state.self?.id;
+        const stillSeated = room && (room.members.some(m => m.id === self) || (room.away || []).some(m => m.id === self));
+        if (room && !stillSeated) state.joinedRoomIds.delete(roomId);
       }
       renderRooms();
       for (const roomId of state.joinedRoomIds) {
@@ -206,6 +311,9 @@ function connectWebSocket() {
       renderRooms();
       ensureConversationLinks(conv);
       renderSession();
+      // Anything left for this device in the room while it was away, including
+      // items set aside because they arrived before this rejoin landed.
+      wsSend({ type: 'blobs-request' });
       return;
     }
 
@@ -230,7 +338,32 @@ function connectWebSocket() {
       return;
     }
 
+    if (msg.type === 'blob-offered') {
+      settleRequest(msg.requestId, msg);
+      return;
+    }
+
+    if (msg.type === 'blob-claimed') {
+      settleRequest(`claim:${msg.blobId}`, msg);
+      return;
+    }
+
+    if (msg.type === 'blob-available') {
+      handleBlobAvailable(msg);
+      return;
+    }
+
     if (msg.type === 'error') {
+      // Relay errors belong to a specific pending request; hand them to it
+      // rather than toasting, so the caller can decide what to tell the user.
+      if (msg.context === 'blob-offer' && msg.requestId && state.pendingRequests.has(msg.requestId)) {
+        settleRequest(msg.requestId, null, new Error(msg.message));
+        return;
+      }
+      if (msg.context === 'blob-claim' && msg.blobId && state.pendingRequests.has(`claim:${msg.blobId}`)) {
+        settleRequest(`claim:${msg.blobId}`, null, new Error(msg.message));
+        return;
+      }
       if (msg.context === 'join-room' || msg.context === 'create-room') roomFeedback.textContent = msg.message;
       toast(msg.message || 'Server error');
     }
@@ -308,15 +441,23 @@ function resolveScope(scope, fromPeerId) {
   return state.conversations.get(roomConvId(roomId)) || null;
 }
 
+// Everyone party to a conversation, including room members who are away: they
+// keep their seat and are still sent to, through the relay.
 function conversationMembers(conv) {
   if (conv.kind === 'direct') return [conv.peerId];
   const room = state.rooms.get(conv.roomId);
   if (!room) return [];
-  return room.members.map(m => m.id).filter(id => id !== state.self?.id);
+  return [...room.members, ...(room.away || [])].map(m => m.id).filter(id => id !== state.self?.id);
 }
 
 function onlineMembers(conv) {
   return conversationMembers(conv).filter(id => state.peers.has(id));
+}
+
+/** Members who are offline but recent enough that a relayed item can wait for them. */
+function relayOnlyMembers(conv) {
+  if (!relayEnabled()) return [];
+  return conversationMembers(conv).filter(isRecentlySeen);
 }
 
 function conversationTitle(conv) {
@@ -324,9 +465,14 @@ function conversationTitle(conv) {
   return getPeer(conv.peerId).name;
 }
 
+// Falls back to the name remembered for a known device, so a relayed message
+// from a device that has since gone offline still shows who sent it.
 function displayName(deviceId) {
   if (deviceId === state.self?.id) return state.self.name;
-  return state.peers.get(deviceId)?.name || 'Unknown device';
+  return state.peers.get(deviceId)?.name
+    || state.deviceRecords.get(deviceId)?.name
+    || deviceTrust(deviceId)?.name
+    || 'Offline device';
 }
 
 /* ---------- links ---------- */
@@ -824,8 +970,10 @@ async function handleControl(link, conv, msg) {
     // one room member could post as another, since the link authenticates the
     // sender but the envelope's `from` is just data.
     if (msg.message.from !== link.peerId) return;
+    const isNew = !conv.messages.has(msg.message.id);
     mergeMessage(conv, msg.message, { verifiedAuthor: true });
     renderSession();
+    if (isNew) notifyIncoming(conv, msg.message);
     return;
   }
 
@@ -1043,17 +1191,6 @@ async function waitForSecure(peerId, timeoutMs = 12000) {
   throw new Error(`Secure connection to ${displayName(peerId)} timed out`);
 }
 
-async function secureLinksFor(conv) {
-  const memberIds = onlineMembers(conv);
-  if (!memberIds.length) {
-    throw new Error(conv.kind === 'room' ? 'No other members of this room are online.' : 'That device is offline.');
-  }
-  await Promise.all(memberIds.map(id => waitForSecure(id).catch(() => null)));
-  const ready = memberIds.map(id => state.links.get(id)).filter(isSecure);
-  if (!ready.length) throw new Error('Secure peer connection timed out');
-  return ready;
-}
-
 async function sendChat(conv, text) {
   const clean = text.trim();
   if (!clean) return;
@@ -1066,16 +1203,153 @@ async function sendChat(conv, text) {
   };
   mergeMessage(conv, message);
   renderSession();
-  const links = await secureLinksFor(conv);
+
+  const recipients = onlineMembers(conv);
+  const offline = await offlineTargetsFor(conv);
+  if (!recipients.length && !offline.length) throw unreachableError(conv);
+
+  // Same rule as files: direct where a secure link is available, the relay for
+  // every recipient it is not. Each recipient gets the message once. Offline
+  // recipients go straight to the relay; there is no link to wait for.
+  const canRelay = relayEnabled();
+  /** @type {any[]} */
+  const direct = [];
+  /** @type {string[]} */
+  const viaRelay = [...offline];
+  await Promise.all(recipients.map(async peerId => {
+    const link = state.links.get(peerId);
+    if (canRelay && state.forceRelay) {
+      viaRelay.push(peerId);
+      return;
+    }
+    if (isSecure(link)) {
+      direct.push(link);
+      return;
+    }
+    if (canRelay && (link?.relayPreferredUntil || 0) > Date.now()) {
+      viaRelay.push(peerId);
+      return;
+    }
+    const ready = await waitForSecure(peerId, canRelay ? CHAT_P2P_WAIT_MS : 12000).catch(() => null);
+    if (ready) {
+      direct.push(ready);
+    } else {
+      viaRelay.push(peerId);
+      const stuck = state.links.get(peerId);
+      if (stuck) stuck.relayPreferredUntil = Date.now() + RELAY_STICKY_MS;
+    }
+  }));
+
   const results = await Promise.allSettled(
-    links.map(link => sendControl(link, { conv: convScope(conv), type: 'chat', message }))
+    direct.map(link => sendControl(link, { conv: convScope(conv), type: 'chat', message }))
   );
-  const failed = results.filter(r => r.status === 'rejected').length;
-  if (failed) toast(`Message not delivered to ${failed} of ${links.length} device${links.length === 1 ? '' : 's'}`);
+  results.forEach((result, index) => {
+    if (result.status === 'rejected') viaRelay.push(direct[index].peerId);
+  });
+
+  if (!viaRelay.length) return;
+  if (!canRelay) {
+    toast(`Message not delivered to ${viaRelay.length} of ${recipients.length} device${recipients.length === 1 ? '' : 's'}`);
+    return;
+  }
+  const relayed = await sendMessageViaRelay(conv, message, viaRelay);
+  const stored = conv.messages.get(message.id);
+  if (stored && relayed) {
+    stored.via = 'relay';
+    renderSession();
+  }
 }
 
+/** Seals a chat message to each recipient and leaves it with the server. */
+async function sendMessageViaRelay(conv, message, recipientIds) {
+  const targets = [];
+  for (const id of recipientIds) {
+    const sealRaw = await verifiedSealKey(id);
+    if (sealRaw) targets.push({ id, sealRaw });
+    else toast(`${displayName(id)} cannot receive messages via the server (its key is missing or unverified).`);
+  }
+  if (!targets.length) return 0;
+
+  /** @type {Record<string, any>} */
+  const envelopes = {};
+  for (const target of targets) {
+    envelopes[target.id] = await buildMessageEnvelope({
+      identity: state.identity,
+      recipientId: target.id,
+      recipientSealRaw: target.sealRaw,
+      conv: convScope(conv),
+      message
+    });
+  }
+
+  const requestId = crypto.randomUUID();
+  const frame = {
+    type: 'blob-offer',
+    requestId,
+    kind: 'message',
+    conv: convScope(conv),
+    bytes: 0,
+    chunkSize: 1,
+    totalChunks: 0,
+    envelopes
+  };
+  // One sealed copy per recipient, so a long message in a full room can exceed
+  // what the server accepts in a single frame. Say so rather than fail quietly.
+  if (JSON.stringify(frame).length > MAX_RELAY_FRAME_CHARS) {
+    toast('That message is too long to send via the server to this many devices. Try a shorter one.');
+    return 0;
+  }
+
+  try {
+    await awaitReply(requestId, () => wsSend(frame));
+    return targets.length;
+  } catch (err) {
+    toast(`Message not delivered via the server: ${err.message}`);
+    return 0;
+  }
+}
+
+const relayEnabled = () => Boolean(state.config.relay?.enabled);
+
+/**
+ * Recipients who are offline but can still be reached by leaving the item on
+ * the server. For a direct conversation with a device we have no record of yet
+ * (say, after a reload), ask the server for it first.
+ */
+async function offlineTargetsFor(conv) {
+  if (!relayEnabled()) return [];
+  if (conv.kind === 'direct' && !state.peers.has(conv.peerId) && !isRecentlySeen(conv.peerId)) {
+    await lookupDevices([conv.peerId]);
+  }
+  return relayOnlyMembers(conv);
+}
+
+function unreachableError(conv) {
+  if (conv.kind === 'room') return new Error('Nobody else in this room is online or reachable through the server.');
+  return new Error(relayEnabled()
+    ? 'That device has not been online in the last 24 hours, so there is nowhere to leave this for it.'
+    : 'That device is offline.');
+}
+
+// Direct first; the relay takes whichever recipients a direct link could not
+// reach, either because ICE never connected or because the link died part-way.
+// A recipient therefore gets each file exactly once, by one path or the other.
 async function sendFiles(conv, fileList) {
-  const links = await secureLinksFor(conv);
+  const recipients = onlineMembers(conv);
+  const offline = await offlineTargetsFor(conv);
+  if (!recipients.length && !offline.length) throw unreachableError(conv);
+
+  const canRelay = relayEnabled();
+  const skipDirect = canRelay && state.forceRelay;
+  /** @type {any[]} */
+  let links = [];
+  if (!skipDirect && recipients.length) {
+    const wait = canRelay ? P2P_WAIT_WITH_RELAY_MS : 12000;
+    await Promise.all(recipients.map(id => waitForSecure(id, wait).catch(() => null)));
+    links = recipients.map(id => state.links.get(id)).filter(isSecure);
+  }
+  if (!links.length && !canRelay) throw new Error('Secure peer connection timed out');
+
   for (const file of fileList) {
     if (file.size > state.config.maxFileBytes) {
       toast(`${file.name} exceeds this server's configured browser-memory limit.`);
@@ -1097,6 +1371,7 @@ async function sendFiles(conv, fileList) {
       totalChunks: Math.ceil(file.size / CHUNK_SIZE),
       sha256: null
     };
+    /** @type {any} */
     const record = {
       ...meta,
       holders: [state.self.id],
@@ -1122,7 +1397,31 @@ async function sendFiles(conv, fileList) {
     record.progress = 0;
     renderSession();
 
-    await sendBlobTo(links, conv, file, meta);
+    const direct = links.filter(isSecure);
+    const needRelay = [...recipients.filter(id => !direct.some(link => link.peerId === id)), ...offline];
+    if (direct.length) {
+      let outcome;
+      try {
+        outcome = await sendBlobTo(direct, conv, file, meta);
+      } catch {
+        outcome = { failed: direct.map(link => link.peerId), cancelled: false };
+      }
+      if (outcome?.cancelled) continue;
+      needRelay.push(...(outcome?.failed || []));
+    }
+
+    if (!needRelay.length) continue;
+    if (!canRelay) {
+      toast(`${file.name} did not reach ${needRelay.length} device${needRelay.length === 1 ? '' : 's'}.`);
+      continue;
+    }
+    try {
+      await sendViaRelay(conv, file, meta, record, needRelay);
+    } catch (err) {
+      record.relayStage = 'failed';
+      renderSession();
+      toast(`Could not send ${file.name} via the server: ${err.message}`);
+    }
   }
 }
 
@@ -1159,6 +1458,10 @@ async function sendBlobTo(links, conv, blob, meta, alreadyHeld = []) {
       sendControl(link, { conv: convScope(conv), type: 'file-meta', file: wire, transferId }).catch(() => {})));
 
     let alive = links.slice();
+    // Links that die mid-transfer are remembered rather than dropped silently,
+    // so the caller can finish those recipients over the relay.
+    /** @type {string[]} */
+    const failed = [];
     let sent = 0;
     for (let seq = 0; seq < totalChunks; seq++) {
       if (transfer.cancelled) {
@@ -1166,7 +1469,7 @@ async function sendBlobTo(links, conv, blob, meta, alreadyHeld = []) {
           sendControl(link, { conv: convScope(conv), type: 'transfer-cancel', id: meta.id, transferId, reason: 'cancelled' }).catch(() => {})));
         if (trackProgress) local.transferId = null;
         renderSession();
-        return;
+        return { sent, failed: [], cancelled: true };
       }
       if (inRanges(alreadyHeld, seq)) continue;
 
@@ -1176,8 +1479,11 @@ async function sendBlobTo(links, conv, blob, meta, alreadyHeld = []) {
         try { await sendFileChunk(link, conv, meta.id, transferId, seq, totalChunks, bytes); return link; }
         catch { return null; }
       }));
+      for (const [index, result] of settled.entries()) {
+        if (!result) failed.push(alive[index].peerId);
+      }
       alive = settled.filter(Boolean);
-      if (!alive.length) throw new Error(`Transfer of ${meta.name} was interrupted`);
+      if (!alive.length) return { sent, failed, cancelled: false };
       sent++;
       if (trackProgress) {
         local.progress = (seq + 1) / totalChunks;
@@ -1192,10 +1498,340 @@ async function sendBlobTo(links, conv, blob, meta, alreadyHeld = []) {
       local.transferId = null;
     }
     renderSession();
-    return sent;
+    return { sent, failed, cancelled: false };
   } finally {
     state.activeSends.delete(transferId);
     if (trackProgress && local.transferId === transferId) local.transferId = null;
+  }
+}
+
+/* ---------- server relay ---------- */
+
+// WebSocket request/response pairing for the relay: the server echoes a
+// request id (offers) or the blob id (claims) back on the reply.
+function awaitReply(key, send, timeoutMs = 20000) {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      state.pendingRequests.delete(key);
+      reject(new Error('The server did not answer in time.'));
+    }, timeoutMs);
+    state.pendingRequests.set(key, { resolve, reject, timer });
+    send();
+  });
+}
+
+function settleRequest(key, value, error) {
+  const pending = key && state.pendingRequests.get(key);
+  if (!pending) return;
+  state.pendingRequests.delete(key);
+  clearTimeout(pending.timer);
+  if (error) pending.reject(error);
+  else pending.resolve(value);
+}
+
+/**
+ * A peer's seal key, but only if it is bound to the device id we are talking to:
+ * the advertised identity key must hash to that id and must have signed the
+ * seal key. Presence comes from the server, so this is what stops a hostile
+ * server from substituting its own key and reading the file.
+ */
+async function verifiedSealKey(peerId) {
+  // A live presence record, or the last one we have for a device now offline.
+  // Either way it is checked below; where it came from does not matter.
+  const peer = state.peers.get(peerId) || state.deviceRecords.get(peerId);
+  if (!peer?.sealKey) return null;
+  const cacheKey = [peerId, peer.identityKey, peer.sealKey, peer.sealKeySignature].join('|');
+  if (state.sealKeyCache.has(cacheKey)) return state.sealKeyCache.get(cacheKey);
+  const verified = await verifyAdvertisedIdentity({
+    deviceId: peerId,
+    identityKey: peer.identityKey,
+    sealKey: peer.sealKey,
+    sealKeySignature: peer.sealKeySignature
+  });
+  const result = verified ? verified.sealRaw : null;
+  state.sealKeyCache.set(cacheKey, result);
+  return result;
+}
+
+function uploadBlob(blobId, token, body, onProgress) {
+  // XHR rather than fetch: fetch still has no upload progress.
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open('PUT', `/blob/${encodeURIComponent(blobId)}?token=${encodeURIComponent(token)}`);
+    xhr.upload.onprogress = event => {
+      if (event.lengthComputable) onProgress(event.loaded / event.total);
+    };
+    xhr.onload = () => (xhr.status === 204
+      ? resolve(undefined)
+      : reject(new Error(xhr.responseText || `upload failed (${xhr.status})`)));
+    xhr.onerror = () => reject(new Error('upload failed'));
+    xhr.send(body);
+  });
+}
+
+async function sendViaRelay(conv, blob, meta, record, recipientIds) {
+  const chunkSize = state.config.relay.chunkSize;
+  const { totalChunks, bytes } = cipherLayout(blob.size, chunkSize);
+
+  const targets = [];
+  for (const id of recipientIds) {
+    const sealRaw = await verifiedSealKey(id);
+    if (sealRaw) targets.push({ id, sealRaw });
+    else toast(`${displayName(id)} cannot receive files via the server (its key is missing or unverified).`);
+  }
+  if (!targets.length) throw new Error('no recipient could be verified');
+
+  record.via = 'relay';
+  record.relayStage = 'encrypting';
+  record.progress = 0;
+  renderSession();
+
+  const { raw, key } = await generateContentKey();
+  /** @type {Record<string, any>} */
+  const envelopes = {};
+  for (const target of targets) {
+    envelopes[target.id] = await buildEnvelope({
+      identity: state.identity,
+      recipientId: target.id,
+      recipientSealRaw: target.sealRaw,
+      meta: { ...meta, chunkSize, totalChunks },
+      contentKeyRaw: raw,
+      conv: convScope(conv)
+    });
+  }
+
+  const body = await encryptBody(blob, key, meta.id, chunkSize, fraction => {
+    record.progress = fraction;
+    updateFileProgress(conv, record);
+  });
+
+  const requestId = crypto.randomUUID();
+  const offered = await awaitReply(requestId, () => wsSend({
+    type: 'blob-offer',
+    requestId,
+    conv: convScope(conv),
+    bytes,
+    chunkSize,
+    totalChunks,
+    envelopes
+  }));
+
+  record.relayStage = 'uploading';
+  record.relayBlobId = offered.blobId;
+  record.progress = 0;
+  renderSession();
+
+  await uploadBlob(offered.blobId, offered.uploadToken, body, fraction => {
+    record.progress = fraction;
+    updateFileProgress(conv, record);
+  });
+
+  record.relayStage = 'uploaded';
+  record.progress = 1;
+  renderSession();
+  toast(`${meta.name} is on the server for ${targets.length} device${targets.length === 1 ? '' : 's'}.`);
+}
+
+function findRelayedFile(blobId) {
+  for (const conv of state.conversations.values()) {
+    for (const file of conv.files.values()) {
+      if (file.relayBlobId === blobId) return { conv, file };
+    }
+  }
+  return null;
+}
+
+async function handleBlobAvailable(notice) {
+  if (!notice?.blobId) return;
+  if (state.relayInbound.has(notice.blobId)) {
+    // The server announces again whatever this device has not taken yet, each
+    // time it reconnects. A download that failed earlier — typically because
+    // the connection dropped mid-way — is retried then, rather than waiting
+    // for someone to press Retry.
+    const found = findRelayedFile(notice.blobId);
+    if (found && found.file.relayStage === 'failed' && found.file.relayKey) {
+      await downloadRelayed(found.conv, found.file);
+    }
+    return;
+  }
+  state.relayInbound.add(notice.blobId);
+  if (notice.kind === 'message') {
+    await handleRelayedMessage(notice);
+    return;
+  }
+
+  let opened;
+  try {
+    opened = await openEnvelope({
+      sealPrivateKey: state.identity.sealPrivateKey,
+      box: notice.envelope,
+      selfId: state.identity.deviceId,
+      expectedFrom: notice.from
+    });
+  } catch (err) {
+    // Not ours, not from who the server says, or not signed: refuse it and let
+    // the server drop it rather than leave it waiting.
+    wsSend({ type: 'blob-release', blobId: notice.blobId });
+    toast(`Refused a relayed file: ${err.message}`);
+    return;
+  }
+
+  const { meta, contentKey } = opened;
+  if (meta.conv !== notice.conv) {
+    wsSend({ type: 'blob-release', blobId: notice.blobId });
+    return;
+  }
+  const conv = resolveScope(notice.conv, notice.from);
+  if (!conv) {
+    wsSend({ type: 'blob-release', blobId: notice.blobId });
+    return;
+  }
+
+  const existing = conv.files.get(meta.id);
+  if (existing?.blob) {
+    // Already arrived directly; the relayed copy is redundant.
+    wsSend({ type: 'blob-release', blobId: notice.blobId });
+    return;
+  }
+  const candidate = { id: meta.id, name: meta.name, size: meta.size, sha256: meta.sha256, totalChunks: Math.ceil(meta.size / CHUNK_SIZE) };
+  if (!validFileMeta(candidate) || (!existing && conv.files.size >= CAPS.filesPerConversation)) {
+    wsSend({ type: 'blob-release', blobId: notice.blobId });
+    return;
+  }
+
+  const record = existing || {};
+  Object.assign(record, {
+    ...candidate,
+    type: meta.type || 'application/octet-stream',
+    addedAt: Number(meta.addedAt) || Date.now(),
+    from: notice.from,
+    fromName: typeof meta.fromName === 'string' ? meta.fromName.slice(0, 64) : '',
+    holders: mergeHolders(record.holders),
+    blob: null,
+    chunks: null,
+    progress: 0,
+    complete: false,
+    corrupt: false,
+    direction: 'received',
+    via: 'relay',
+    relayStage: 'downloading',
+    relayBlobId: notice.blobId,
+    relayMeta: meta,
+    relayKey: contentKey,
+    relayConvId: conv.id
+  });
+  conv.files.set(meta.id, record);
+  renderSession();
+  await downloadRelayed(conv, record);
+}
+
+async function handleRelayedMessage(notice) {
+  let opened;
+  try {
+    opened = await openMessageEnvelope({
+      sealPrivateKey: state.identity.sealPrivateKey,
+      box: notice.envelope,
+      selfId: state.identity.deviceId,
+      expectedFrom: notice.from,
+      maxChars: CAPS.messageChars
+    });
+  } catch (err) {
+    // Not ours, not from who the server says, or not signed: drop it for good.
+    wsSend({ type: 'blob-release', blobId: notice.blobId });
+    toast(`Refused a relayed message: ${err.message}`);
+    return;
+  }
+  if (opened.conv !== notice.conv) {
+    wsSend({ type: 'blob-release', blobId: notice.blobId });
+    return;
+  }
+
+  const conv = resolveScope(notice.conv, notice.from);
+  // A room this browser is not (or no longer) in. Leave the item alone rather
+  // than release it, and forget having seen it, so that if the device rejoins
+  // before it ages out, the next announcement delivers it.
+  if (!conv) {
+    state.relayInbound.delete(notice.blobId);
+    return;
+  }
+
+  const isNew = !conv.messages.has(opened.message.id);
+  // The author is the device that signed the envelope, so unlike history
+  // recovered through a peer sync this is verified authorship.
+  mergeMessage(conv, opened.message, { verifiedAuthor: true, relayedBy: null });
+  const stored = conv.messages.get(opened.message.id);
+  if (stored && isNew) stored.via = 'relay';
+  wsSend({ type: 'blob-release', blobId: notice.blobId });
+  renderSession();
+  if (isNew) notifyIncoming(conv, opened.message);
+}
+
+// A message for a conversation that is not open gets a notice with a way into
+// it. That matters most for relayed messages, whose sender may already be
+// offline and so have no row in the device table to click.
+function notifyIncoming(conv, message) {
+  if (state.activeConvId === conv.id) return;
+  const who = message.fromName || displayName(message.from);
+  const where = conv.kind === 'room' ? ` in ${conversationTitle(conv)}` : '';
+  toast(`New message from ${who}${where}`, {
+    label: 'Open',
+    run: () => openConversation(conv.id, conv.kind, conv.kind === 'room' ? conv.roomId : conv.peerId, 'text')
+  });
+}
+
+async function downloadRelayed(conv, record) {
+  record.relayStage = 'downloading';
+  record.progress = 0;
+  renderSession();
+  try {
+    const claim = await awaitReply(`claim:${record.relayBlobId}`, () =>
+      wsSend({ type: 'blob-claim', blobId: record.relayBlobId }));
+
+    const response = await fetch(`/blob/${encodeURIComponent(record.relayBlobId)}?token=${encodeURIComponent(claim.downloadToken)}`, {
+      cache: 'no-store'
+    });
+    if (!response.ok || !response.body) throw new Error(`download failed (${response.status})`);
+
+    const decryptor = createBodyDecryptor({
+      key: record.relayKey,
+      fileId: record.id,
+      chunkSize: record.relayMeta.chunkSize,
+      size: record.size
+    });
+    const reader = response.body.getReader();
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      await decryptor.push(value);
+      record.progress = decryptor.progress;
+      updateFileProgress(conv, record);
+    }
+    const { chunks, sha256 } = decryptor.finish();
+
+    if (sha256 !== record.sha256) {
+      record.corrupt = true;
+      record.relayStage = 'failed';
+      renderSession();
+      toast(`${record.name} failed its SHA-256 check and was discarded.`);
+      return;
+    }
+
+    record.blob = new Blob(/** @type {BlobPart[]} */ (chunks), { type: record.type });
+    record.complete = true;
+    record.available = true;
+    record.verified = true;
+    record.progress = 1;
+    record.relayStage = 'received';
+    record.holders = mergeHolders(record.holders, state.self?.id);
+    // Drop the key and metadata now the bytes are safe; nothing else needs them.
+    record.relayKey = null;
+    wsSend({ type: 'blob-release', blobId: record.relayBlobId });
+    renderSession();
+    toast(`Received ${record.name} via server · SHA-256 verified`);
+  } catch (err) {
+    record.relayStage = 'failed';
+    renderSession();
+    toast(`Could not download ${record.name}: ${err.message}`);
   }
 }
 
@@ -1319,7 +1955,14 @@ function downloadFile(file) {
 /* ---------- session panel ---------- */
 
 function getPeer(peerId) {
-  return state.peers.get(peerId) || { id: peerId, name: 'Peer', code: 'offline', platform: 'Unknown', browser: 'Browser' };
+  const known = state.deviceRecords.get(peerId);
+  return state.peers.get(peerId) || {
+    id: peerId,
+    name: displayName(peerId),
+    code: 'offline',
+    platform: known?.platform || 'Unknown',
+    browser: known?.browser || 'Browser'
+  };
 }
 
 function openConversation(convId, kind, ref, focus) {
@@ -1433,7 +2076,6 @@ function renderPeers() {
 function renderPeersNow() {
   peerRows.textContent = '';
   const peers = [...state.peers.values()].sort((a, b) => a.name.localeCompare(b.name));
-  emptyPeers.classList.toggle('hidden', peers.length > 0);
   for (const peer of peers) {
     const link = state.links.get(peer.id);
     const tr = document.createElement('tr');
@@ -1526,6 +2168,79 @@ function renderPeersNow() {
     tr.append(nameTd, codeTd, platformTd, statusTd, pathTd, rateTd, bytesTd, actionsTd);
     peerRows.append(tr);
   }
+
+  const offline = offlineDevicesToList();
+  for (const record of offline) peerRows.append(renderOfflineRow(record));
+  emptyPeers.classList.toggle('hidden', peers.length + offline.length > 0);
+}
+
+// Offline devices worth listing: seen within the window, and ones this browser
+// has actually dealt with — a remembered device or an open conversation. Not
+// every stranger who was ever online on the server.
+function offlineDevicesToList() {
+  if (!relayEnabled()) return [];
+  const known = knownDevices();
+  return [...state.deviceRecords.values()]
+    .filter(record => isRecentlySeen(record.id))
+    .filter(record => known[record.id] || state.conversations.has(directConvId(record.id)))
+    .sort((a, b) => b.lastSeen - a.lastSeen);
+}
+
+function renderOfflineRow(record) {
+  const tr = document.createElement('tr');
+  tr.className = 'offline';
+  tr.dataset.dropTarget = record.id;
+  tr.dataset.dropKind = 'direct';
+  tr.title = 'Offline. Anything you send waits on the server for up to 24 hours.';
+
+  const cell = (label, text) => {
+    const td = document.createElement('td');
+    td.dataset.label = label;
+    td.textContent = text;
+    return td;
+  };
+
+  const nameTd = document.createElement('td');
+  nameTd.dataset.label = 'Device';
+  const nameWrap = document.createElement('div');
+  nameWrap.className = 'device-name';
+  const pip = document.createElement('span');
+  pip.className = 'presence-pip offline';
+  const name = document.createElement('span');
+  name.textContent = record.name || displayName(record.id);
+  nameWrap.append(pip, name);
+  nameTd.append(nameWrap);
+
+  const statusTd = cell('Status', `Offline · seen ${formatAgo(record.lastSeen)}`);
+  statusTd.classList.add('muted');
+
+  const actionsTd = document.createElement('td');
+  actionsTd.className = 'actions-col';
+  const actions = document.createElement('div');
+  actions.className = 'row-actions';
+  for (const [label, mode] of [['Chat', 'chat'], ['Text', 'text'], ['File', 'file']]) {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.textContent = label;
+    btn.dataset.focusKey = `peer:${record.id}:${mode}`;
+    btn.setAttribute('aria-label', `${label} with ${record.name || 'offline device'} (offline, via server)`);
+    if (mode !== 'chat') btn.className = 'ghost';
+    btn.addEventListener('click', () => openSession(record.id, mode));
+    actions.append(btn);
+  }
+  actionsTd.append(actions);
+
+  tr.append(
+    nameTd,
+    cell('Code', '—'),
+    cell('Platform', `${record.platform || 'Unknown'} · ${record.browser || 'Browser'}`),
+    statusTd,
+    cell('Path', 'via server'),
+    cell('Rate', '—'),
+    cell('Transferred', '—'),
+    actionsTd
+  );
+  return tr;
 }
 
 function renderRooms() {
@@ -1568,11 +2283,17 @@ function renderRoomsNow() {
 
     const membersTd = document.createElement('td');
     membersTd.dataset.label = 'Members';
-    membersTd.textContent = room.members.map(m => m.name).join(', ') || '—';
+    const away = room.away || [];
+    membersTd.textContent = [
+      ...room.members.map(m => m.name),
+      ...away.map(m => `${m.name} (away)`)
+    ].join(', ') || '—';
 
+    // Away members keep their seat, so they count toward the size.
+    const seats = room.members.length + away.length;
     const countTd = document.createElement('td');
     countTd.dataset.label = 'Size';
-    countTd.textContent = `${room.members.length} / ${room.maxMembers}`;
+    countTd.textContent = `${seats} / ${room.maxMembers}`;
 
     const statusTd = document.createElement('td');
     statusTd.dataset.label = 'Links';
@@ -1581,7 +2302,9 @@ function renderRoomsNow() {
     } else {
       const others = conv ? onlineMembers(conv) : [];
       const secured = others.filter(id => isSecure(state.links.get(id))).length;
-      statusTd.textContent = others.length ? `${secured} / ${others.length} encrypted` : 'Waiting for members';
+      const base = others.length ? `${secured} / ${others.length} encrypted` : 'Waiting for members';
+      const awayOthers = away.filter(m => m.id !== state.self?.id).length;
+      statusTd.textContent = awayOthers ? `${base} · ${awayOthers} away` : base;
     }
 
     const actionsTd = document.createElement('td');
@@ -1609,7 +2332,7 @@ function renderRoomsNow() {
       join.textContent = 'Join';
       join.dataset.focusKey = `room:${room.id}:join`;
       join.setAttribute('aria-label', `Join room ${room.name}`);
-      join.disabled = room.members.length >= room.maxMembers;
+      join.disabled = room.members.length + (room.away || []).length >= room.maxMembers;
       join.addEventListener('click', () => wsSend({ type: 'join-room', roomId: room.id }));
       actions.append(join);
     }
@@ -1650,11 +2373,15 @@ function renderSessionNow() {
 
   if (conv.kind === 'direct') {
     const peer = getPeer(conv.peerId);
-    sessionMeta.textContent = `${peer.platform} · ${peer.browser} · ${peer.code}`;
+    const offlineRecord = !state.peers.has(conv.peerId) ? state.deviceRecords.get(conv.peerId) : null;
+    sessionMeta.textContent = offlineRecord
+      ? `${peer.platform} · ${peer.browser} · offline, seen ${formatAgo(offlineRecord.lastSeen)}`
+      : `${peer.platform} · ${peer.browser} · ${peer.code}`;
   } else {
     const room = state.rooms.get(conv.roomId);
+    const away = room?.away?.length || 0;
     sessionMeta.textContent = room
-      ? `${room.code} · ${room.members.length} of ${room.maxMembers} devices`
+      ? `${room.code} · ${room.members.length + away} of ${room.maxMembers} devices${away ? ` · ${away} away` : ''}`
       : 'This room is no longer advertised';
   }
 
@@ -1670,6 +2397,13 @@ function renderSessionNow() {
       secureState.classList.toggle('unverified', link.trust?.known === false);
     } else if (link?.status === 'untrusted') {
       secureState.textContent = 'Identity refused';
+      secureState.classList.remove('ready');
+    } else if (!state.peers.has(conv.peerId)) {
+      // Nothing to connect to; say what will actually happen to a message.
+      secureState.textContent = isRecentlySeen(conv.peerId)
+        ? 'Offline · messages wait on the server'
+        : 'Offline';
+      secureState.title = 'Sealed to this device and left on the server for up to 24 hours.';
       secureState.classList.remove('ready');
     } else {
       secureState.textContent = link?.dc?.readyState === 'open' ? 'Verifying device identity…' : 'Connecting…';
@@ -1733,6 +2467,14 @@ function renderMembers(conv) {
     }
     sessionMembers.append(chip);
   }
+  for (const member of room?.away || []) {
+    if (member.id === state.self?.id) continue;
+    const chip = document.createElement('span');
+    chip.className = 'member-chip away';
+    chip.textContent = `${member.name} · away`;
+    chip.title = `Dropped off ${formatAgo(member.awaySince)}. Messages and files are left on the server for it until it rejoins, for up to 24 hours.`;
+    sessionMembers.append(chip);
+  }
 }
 
 function renderMessage(conv, message) {
@@ -1753,7 +2495,9 @@ function renderMessage(conv, message) {
     author.remove();
   }
   appendLinkifiedText(node.querySelector('.message-bubble'), message.text);
-  node.querySelector('.message-time').textContent = new Date(message.at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+  const time = new Date(message.at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+  // As with files, say when a message took the server path.
+  node.querySelector('.message-time').textContent = message.via === 'relay' ? `${time} · via server` : time;
   timeline.append(node);
 }
 
@@ -1781,6 +2525,9 @@ function renderFile(conv, file) {
   const owner = file.from === state.self?.id ? 'sent by you' : `from ${file.fromName || displayName(file.from)}`;
 
   const details = [formatBytes(file.size), owner];
+  // Say which path a file took: it is the first thing to check when one path
+  // works on a network and the other does not.
+  if (file.via === 'relay') details.push('via server');
   if (file.hashing) details.push('hashing…');
   else if (file.verifying) details.push('verifying…');
   else if (file.corrupt) details.push('SHA-256 mismatch');
@@ -1798,14 +2545,18 @@ function renderFile(conv, file) {
   const btn = node.querySelector('.file-download');
   const holders = mergeHolders(file.holders).filter(id => id !== state.self?.id && state.peers.has(id));
   const partial = Array.isArray(file.chunks) && countReceived(file.chunks) > 0;
-  const inFlight = Boolean(file.transferId) || file.hashing || file.verifying;
+  const relayBusy = ['encrypting', 'uploading', 'downloading'].includes(file.relayStage);
+  const inFlight = Boolean(file.transferId) || file.hashing || file.verifying || relayBusy;
 
   // An in-flight transfer takes precedence over the Save button, so a sender can
   // cancel its own upload while the blob it is reading is already local.
   if (inFlight) {
     btn.textContent = file.hashing ? 'Hashing…'
       : file.verifying ? 'Verifying…'
-        : file.direction === 'sent' ? 'Sending…' : 'Receiving…';
+        : file.relayStage === 'encrypting' ? 'Encrypting…'
+          : file.relayStage === 'uploading' ? 'Uploading…'
+            : file.relayStage === 'downloading' ? 'Downloading…'
+              : file.direction === 'sent' ? 'Sending…' : 'Receiving…';
     btn.disabled = true;
     if (file.transferId) {
       const cancel = document.createElement('button');
@@ -1818,6 +2569,10 @@ function renderFile(conv, file) {
   } else if (file.blob) {
     btn.textContent = 'Save';
     btn.addEventListener('click', () => downloadFile(file));
+  } else if (file.via === 'relay' && file.relayStage === 'failed' && file.relayKey) {
+    // The server keeps it until it is taken or 24h pass, so it can be retried.
+    btn.textContent = 'Retry download';
+    btn.addEventListener('click', () => downloadRelayed(conv, file));
   } else if (holders.length) {
     btn.textContent = file.corrupt ? 'Retry' : partial ? 'Resume' : 'Request';
     btn.title = partial && !file.corrupt
@@ -1842,12 +2597,30 @@ function formatBytes(value) {
   return `${size >= 10 ? size.toFixed(1) : size.toFixed(2)} ${units[i]}`;
 }
 
-function toast(message) {
+/**
+ * @param {string} message
+ * @param {{ label: string, run: () => void }} [action] optional button, e.g. "Open"
+ */
+function toast(message, action) {
   const el = document.createElement('div');
   el.className = 'toast';
-  el.textContent = message;
+  const text = document.createElement('span');
+  text.textContent = message;
+  el.append(text);
+  if (action) {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'ghost toast-action';
+    button.textContent = action.label;
+    button.addEventListener('click', () => {
+      el.remove();
+      action.run();
+    });
+    el.append(button);
+  }
   toastRegion.append(el);
-  setTimeout(() => el.remove(), 3500);
+  // Longer when there is something to click, so it can actually be reached.
+  setTimeout(() => el.remove(), action ? 9000 : 3500);
 }
 
 // srflx/prflx both mean a NAT-reflexive address; relay means TURN is carrying
@@ -2021,6 +2794,19 @@ selfCode.addEventListener('click', async () => {
 });
 
 $('#renameBtn').addEventListener('click', openRenameDialog);
+
+function setupRelayToggle() {
+  const toggle = $('#relayToggle');
+  const input = $('#forceRelayInput');
+  // Only offered when the server actually runs the relay.
+  toggle.classList.toggle('hidden', !relayEnabled());
+  try { state.forceRelay = localStorage.getItem('aria-drop-force-relay') === '1'; } catch {}
+  input.checked = state.forceRelay;
+  input.addEventListener('change', () => {
+    state.forceRelay = input.checked;
+    try { localStorage.setItem('aria-drop-force-relay', input.checked ? '1' : '0'); } catch {}
+  });
+}
 
 $('#devicesBtn').addEventListener('click', () => {
   renderKnownDevices();
@@ -2382,7 +3168,10 @@ async function updateWakeLock() {
   if (!busy) {
     for (const conv of state.conversations.values()) {
       for (const file of conv.files.values()) {
-        if (file.transferId || file.hashing) { busy = true; break; }
+        if (file.transferId || file.hashing || ['encrypting', 'uploading', 'downloading'].includes(file.relayStage)) {
+          busy = true;
+          break;
+        }
       }
       if (busy) break;
     }
@@ -2504,6 +3293,7 @@ async function boot() {
   setupInstallPrompt();
   setupDragAndDrop();
   setupPasteToSend();
+  setupRelayToggle();
   connectWebSocket();
   state.statsTimer = setInterval(refreshStats, 3000);
   state.wakeLockTimer = setInterval(updateWakeLock, 2000);

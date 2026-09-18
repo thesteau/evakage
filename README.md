@@ -11,18 +11,19 @@ A Docker-first, browser-first experiment for ephemeral local peer communication.
 - Hosts **ephemeral rooms** of up to six devices, joined from the room table or by room code.
 - Uses WebRTC DataChannels for peer payload transport.
 - Adds an application-layer ephemeral ECDH/AES-GCM encryption layer on top of WebRTC transport encryption.
-- Displays a short session safety code derived from both ephemeral public keys.
+- Displays a short safety code derived from both devices' long-lived identity keys, stable across sessions.
 - Installs as a PWA on phones, tablets, and desktops, with an offline app shell and share-target support for text and links.
 - Keeps messages and completed file blobs **only in browser memory**.
 - Re-syncs chat/file metadata from any surviving peer when a browser reconnects with the same local device identity.
 - Allows a returned peer to request an in-memory file again from whichever peer still holds the bytes.
-- Contains no server-side chat/file database.
+- Falls back to a **server relay** for messages and files when a direct connection cannot be made — sealed so the server cannot read them, deleted once delivered, and gone within 24 hours regardless.
+- Contains no server-side database.
 - Verifies every device's long-lived identity key and shows a stable safety code.
 - Works as an ordinary browser page too — installing is optional.
 
 ## Ephemeral semantics
 
-The signaling server knows who is currently online, tracks room membership, and routes WebRTC negotiation messages. It does **not** receive application chat/file payloads.
+The signaling server knows who is currently online, tracks room membership, and routes WebRTC negotiation messages. It receives a message or a file only when that item goes through the relay (below), and then only as ciphertext sealed to the recipient.
 
 Conversation/file state is held in browser memory. A stable device ID and display name are the only values kept in `localStorage`.
 
@@ -30,11 +31,58 @@ If browser A disappears and browser B stays open, B retains the session. When A 
 
 If **all participating browser instances lose their in-memory state** (closed/reloaded/crashed), there is intentionally nothing to recover. That is the deletion boundary.
 
+## Server relay
+
+Direct browser-to-browser transfer needs ICE to succeed. On a routed LAN, behind
+a VPN, or with a restrictive firewall it can fail outright, and then nothing gets
+through. So messages and files have a second path through the server that works
+regardless:
+
+- **Automatic.** An item goes direct when a direct link is available, and through
+  the server for any recipient it cannot reach — including one whose link drops
+  part-way through a file. Each recipient gets each item exactly once, by one
+  path. Files wait up to 5s for a direct link, messages 2.5s; once a direct link
+  has failed for a device, later messages to it go straight to the server for
+  30s while the link keeps retrying. Anything that went this way is marked
+  `via server`.
+- **Or forced.** Tick **Via server** in the session toolbar to skip the direct
+  attempt entirely, for a network where you know it never works.
+- **Sealed.** Each device has a long-lived key for this, signed by its identity
+  key and verified by the sender before use. A message is sealed to each
+  recipient directly. A file is encrypted with a random key, and that key — with
+  the file's name, type and SHA-256 — is sealed separately to each recipient.
+  The server stores ciphertext and opaque envelopes. It learns sizes and who is
+  sending to whom, never content.
+- **Signed.** Every envelope is also signed by the sender's identity key, so a
+  recipient knows the item really came from that device even if the server lies
+  about who sent it. A relayed message is therefore verified authorship, unlike
+  history recovered from another peer during a sync.
+- **Verified.** A relayed file's SHA-256 is checked after decrypting, exactly as
+  for a direct transfer.
+
+**Lifetime.** Each conversation gets its own directory on the server: the same
+two devices, or the same room, always share one; a new pairing or room gets a
+new one.
+
+- An item is deleted as soon as every recipient has received it.
+- If a recipient has not taken it yet, it **stays** — including after both
+  devices have disconnected — so a device that comes back within the window
+  still receives what was sent to it.
+- Nothing lasts past **24 hours**. A sweep every 15 minutes removes anything
+  older, and removes any directory it finds empty, so a conversation with nothing
+  left disappears as a whole.
+- A server restart or a recreated container erases everything immediately. Item
+  records live only in the server's memory, so a restart ends items early,
+  never late.
+
+It lives inside the container with no volume, so it is never exposed on the
+host. See `deploy/README.md` for an optional host cron.
+
 ## Ephemeral rooms
 
 Rooms extend the same model to a small group. Create one from the rooms table, then share its `ABCD-EFGH` code with the other devices — or let them join from the table, since rooms are advertised to everyone connected to the server.
 
-- **Transport is a full mesh.** Every member holds one DataChannel per other member, each with its own ECDH/AES-GCM key and its own safety code (hover a member chip to read it). Nothing is relayed through the server or through other peers.
+- **Transport is a full mesh.** Every member holds one DataChannel per other member, each with its own ECDH/AES-GCM key and its own safety code (hover a member chip to read it). Nothing is relayed through other peers; a member a direct link cannot reach gets its copy through the server relay instead, sealed to it.
 - **Six devices is the cap**, enforced server side. The mesh costs O(n²) connections, and a sender uploads each file once per recipient, so bandwidth — not the limit — is what you feel first on a large transfer.
 - **Membership is live presence.** Leaving, closing the tab, or dropping off the network removes you from the room.
 - **A room survives while at least one member is still connected.** The last participant leaving destroys the server-side record, and the payloads only ever existed in the participants' browsers. If signaling blips while your browser is still open, it restores the room on reconnect rather than losing it.
@@ -44,6 +92,15 @@ Rooms extend the same model to a small group. Create one from the rooms table, t
 Rooms and direct sessions share the same pairwise links — being in a room with someone and DMing them uses one connection, not two.
 
 ## Run with Docker Compose
+
+To run a published image, use the `deploy/` folder — it pulls from GHCR and never
+builds; see `deploy/README.md`:
+
+```bash
+cd deploy && docker compose up -d
+```
+
+To build from this checkout instead, use the root compose file:
 
 ```bash
 docker compose up -d --build
@@ -85,6 +142,12 @@ Large files remain the weak spot on phones: received blobs are held in memory un
 | `AUTH_TOKEN` | *(unset)* | When set, the whole server needs this token. Open `https://host/?token=THE_TOKEN` once and the server trades it for an `HttpOnly; SameSite=Strict` session cookie that also authorises the WebSocket upgrade. `/healthz` stays open for the container healthcheck. |
 | `ALLOWED_ORIGINS` | *(same host)* | Comma-separated exact origins permitted to open the WebSocket. Unset means "must match the request's own host", which is what you want behind a normal reverse proxy. |
 | `TRUST_PROXY` | `0` | Set to `1` only when a proxy you control sits in front. It makes the server believe `X-Forwarded-Host` (for origin checks) and `X-Forwarded-For` (for per-address limits). Leave it off if clients can reach the port directly, or they can spoof both. |
+| `BLOB_DIR` | `/tmp/aria-drop-blobs` in the image | Where relayed messages and files wait, one subdirectory per conversation. Keep it inside the container; do not mount a volume here. |
+| `BLOB_MAX_AGE_MS` | `86400000` (24h) | Relayed items older than this are removed by the sweep, connected or not; younger ones are left alone. |
+| `BLOB_SWEEP_MS` | `900000` (15 min) | How often the age sweep runs. It also removes any empty conversation directory. |
+| `BLOB_STORE_BYTES` | `4294967296` (4 GiB) | Total space all buffered transfers may use together. |
+| `BLOB_PER_DEVICE` | `32` | Files one device may have waiting on the server at once. |
+| `BLOB_MESSAGES_PER_DEVICE` | `2000` | Messages one device may have waiting on the server at once. |
 
 On the same LAN, host ICE candidates are usually sufficient. If peers are separated by routed networks, restrictive firewalls, or VPN topology, configure TURN.
 
@@ -167,8 +230,9 @@ the browser loads exactly the files in `public/`. The strictness settings in
 ## Known gaps
 
 `TODO.md` tracks what is missing, why, and what it would cost. The short version:
-no per-message signatures yet (relayed room history is marked as unverified
-rather than trusted), no per-device authorisation, large files still live in RAM
+history recovered from another peer during a sync is not signed (it is marked as
+unverified rather than trusted — messages that came through the server relay are
+signed), no per-device authorisation, large files still live in RAM
 on the receiving side, and the browser-level test suites are not in the repo
 because they need Playwright.
 
@@ -178,4 +242,4 @@ MIT — see `LICENSE`.
 
 ## Threat model in one paragraph
 
-The server is designed not to see chat/file payloads. WebRTC provides DTLS-encrypted DataChannels and the app additionally encrypts payload frames using an ephemeral ECDH-derived AES-GCM key. The displayed safety code can be compared out-of-band if you want to detect active interception. This MVP has **not** undergone a security audit; see `SECURITY.md` and `CODEX_HANDOFF.md` before exposing it beyond a trusted environment.
+The server is designed not to be able to read chat or files. Anything that reaches it through the relay arrives as ciphertext sealed to the recipient and signed by the sender, and is gone within 24 hours. WebRTC provides DTLS-encrypted DataChannels and the app additionally encrypts payload frames using an ephemeral ECDH-derived AES-GCM key. The displayed safety code can be compared out-of-band if you want to detect active interception. This MVP has **not** undergone a security audit; see `SECURITY.md` and `CODEX_HANDOFF.md` before exposing it beyond a trusted environment.

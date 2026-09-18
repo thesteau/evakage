@@ -19,7 +19,9 @@ export default [
     rules: {
       // Correctness.
       'no-undef': 'error',
-      'no-unused-vars': ['error', { args: 'after-used', argsIgnorePattern: '^_', caughtErrors: 'none' }],
+      // ignoreRestSiblings: `const { secret, ...rest } = obj` is how a field is
+      // deliberately stripped, and the stripped name is meant to go unused.
+      'no-unused-vars': ['error', { args: 'after-used', argsIgnorePattern: '^_', caughtErrors: 'none', ignoreRestSiblings: true }],
       'no-implicit-globals': 'error',
       'no-var': 'error',
       'prefer-const': 'error',

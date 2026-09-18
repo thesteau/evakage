@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import crypto from 'node:crypto';
 import { EventEmitter } from 'node:events';
 import { fileURLToPath } from 'node:url';
-import { createBlobStore } from './blobstore.js';
+import { createBlobStore, sweepDirectory } from './blobstore.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -23,9 +23,10 @@ const MAX_ROOMS_PER_DEVICE = 8;
 // Version of the peer-to-peer application protocol spoken over the DataChannel.
 // Published on /config.json for diagnostics; the browsers negotiate it directly.
 // v2 added signed long-lived device identities.
-// v3 added signed static seal keys, which is what makes a server-buffered
-// transfer possible without the server being able to read it.
-const PROTOCOL_VERSION = 3;
+// v2 added signed long-lived device identities. The server relay does not
+// change the DataChannel protocol: it is a separate HTTP path, available to any
+// client that publishes a signed seal key at registration.
+const PROTOCOL_VERSION = 2;
 
 // Plaintext bytes per sealed body chunk. Published so both sides agree.
 const BLOB_CHUNK_SIZE = 256 * 1024;
@@ -339,24 +340,27 @@ function makeRoomCode(taken) {
 }
 
 const BLOB_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-const SEALED_BOX_MAX_CHARS = 4096;
+// A file envelope carries metadata and a key; a message envelope carries the
+// message itself, so it may be much larger.
+const SEALED_BOX_MAX_CHARS = { file: 4096, message: 64 * 1024 };
 
-function validSealedBox(box) {
+function validSealedBox(box, maxChars) {
   if (!isPlainObject(box)) return false;
   if (box.v !== 1) return false;
   for (const field of ['ephemeral', 'iv', 'ciphertext']) {
-    if (!requiredString(box[field], SEALED_BOX_MAX_CHARS)) return false;
+    if (!requiredString(box[field], maxChars)) return false;
   }
   return true;
 }
 
 // The server never reads the envelopes; it only checks they are the right shape
 // and addressed to plausible device ids.
-function validEnvelopes(envelopes) {
+function validEnvelopes(envelopes, kind) {
   if (!isPlainObject(envelopes)) return false;
   const recipients = Object.keys(envelopes);
   if (!recipients.length || recipients.length > MAX_ROOM_MEMBERS) return false;
-  return recipients.every(id => matches(DEVICE_ID_PATTERN, id) && validSealedBox(envelopes[id]));
+  const maxChars = SEALED_BOX_MAX_CHARS[kind];
+  return recipients.every(id => matches(DEVICE_ID_PATTERN, id) && validSealedBox(envelopes[id], maxChars));
 }
 
 const DEVICE_ID_PATTERN = /^[A-Za-z0-9_-]{8,128}$/;
@@ -431,15 +435,21 @@ const VALIDATORS = Object.assign(Object.create(null), {
   signal: m => requiredString(m.to, 128) && matches(DEVICE_ID_PATTERN, m.to) && validSignalData(m.data),
 
   'blob-offer': m =>
+    optionalString(m.requestId, 64) &&
+    (m.kind == null || m.kind === 'file' || m.kind === 'message') &&
     (m.conv === 'direct' || (typeof m.conv === 'string' && m.conv.startsWith('room:') && matches(ROOM_ID_PATTERN, m.conv.slice(5)))) &&
     Number.isInteger(m.bytes) && m.bytes >= 0 &&
     Number.isInteger(m.chunkSize) && m.chunkSize > 0 && m.chunkSize <= 1024 * 1024 &&
     Number.isInteger(m.totalChunks) && m.totalChunks >= 0 &&
-    validEnvelopes(m.envelopes),
+    validEnvelopes(m.envelopes, m.kind || 'file'),
   'blob-claim': m => matches(BLOB_ID_PATTERN, m.blobId),
   'blob-release': m => matches(BLOB_ID_PATTERN, m.blobId),
   'blob-cancel': m => matches(BLOB_ID_PATTERN, m.blobId),
-  'blobs-request': () => true
+  'blobs-request': () => true,
+  'lookup-devices': m =>
+    optionalString(m.requestId, 64) &&
+    Array.isArray(m.deviceIds) && m.deviceIds.length > 0 && m.deviceIds.length <= 200 &&
+    m.deviceIds.every(id => matches(DEVICE_ID_PATTERN, id))
 });
 
 function validatorFor(type) {
@@ -457,7 +467,15 @@ export function createAriaDropServer({
   trustProxy = truthy(process.env.TRUST_PROXY),
   allowedOrigins = splitList(process.env.ALLOWED_ORIGINS),
   limits: limitOverrides = {},
-  blobs: blobOptions = {}
+  blobs: blobOptions = {},
+  // How long a device that has disconnected can still be sent to, and how long a
+  // room keeps a disconnected member's seat. Matches the relay's maximum age:
+  // there is no point addressing something to a device the item cannot outlive.
+  recentWindowMs = Number(process.env.BLOB_MAX_AGE_MS || 24 * 60 * 60 * 1000),
+  // A device that reconnects but does not rejoin a room within this long has
+  // lost its room state (a reload), so it is dropped from the room's away list.
+  rejoinGraceMs = 10000,
+  maxRecentDevices = 10000
 } = {}) {
   const limits = { ...DEFAULT_LIMITS, ...limitOverrides };
   const blobStore = createBlobStore(blobOptions);
@@ -523,7 +541,8 @@ export function createAriaDropServer({
           ok: true,
           peers: clients.size,
           rooms: rooms.size,
-          bufferedTransfers: buffered.count,
+          bufferedTransfers: buffered.files,
+          bufferedMessages: buffered.messages,
           bufferedBytes: buffered.bytes
         }));
         return;
@@ -651,6 +670,43 @@ export function createAriaDropServer({
     for (const client of clients.values()) json(client.ws, { type: 'presence', peers });
   }
 
+  /* ---------- recently seen devices ---------- */
+
+  // The last signed key record of every device seen within the window, so a
+  // message can be sealed to a device that has since gone offline. Safe to keep
+  // on an untrusted server: the device id is the fingerprint of the identity
+  // key, and the seal key is signed by it, so clients verify a record exactly as
+  // they would a live one and a substituted key fails that check.
+  /** @type {Map<string, { record: any, lastSeen: number }>} */
+  const recentDevices = new Map();
+
+  function noteSeen(deviceId) {
+    const client = clients.get(deviceId);
+    if (!client) return;
+    recentDevices.delete(deviceId); // re-insert so Map order tracks recency
+    recentDevices.set(deviceId, { record: peerPublic(client), lastSeen: Date.now() });
+    // Bounded: evict the longest-unseen offline entries past the cap.
+    for (const [id] of recentDevices) {
+      if (recentDevices.size <= maxRecentDevices) break;
+      if (!clients.has(id)) recentDevices.delete(id);
+    }
+  }
+
+  function isRecent(deviceId) {
+    if (clients.has(deviceId)) return true;
+    const seen = recentDevices.get(deviceId);
+    return Boolean(seen) && seen.lastSeen >= Date.now() - recentWindowMs;
+  }
+
+  /** Public record for a device, live if connected, otherwise last seen. */
+  function deviceRecord(deviceId) {
+    const client = clients.get(deviceId);
+    if (client) return { ...peerPublic(client), online: true, lastSeen: Date.now() };
+    const seen = recentDevices.get(deviceId);
+    if (!seen || !isRecent(deviceId)) return null;
+    return { ...seen.record, online: false, lastSeen: seen.lastSeen };
+  }
+
   function roomPublic(room) {
     return {
       id: room.id,
@@ -661,8 +717,20 @@ export function createAriaDropServer({
       members: [...room.members]
         .map(id => clients.get(id))
         .filter(Boolean)
-        .map(peerPublic)
+        .map(peerPublic),
+      // Members who dropped off without leaving. They keep their seat and are
+      // still sent to (through the relay) until they rejoin or the window ends.
+      away: [...room.away.entries()]
+        .map(([id, since]) => {
+          const record = deviceRecord(id);
+          return record ? { ...record, awaySince: since } : null;
+        })
+        .filter(Boolean)
     };
+  }
+
+  function roomSeatsTaken(room) {
+    return room.members.size + room.away.size;
   }
 
   function broadcastRooms() {
@@ -670,15 +738,45 @@ export function createAriaDropServer({
     for (const client of clients.values()) json(client.ws, { type: 'rooms', rooms: list });
   }
 
-  // A room lives exactly as long as at least one member is still connected.
-  // The last member leaving destroys the server-side record; the payloads only
-  // ever existed in the participants' browsers, so nothing survives either side.
-  function dropMembership(deviceId) {
+  // A disconnect is not a leave. A phone that locks or drops off Wi-Fi keeps its
+  // seat as "away", so members keep sending to it and it catches up when it
+  // rejoins. Only an explicit leave, a reload (see rejoinGraceMs), or the window
+  // running out actually removes it. A room lasts while anyone holds a seat.
+  function markAway(deviceId) {
+    let changed = false;
+    for (const room of rooms.values()) {
+      if (!room.members.delete(deviceId)) continue;
+      room.away.set(deviceId, Date.now());
+      changed = true;
+    }
+    return changed;
+  }
+
+  function dropSeat(room, deviceId) {
+    const wasMember = room.members.delete(deviceId);
+    const wasAway = room.away.delete(deviceId);
+    if (roomSeatsTaken(room) === 0) rooms.delete(room.id);
+    return wasMember || wasAway;
+  }
+
+  /** Away seats past the window, and rooms left with nobody, are removed. */
+  function expireAway() {
+    const cutoff = Date.now() - recentWindowMs;
     let changed = false;
     for (const room of [...rooms.values()]) {
-      if (!room.members.delete(deviceId)) continue;
-      changed = true;
-      if (room.members.size === 0) rooms.delete(room.id);
+      for (const [id, since] of room.away) {
+        if (since < cutoff) {
+          room.away.delete(id);
+          changed = true;
+        }
+      }
+      if (roomSeatsTaken(room) === 0) {
+        rooms.delete(room.id);
+        changed = true;
+      }
+    }
+    for (const [id, seen] of recentDevices) {
+      if (!clients.has(id) && seen.lastSeen < cutoff) recentDevices.delete(id);
     }
     return changed;
   }
@@ -694,7 +792,8 @@ export function createAriaDropServer({
       code,
       name: cleanName(msg.name || 'Room'),
       createdAt: Date.now(),
-      members: new Set()
+      members: new Set(),
+      away: new Map()
     };
     rooms.set(id, room);
     return room;
@@ -707,24 +806,33 @@ export function createAriaDropServer({
     if (!recipients.length) return false;
     if (recipients.includes(senderId)) return false;
     if (conv === 'direct') {
-      return recipients.length === 1 && clients.has(recipients[0]);
+      // Connected now, or seen within the window: an item addressed to it can
+      // still be collected before it ages out.
+      return recipients.length === 1 && isRecent(recipients[0]);
     }
     const room = rooms.get(conv.slice(5));
     if (!room || !room.members.has(senderId)) return false;
-    return recipients.every(id => room.members.has(id));
+    return recipients.every(id => room.members.has(id) || room.away.has(id));
   }
 
   function removeClient(deviceId, ws) {
     const existing = clients.get(deviceId);
     if (!existing || existing.ws !== ws) return;
+    noteSeen(deviceId);
     clients.delete(deviceId);
     if (codeOwners.get(existing.code) === deviceId) codeOwners.delete(existing.code);
-    const roomsChanged = dropMembership(deviceId);
+    const roomsChanged = markAway(deviceId);
     broadcastPresence();
     if (roomsChanged) broadcastRooms();
-    // The primary deletion rule: a buffered transfer only lives while someone
-    // party to it is still connected.
-    blobStore.purgeUnattended(id => clients.has(id));
+    // Relayed items are deliberately NOT removed here. A device that comes back
+    // within the maximum age still receives what was sent to it; the age sweep
+    // is what removes anything left behind.
+  }
+
+  function deliverPending(ws, deviceId) {
+    blobStore.pendingFor(deviceId).then(items => {
+      for (const item of items) json(ws, { type: 'blob-available', ...item });
+    }).catch(err => console.error('Could not list relayed items:', err?.message || err));
   }
 
   function refuseUpgrade(socket, status, reason) {
@@ -822,13 +930,26 @@ export function createAriaDropServer({
           sealKeySignature: typeof msg.sealKeySignature === 'string' ? msg.sealKeySignature : null,
           ip
         });
+        noteSeen(deviceId);
         json(ws, { type: 'registered', self: peerPublic(clients.get(deviceId)) });
         broadcastPresence();
         json(ws, { type: 'rooms', rooms: [...rooms.values()].map(roomPublic) });
-        // Anything buffered for this device while it was away.
-        for (const pending of blobStore.pendingFor(deviceId)) {
-          json(ws, { type: 'blob-available', ...pending });
-        }
+        // Anything relayed to this device while it was away, oldest first.
+        deliverPending(ws, deviceId);
+
+        // A browser that only lost its connection rejoins its rooms straight
+        // away. One that does not has reloaded and lost its room state, so it is
+        // not coming back to those seats; stop sending to it there.
+        const registeredAt = Date.now();
+        setTimeout(() => {
+          if (!clients.has(deviceId)) return; // dropped again: still genuinely away
+          let changed = false;
+          for (const room of [...rooms.values()]) {
+            const since = room.away.get(deviceId);
+            if (since != null && since <= registeredAt) changed = dropSeat(room, deviceId) || changed;
+          }
+          if (changed) broadcastRooms();
+        }, rejoinGraceMs).unref?.();
         return;
       }
 
@@ -836,6 +957,7 @@ export function createAriaDropServer({
 
       if (msg.type === 'rename') {
         clients.get(registeredId).name = cleanName(msg.name);
+        noteSeen(registeredId);
         broadcastPresence();
         if ([...rooms.values()].some(room => room.members.has(registeredId))) broadcastRooms();
         return;
@@ -859,7 +981,8 @@ export function createAriaDropServer({
           name: cleanName(msg.name || 'Room'),
           createdAt: Date.now(),
           createdBy: registeredId,
-          members: new Set([registeredId])
+          members: new Set([registeredId]),
+          away: new Map()
         };
         rooms.set(room.id, room);
         json(ws, { type: 'room-joined', room: roomPublic(room) });
@@ -879,10 +1002,14 @@ export function createAriaDropServer({
           json(ws, { type: 'error', context: 'join-room', message: 'That room is no longer active.' });
           return;
         }
-        if (!room.members.has(registeredId) && room.members.size >= MAX_ROOM_MEMBERS) {
+        // An away member is reclaiming its own seat, so it always fits; anyone
+        // else needs a seat that is neither taken nor held for someone away.
+        const returning = room.members.has(registeredId) || room.away.has(registeredId);
+        if (!returning && roomSeatsTaken(room) >= MAX_ROOM_MEMBERS) {
           json(ws, { type: 'error', context: 'join-room', message: `Rooms are limited to ${MAX_ROOM_MEMBERS} devices.` });
           return;
         }
+        room.away.delete(registeredId);
         room.members.add(registeredId);
         json(ws, { type: 'room-joined', room: roomPublic(room) });
         broadcastRooms();
@@ -891,10 +1018,16 @@ export function createAriaDropServer({
 
       if (msg.type === 'leave-room') {
         const room = rooms.get(String(msg.roomId || ''));
-        if (!room || !room.members.delete(registeredId)) return;
-        if (room.members.size === 0) rooms.delete(room.id);
+        // An explicit leave gives the seat up entirely; it is not "away".
+        if (!room || !dropSeat(room, registeredId)) return;
         json(ws, { type: 'room-left', roomId: room.id });
         broadcastRooms();
+        return;
+      }
+
+      if (msg.type === 'lookup-devices') {
+        const devices = msg.deviceIds.map(deviceRecord).filter(Boolean);
+        json(ws, { type: 'devices-found', requestId: msg.requestId, devices });
         return;
       }
 
@@ -908,61 +1041,67 @@ export function createAriaDropServer({
         // other party of a direct session, or fellow members of a joined room.
         const recipients = Object.keys(msg.envelopes);
         if (!recipientsAllowed(registeredId, msg.conv, recipients)) {
-          json(ws, { type: 'error', context: 'blob-offer', message: 'Those recipients are not reachable from this device.' });
+          json(ws, { type: 'error', context: 'blob-offer', requestId: msg.requestId, message: 'Those recipients are not reachable from this device.' });
           return;
         }
-        const result = blobStore.offer({
-          senderId: registeredId,
+        const senderId = registeredId;
+        blobStore.offer({
+          senderId,
           conv: msg.conv,
+          kind: msg.kind || 'file',
           bytes: msg.bytes,
           chunkSize: msg.chunkSize,
           totalChunks: msg.totalChunks,
           envelopes: msg.envelopes
-        });
-        if (result.error) {
-          json(ws, { type: 'error', context: 'blob-offer', message: result.error });
-          return;
-        }
-        json(ws, {
-          type: 'blob-offered',
-          blobId: result.blob.id,
-          uploadToken: result.blob.uploadToken,
-          maxAgeMs: blobStore.config.maxAgeMs
+        }).then(result => {
+          if (result.error) {
+            json(ws, { type: 'error', context: 'blob-offer', requestId: msg.requestId, message: result.error });
+            return;
+          }
+          json(ws, {
+            type: 'blob-offered',
+            requestId: msg.requestId,
+            blobId: result.blob.id,
+            uploadToken: result.blob.kind === 'file' ? result.blob.uploadToken : undefined,
+            maxAgeMs: blobStore.config.maxAgeMs
+          });
+        }).catch(err => {
+          console.error('Could not store a relayed item:', err?.message || err);
+          json(ws, { type: 'error', context: 'blob-offer', requestId: msg.requestId, message: 'The server could not store that.' });
         });
         return;
       }
 
       if (msg.type === 'blob-claim') {
-        const claimed = blobStore.claim(msg.blobId, registeredId);
-        if (claimed.error) {
-          json(ws, { type: 'error', context: 'blob-claim', message: claimed.error, blobId: msg.blobId });
-          return;
-        }
-        json(ws, {
-          type: 'blob-claimed',
-          blobId: msg.blobId,
-          downloadToken: claimed.downloadToken,
-          envelope: claimed.envelope,
-          bytes: claimed.blob.bytes
-        });
+        blobStore.claim(msg.blobId, registeredId).then(claimed => {
+          if (claimed.error) {
+            json(ws, { type: 'error', context: 'blob-claim', message: claimed.error, blobId: msg.blobId });
+            return;
+          }
+          json(ws, {
+            type: 'blob-claimed',
+            blobId: msg.blobId,
+            downloadToken: claimed.downloadToken,
+            envelope: claimed.envelope,
+            bytes: claimed.blob.bytes
+          });
+        }).catch(() => json(ws, { type: 'error', context: 'blob-claim', message: 'That transfer could not be opened.', blobId: msg.blobId }));
         return;
       }
 
       if (msg.type === 'blob-release') {
-        blobStore.release(msg.blobId, registeredId);
+        blobStore.release(msg.blobId, registeredId).catch(() => {});
         return;
       }
 
       if (msg.type === 'blob-cancel') {
         const blob = blobStore.blobs.get(msg.blobId);
-        if (blob && blob.senderId === registeredId) blobStore.remove(msg.blobId);
+        if (blob && blob.senderId === registeredId) blobStore.remove(msg.blobId).catch(() => {});
         return;
       }
 
       if (msg.type === 'blobs-request') {
-        for (const pending of blobStore.pendingFor(registeredId)) {
-          json(ws, { type: 'blob-available', ...pending });
-        }
+        deliverPending(ws, registeredId);
         return;
       }
 
@@ -1006,20 +1145,26 @@ export function createAriaDropServer({
     ws.on('error', () => {});
   });
 
-  // As soon as an upload finishes, tell whichever recipients are online.
+  // As soon as an item is ready — a message on arrival, a file once uploaded —
+  // tell whichever recipients are online. The rest get it when they register.
   blobStore.onAvailable = (blob) => {
     for (const recipient of blob.recipients) {
       const client = clients.get(recipient);
-      if (client) json(client.ws, { type: 'blob-available', ...blobStore.describe(blob, recipient) });
+      if (!client) continue;
+      blobStore.describe(blob, recipient)
+        .then(item => json(client.ws, { type: 'blob-available', ...item }))
+        .catch(() => {});
     }
   };
 
   // The age sweep. Runs often so nothing overshoots its maximum age by much;
-  // a blob younger than that is left alone.
+  // anything younger is left alone, and empty conversation directories go.
   const blobSweep = setInterval(() => {
     blobStore.sweepAged().then(purged => {
-      if (purged.length) console.log(`Swept ${purged.length} buffered transfer(s) past ${blobStore.config.maxAgeMs}ms`);
+      if (purged.length) console.log(`Swept ${purged.length} relayed item(s) past ${blobStore.config.maxAgeMs}ms`);
     }).catch(() => {});
+    // Same window for away seats and remembered devices.
+    if (expireAway()) broadcastRooms();
   }, blobStore.config.sweepEveryMs);
   blobSweep.unref?.();
 
@@ -1070,8 +1215,9 @@ export function createAriaDropServer({
   async function stop({ graceMs = 250, keepBlobs = false } = {}) {
     clearInterval(heartbeat);
     clearInterval(blobSweep);
-    // Shutting down means nobody is connected, so by the primary rule nothing
-    // buffered should survive.
+    // Item records live only in memory, so once this process ends nothing on
+    // disk can be delivered again. Erase it now rather than leave it for the
+    // next boot. A restart therefore ends relayed items early, never late.
     if (!keepBlobs) await blobStore.wipe('shutdown').catch(() => {});
     for (const ws of sockets) {
       try { ws.close(1001, 'Server stopping'); } catch {}
@@ -1099,44 +1245,27 @@ export function createAriaDropServer({
     });
   }
 
-  return { server, clients, sockets, rooms, connectionsByIp, limits, blobStore, start, stop };
+  return { server, clients, sockets, rooms, recentDevices, connectionsByIp, limits, blobStore, expireAway, start, stop };
 }
 
 if (process.argv[1] === __filename) {
-  // `node server.js --sweep-blobs [maxAgeMs]` removes buffered transfers past
-  // the given age and exits, so a host-side cron or systemd timer can drive the
-  // sweep instead of (or as well as) the in-process one:
+  // `node server.js --sweep-blobs [maxAgeMs]` removes relayed items past the
+  // given age, removes any conversation directory left empty, and exits — so a
+  // host-side cron or systemd timer can drive the sweep as well as the
+  // in-process one:
   //   docker exec aria-drop node server.js --sweep-blobs
   if (process.argv.includes('--sweep-blobs')) {
     const store = createBlobStore();
     const explicit = Number(process.argv[process.argv.indexOf('--sweep-blobs') + 1]);
     const maxAgeMs = Number.isFinite(explicit) ? explicit : store.config.maxAgeMs;
-    // Nothing is in memory in a fresh process, so sweep the directory by mtime.
-    const { readdir, stat, rm } = await import('node:fs/promises');
-    const cutoff = Date.now() - maxAgeMs;
-    let removed = 0;
-    let kept = 0;
     try {
-      for (const entry of await readdir(store.config.dir)) {
-        if (!entry.endsWith('.bin')) continue;
-        const full = `${store.config.dir}/${entry}`;
-        const info = await stat(full).catch(() => null);
-        if (!info) continue;
-        if (info.mtimeMs < cutoff) {
-          await rm(full, { force: true });
-          removed++;
-        } else {
-          kept++;
-        }
-      }
+      const result = await sweepDirectory(store.config.dir, maxAgeMs);
+      console.log(`Swept ${result.removed} relayed file(s) older than ${maxAgeMs}ms; kept ${result.kept}; removed ${result.directories} empty director${result.directories === 1 ? 'y' : 'ies'}.`);
+      process.exit(0);
     } catch (err) {
-      if (err?.code !== 'ENOENT') {
-        console.error(err);
-        process.exit(1);
-      }
+      console.error(err);
+      process.exit(1);
     }
-    console.log(`Swept ${removed} buffered transfer(s) older than ${maxAgeMs}ms; kept ${kept}.`);
-    process.exit(0);
   }
 
   const app = createAriaDropServer();

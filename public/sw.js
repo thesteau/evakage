@@ -14,7 +14,7 @@
 // DOM lib does not know about.
 const worker = /** @type {ServiceWorkerGlobalScope} */ (/** @type {unknown} */ (self));
 
-const CACHE = 'aria-drop-v3';
+const CACHE = 'aria-drop-v4';
 
 const SHELL = [
   '/',
@@ -23,6 +23,7 @@ const SHELL = [
   '/app.js',
   '/sha256.js',
   '/identity.js',
+  '/relay.js',
   '/manifest.webmanifest',
   '/icon.svg',
   '/icons/icon-192.png',
@@ -65,6 +66,9 @@ worker.addEventListener('fetch', event => {
   const url = new URL(request.url);
   if (url.origin !== location.origin) return;
   if (NETWORK_ONLY.has(url.pathname)) return;
+  // Relayed transfers must never touch Cache Storage: that would persist file
+  // bodies on the device and could replay a stale one.
+  if (url.pathname.startsWith('/blob/')) return;
 
   // Navigations: network first so an auth redirect or a new build is picked up,
   // falling back to the cached shell when offline.

@@ -1,11 +1,17 @@
 FROM node:22-alpine
 
+# BLOB_DIR sits in the container's own writable layer and is deliberately never
+# declared as a VOLUME: buffered transfers must not outlive the container, and a
+# volume would let them survive a recreate. See blobstore.js for the lifetime.
 ENV NODE_ENV=production \
     PORT=3000 \
-    HOST=0.0.0.0
+    HOST=0.0.0.0 \
+    BLOB_DIR=/tmp/aria-drop-blobs
 
 WORKDIR /app
-COPY --chown=node:node package.json package-lock.json server.js ./
+# Every server-side module must be listed here. The app has no runtime
+# dependencies, so there is no npm install step to pull them in implicitly.
+COPY --chown=node:node package.json package-lock.json server.js blobstore.js ./
 COPY --chown=node:node public ./public
 
 USER node

@@ -1,0 +1,31 @@
+# Deployment compose: runs a published image, never builds from source.
+# For building locally from a checkout, use the docker-compose.yml at the repo root.
+#
+#   cd deploy
+#   docker compose pull && docker compose up -d
+#
+# The image is a placeholder until you pin a real release. The default is what
+# the GHCR workflow publishes from main; override without editing this file:
+#
+#   ARIA_DROP_IMAGE=ghcr.io/thesteau/aria-drop:sha-abc1234 docker compose up -d
+
+services:
+  aria-drop:
+    image: ${ARIA_DROP_IMAGE:-ghcr.io/thesteau/aria-drop:latest}
+    container_name: aria-drop
+    restart: unless-stopped
+    ports:
+      - "3712:3000"
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      PORT: "3000"
+      MAX_FILE_BYTES: "536870912"
+    # Deliberately no `volumes:`. Buffered transfers live in /tmp inside the
+    # container's own writable layer, so they cannot outlive the container and are
+    # never exposed on the host. Do not add a volume for BLOB_DIR.
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL

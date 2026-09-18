@@ -17,9 +17,8 @@ Do not treat the rest of this file as a queue to burn down.
 - [x] **License.** MIT, `LICENSE` + `package.json` `license` field.
       Copyright holder is `thesteau` from the git identity — change it if that
       should be a different name or legal entity.
-- [ ] **`package.json` metadata.** `repository`, `author`, `bugs`, `homepage`
-      are unset. Not actionable yet: this working copy has no git remote, so
-      there is no URL to put there. Fill in when the repo gets one.
+- [x] **`package.json` metadata.** `repository`, `author`, `bugs`, `homepage`
+      point at `github.com/thesteau/aria-drop` now that the repo has a remote.
 - [ ] **Commission a protocol/security review.** `npm audit`, CodeQL, Trivy and
       the fuzzer all run in CI, but automated scanning is not a review, and the
       README/SECURITY wording should not imply otherwise until one happens.
@@ -82,6 +81,37 @@ Do not treat the rest of this file as a queue to burn down.
       WebRTC, PWA or identity behaviour — only what `node --test` reaches.
       Adding Playwright as a dev-only dependency and an `npm run test:e2e`
       would fix that; it is the largest remaining hole in the test story.
+
+## Server relay
+
+- [x] Sealed, signed server relay for **files and messages**, with direct-first
+      fallback per recipient and a forced "Via server" mode. One directory per
+      conversation; an item is deleted once every recipient has it, otherwise it
+      stays — even after both devices disconnect — until the 24h sweep, which
+      also removes empty directories. `blobstore.js`, `public/relay.js`.
+
+To keep in mind — deliberately not being worked on:
+
+- [ ] **No sending to an offline device.** A recipient's seal key comes from
+      presence, so the sender needs the recipient online at the moment of
+      sending. Once sent, an item already waits up to 24h for a recipient who
+      drops off; the gap is only in *starting* a send to someone already gone.
+      Caching verified seal keys of known devices would close it.
+- [ ] **Relay is not resumable.** A dropped upload or download starts over.
+      Direct transfers resume from held chunks; the relay could do the same with
+      HTTP `Range` on download and chunked PUTs on upload.
+- [ ] **A server restart drops everything waiting.** Item records live only in
+      memory, so a restart erases items rather than keeping them for their full
+      24h. That errs on the side of deleting, which is the intent, but a
+      redeploy loses undelivered messages.
+- [ ] **Room messages to a member who reloaded are not delivered.** A reload
+      leaves the room, so the waiting item has no conversation to land in. It is
+      left for the 24h sweep rather than dropped, and arrives if the device
+      rejoins the same room before then.
+- [ ] **Sender pays 2× the file in memory while uploading** — the encrypted
+      body is built as one Blob before the PUT, because streaming request bodies
+      are not supported in Safari. Browsers may spill large Blobs to disk, but it
+      is not guaranteed.
 
 ## Protocol / reliability
 

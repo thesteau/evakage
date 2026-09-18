@@ -8,7 +8,7 @@ test('health, presence, stable codes, and code lookup work', async t => {
   const wsBase = env.wsBase;
 
   const health = await fetch(`${base}/healthz`).then(r => r.json());
-  assert.deepEqual(health, { ok: true, peers: 0, rooms: 0, bufferedTransfers: 0, bufferedBytes: 0 });
+  assert.deepEqual(health, { ok: true, peers: 0, rooms: 0, bufferedTransfers: 0, bufferedMessages: 0, bufferedBytes: 0 });
 
   const config = await fetch(`${base}/config.json`).then(r => r.json());
   assert.deepEqual(config.iceServers, []);
@@ -41,7 +41,7 @@ test('health, presence, stable codes, and code lookup work', async t => {
   b.close();
 });
 
-test('rooms advertise membership, cap size, and die with their last member', async t => {
+test('rooms advertise membership, cap size, and close when their last member leaves', async t => {
   const { app, ...env } = await startServer(t);
   const wsBase = env.wsBase;
 
@@ -124,49 +124,5 @@ test('one device cannot claim every room slot', async t => {
   assert.equal(app.rooms.size, 9);
 
   hog.close();
-  other.close();
-});
-
-test('a disconnect drops room membership and a reconnect can restore the room', async t => {
-  const { app, ...env } = await startServer(t);
-  const wsBase = env.wsBase;
-
-  const a = await register(wsBase, 'device_A_12345678', 'Laptop');
-  const b = await register(wsBase, 'device_B_12345678', 'Phone');
-
-  const created = waitFor(a, m => m.type === 'room-joined');
-  a.send(JSON.stringify({ type: 'create-room', name: 'Shared' }));
-  const room = (await created).room;
-
-  const bJoined = waitFor(b, m => m.type === 'room-joined');
-  b.send(JSON.stringify({ type: 'join-room', roomId: room.id }));
-  await bJoined;
-
-  const aSeesOne = waitFor(a, m => m.type === 'rooms' && m.rooms[0]?.members.length === 1);
-  b.close();
-  await aSeesOne;
-  assert.equal(app.rooms.get(room.id).members.size, 1);
-
-  // Both drop: the server forgets the room entirely.
-  a.close();
-  await new Promise(r => setTimeout(r, 120));
-  assert.equal(app.rooms.has(room.id), false);
-
-  // A browser that still holds the room's RAM state can restore the same id/code.
-  const back = await register(wsBase, 'device_A_12345678', 'Laptop');
-  const restored = waitFor(back, m => m.type === 'room-joined');
-  back.send(JSON.stringify({ type: 'join-room', roomId: room.id, recreate: true, name: 'Shared', code: room.code }));
-  const again = (await restored).room;
-  assert.equal(again.id, room.id);
-  assert.equal(again.code, room.code);
-  assert.equal(again.name, 'Shared');
-
-  // Without recreate, a vanished room stays gone.
-  const other = await register(wsBase, 'device_C_12345678', 'Desktop');
-  const refused = waitFor(other, m => m.type === 'error' && m.context === 'join-room');
-  other.send(JSON.stringify({ type: 'join-room', roomId: '11111111-2222-3333-4444-555555555555' }));
-  assert.match((await refused).message, /no longer active/);
-
-  back.close();
   other.close();
 });

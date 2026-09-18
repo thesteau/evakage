@@ -4,6 +4,15 @@
   "private": true,
   "description": "Browser-first ephemeral peer chat and file transfer for trusted networks.",
   "license": "MIT",
+  "author": "thesteau",
+  "homepage": "https://github.com/thesteau/aria-drop#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/thesteau/aria-drop.git"
+  },
+  "bugs": {
+    "url": "https://github.com/thesteau/aria-drop/issues"
+  },
   "type": "module",
   "scripts": {
     "start": "node server.js",
