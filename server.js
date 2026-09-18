@@ -84,11 +84,12 @@ function timingSafeEqualString(a, b) {
 }
 
 function parseCookies(header) {
-  const out = Object.create(null);
+  /** @type {Map<string, string>} */
+  const out = new Map();
   for (const part of String(header || '').split(';')) {
     const index = part.indexOf('=');
     if (index < 1) continue;
-    out[part.slice(0, index).trim()] = part.slice(index + 1).trim();
+    out.set(part.slice(0, index).trim(), part.slice(index + 1).trim());
   }
   return out;
 }
@@ -338,9 +339,8 @@ const ROOM_CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 
 function makeRoomCode(taken) {
   for (let attempt = 0; attempt < 40; attempt++) {
-    const bytes = crypto.randomBytes(8);
     let raw = '';
-    for (let i = 0; i < 8; i++) raw += ROOM_CODE_ALPHABET[bytes[i] % ROOM_CODE_ALPHABET.length];
+    for (let i = 0; i < 8; i++) raw += ROOM_CODE_ALPHABET[crypto.randomInt(ROOM_CODE_ALPHABET.length)];
     const code = `${raw.slice(0, 4)}-${raw.slice(4)}`;
     if (!taken.has(code)) return code;
   }
@@ -498,8 +498,8 @@ export function createAriaDropServer({
 
   function isAuthorized(req) {
     if (!authToken) return true;
-    const presented = parseCookies(req.headers.cookie)[AUTH_COOKIE];
-    return Boolean(presented) && timingSafeEqualString(presented, authCookieValue());
+    const presented = parseCookies(req.headers.cookie).get(AUTH_COOKIE);
+    return timingSafeEqualString(presented ?? '', authCookieValue());
   }
 
   function effectiveHost(req) {
@@ -587,8 +587,10 @@ export function createAriaDropServer({
       }
 
       if (authToken) {
-        const presented = reqUrl.searchParams.get('token');
-        if (presented && timingSafeEqualString(presented, authToken)) {
+        // Decided only by the constant-time comparison with the configured
+        // secret; a missing token compares as empty, which never matches.
+        const presented = reqUrl.searchParams.get('token') ?? '';
+        if (timingSafeEqualString(presented, authToken)) {
           // Trade the link for a cookie so the token stops travelling in URLs,
           // and so the WebSocket upgrade carries it automatically.
           reqUrl.searchParams.delete('token');

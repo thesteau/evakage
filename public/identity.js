@@ -240,41 +240,53 @@ export async function safetyCode(fingerprintA, fingerprintB) {
 
 /* ---------- trust-on-first-use store ---------- */
 
-export function knownDevices() {
+// Held as a Map, never as an object indexed by fingerprint: device IDs come from
+// other devices, and one named `__proto__` must not reach an object's prototype
+// (which would also make deviceTrust() report a stranger as known).
+/** @returns {Map<string, {name: string, firstSeen: number, lastSeen: number}>} */
+function loadKnownDevices() {
   try {
     const parsed = JSON.parse(localStorage.getItem(KNOWN_DEVICES_KEY) || '{}');
-    return parsed && typeof parsed === 'object' ? parsed : {};
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return new Map();
+    return new Map(Object.entries(parsed).filter(([, record]) => record && typeof record === 'object'));
   } catch {
-    return {};
+    return new Map();
   }
 }
 
+/** @param {Map<string, any>} devices */
 function saveKnownDevices(devices) {
-  try { localStorage.setItem(KNOWN_DEVICES_KEY, JSON.stringify(devices)); } catch {}
+  try { localStorage.setItem(KNOWN_DEVICES_KEY, JSON.stringify(Object.fromEntries(devices))); } catch {}
+}
+
+// A snapshot for listing. Look a single device up with deviceTrust().
+export function knownDevices() {
+  return [...loadKnownDevices()];
 }
 
 export function deviceTrust(fingerprint) {
-  return knownDevices()[fingerprint] || null;
+  return loadKnownDevices().get(fingerprint) || null;
 }
 
 // First sighting is recorded; later sightings only refresh the name and time.
 // Because the ID *is* the key fingerprint, a re-keyed device shows up as a new
 // device rather than silently taking over an existing entry.
 export function rememberDevice(fingerprint, name) {
-  const devices = knownDevices();
+  const devices = loadKnownDevices();
   const now = Date.now();
-  const existing = devices[fingerprint];
-  devices[fingerprint] = {
+  const existing = devices.get(fingerprint);
+  const record = {
     name: name || existing?.name || '',
     firstSeen: existing?.firstSeen || now,
     lastSeen: now
   };
+  devices.set(fingerprint, record);
   saveKnownDevices(devices);
-  return devices[fingerprint];
+  return record;
 }
 
 export function forgetDevice(fingerprint) {
-  const devices = knownDevices();
-  delete devices[fingerprint];
+  const devices = loadKnownDevices();
+  devices.delete(fingerprint);
   saveKnownDevices(devices);
 }

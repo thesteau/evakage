@@ -86,6 +86,9 @@ async function receiveShare(request) {
 }
 
 worker.addEventListener('message', event => {
+  // Only this origin's own pages can talk to its worker, but say so explicitly:
+  // a share is handed to whoever asks with its ID.
+  if (event.origin !== location.origin) return;
   // The page asks for the update rather than having it applied underneath it,
   // so a transfer in progress is never cut off by a reload.
   if (event.data === 'skip-waiting') {

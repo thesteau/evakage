@@ -255,7 +255,7 @@ function connectWebSocket() {
       rejoinRooms();
       // Recover records for devices we have talked to, so ones that are offline
       // right now can still be listed and sent to.
-      lookupDevices([...Object.keys(knownDevices()), ...state.deviceRecords.keys()]);
+      lookupDevices([...knownDevices().map(([id]) => id), ...state.deviceRecords.keys()]);
       return;
     }
 
@@ -335,7 +335,7 @@ function connectWebSocket() {
 
     if (msg.type === 'resolved-code') {
       const pending = state.pendingCodeRequests.get(msg.requestId);
-      if (pending) {
+      if (typeof pending === 'function') {
         state.pendingCodeRequests.delete(msg.requestId);
         pending(msg.peer);
       }
@@ -703,6 +703,9 @@ async function handleSignal(peerId, data) {
     await pc.setLocalDescription(answer);
     signal(peerId, { type: 'answer', sdp: pc.localDescription });
   } else if (data.type === 'answer') {
+    // An answer to an offer this link has since abandoned (a reset crossed it in
+    // flight) would throw "wrong state: stable". The live negotiation continues.
+    if (pc.signalingState !== 'have-local-offer') return;
     await pc.setRemoteDescription(data.sdp);
     for (const candidate of link.candidateQueue.splice(0)) await pc.addIceCandidate(candidate).catch(() => {});
   } else if (data.type === 'ice' && data.candidate) {
@@ -1374,16 +1377,17 @@ async function sendMessageViaRelay(conv, message, recipientIds) {
   }
   if (!targets.length) return 0;
 
-  /** @type {Record<string, any>} */
-  const envelopes = {};
+  // Keyed by recipient device ID, which is peer-supplied: a Map, not an object.
+  /** @type {Map<string, any>} */
+  const envelopes = new Map();
   for (const target of targets) {
-    envelopes[target.id] = await buildMessageEnvelope({
+    envelopes.set(target.id, await buildMessageEnvelope({
       identity: state.identity,
       recipientId: target.id,
       recipientSealRaw: target.sealRaw,
       conv: convScope(conv),
       message
-    });
+    }));
   }
 
   // One sealed copy per recipient, so a long message to a large room can exceed
@@ -1397,21 +1401,22 @@ async function sendMessageViaRelay(conv, message, recipientIds) {
     bytes: 0,
     chunkSize: 1,
     totalChunks: 0,
-    envelopes: subset
+    envelopes: Object.fromEntries(subset)
   });
-  /** @type {Record<string, any>[]} */
+  /** @type {Array<Array<[string, any]>>} */
   const batches = [];
-  let batch = {};
-  for (const [id, envelope] of Object.entries(envelopes)) {
-    const candidate = { ...batch, [id]: envelope };
-    if (Object.keys(batch).length && JSON.stringify(makeFrame(candidate)).length > MAX_RELAY_FRAME_CHARS) {
+  /** @type {Array<[string, any]>} */
+  let batch = [];
+  for (const entry of envelopes) {
+    const candidate = [...batch, entry];
+    if (batch.length && JSON.stringify(makeFrame(candidate)).length > MAX_RELAY_FRAME_CHARS) {
       batches.push(batch);
-      batch = { [id]: envelope };
+      batch = [entry];
     } else {
       batch = candidate;
     }
   }
-  if (Object.keys(batch).length) batches.push(batch);
+  if (batch.length) batches.push(batch);
 
   let delivered = 0;
   for (const subset of batches) {
@@ -1423,7 +1428,7 @@ async function sendMessageViaRelay(conv, message, recipientIds) {
     }
     try {
       await awaitReply(frame.requestId, () => wsSend(frame));
-      delivered += Object.keys(subset).length;
+      delivered += subset.length;
     } catch (err) {
       toast(`Message not delivered via the server: ${err.message}`);
     }
@@ -1718,17 +1723,17 @@ async function sendViaRelay(conv, blob, meta, record, recipientIds) {
   renderSession();
 
   const { raw, key } = await generateContentKey();
-  /** @type {Record<string, any>} */
-  const envelopes = {};
+  /** @type {Map<string, any>} */
+  const envelopes = new Map();
   for (const target of targets) {
-    envelopes[target.id] = await buildEnvelope({
+    envelopes.set(target.id, await buildEnvelope({
       identity: state.identity,
       recipientId: target.id,
       recipientSealRaw: target.sealRaw,
       meta: { ...meta, chunkSize, totalChunks },
       contentKeyRaw: raw,
       conv: convScope(conv)
-    });
+    }));
   }
 
   const body = await encryptBody(blob, key, meta.id, chunkSize, fraction => {
@@ -1744,7 +1749,7 @@ async function sendViaRelay(conv, blob, meta, record, recipientIds) {
     bytes,
     chunkSize,
     totalChunks,
-    envelopes
+    envelopes: Object.fromEntries(envelopes)
   }));
 
   record.relayStage = 'uploading';
@@ -2373,10 +2378,9 @@ function renderPeersNow() {
 // every stranger who was ever online on the server.
 function offlineDevicesToList() {
   if (!relayEnabled()) return [];
-  const known = knownDevices();
   return [...state.deviceRecords.values()]
     .filter(record => isRecentlySeen(record.id))
-    .filter(record => known[record.id] || state.conversations.has(directConvId(record.id)))
+    .filter(record => deviceTrust(record.id) || state.conversations.has(directConvId(record.id)))
     .sort((a, b) => b.lastSeen - a.lastSeen);
 }
 
@@ -3143,7 +3147,7 @@ renameDialog.addEventListener('close', () => {
 
 function renderKnownDevices() {
   knownDeviceList.textContent = '';
-  const devices = Object.entries(knownDevices())
+  const devices = knownDevices()
     .sort((a, b) => (b[1].lastSeen || 0) - (a[1].lastSeen || 0));
 
   if (!devices.length) {

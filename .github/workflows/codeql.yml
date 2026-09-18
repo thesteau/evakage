@@ -27,6 +27,11 @@ jobs:
         with:
           languages: javascript-typescript
           queries: security-and-quality
+          # The tests deliberately build URLs from fixture data and write to the
+          # OS temp dir; they are never shipped, so their findings are noise.
+          config: |
+            paths-ignore:
+              - tests
 
       # Uploading to the Security tab needs code scanning enabled, which a private
       # repository only has with GitHub Code Security. Until then, results are
