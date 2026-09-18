@@ -1,0 +1,128 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#0b1020">
+  <meta name="description" content="Ephemeral browser-to-browser chat and file transfer for trusted networks.">
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="icon" href="/icon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/styles.css">
+  <title>drop-pak</title>
+</head>
+<body>
+  <header class="topbar">
+    <div>
+      <div class="eyebrow">working codename</div>
+      <h1>drop-pak</h1>
+    </div>
+    <div class="topbar-actions">
+      <button id="renameBtn" class="ghost">Rename device</button>
+      <div class="identity-card">
+        <span class="muted">Your code</span>
+        <button id="selfCode" class="code-button" title="Copy device code">----</button>
+      </div>
+    </div>
+  </header>
+
+  <main class="page-shell">
+    <section class="hero card">
+      <div>
+        <span id="serverState" class="status-dot offline">Connecting…</span>
+        <h2>Nearby browser peers</h2>
+        <p>Pick a device to chat, send text, or transfer a file. Payloads stay in browser memory and disappear when every participant is gone.</p>
+      </div>
+      <form id="codeForm" class="code-form">
+        <label for="codeInput">Connect by code</label>
+        <div class="inline-field">
+          <input id="codeInput" autocomplete="off" autocapitalize="characters" placeholder="ABCD-EFGH" maxlength="16">
+          <button type="submit">Open</button>
+        </div>
+        <span id="codeFeedback" class="form-feedback"></span>
+      </form>
+    </section>
+
+    <section class="card peers-card">
+      <div class="section-heading">
+        <div>
+          <h2>Advertised devices</h2>
+          <p class="muted">Presence refreshes automatically through the local signaling server.</p>
+        </div>
+        <button id="refreshBtn" class="ghost">Refresh view</button>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Device</th>
+              <th>Code</th>
+              <th>Platform</th>
+              <th>Status</th>
+              <th>RTT</th>
+              <th>Transferred</th>
+              <th class="actions-col">Actions</th>
+            </tr>
+          </thead>
+          <tbody id="peerRows"></tbody>
+        </table>
+      </div>
+      <div id="emptyPeers" class="empty-state hidden">
+        <strong>No other devices yet.</strong>
+        <span>Open this page on another browser connected to the same drop-pak server.</span>
+      </div>
+    </section>
+  </main>
+
+  <aside id="sessionPanel" class="session-panel" aria-hidden="true">
+    <div class="session-header">
+      <div>
+        <div class="eyebrow">ephemeral session</div>
+        <h2 id="sessionTitle">Peer</h2>
+        <div id="sessionMeta" class="session-meta"></div>
+      </div>
+      <button id="closeSession" class="icon-button" aria-label="Close session">×</button>
+    </div>
+
+    <div class="session-toolbar">
+      <button id="pickFileBtn">Send file</button>
+      <input id="fileInput" type="file" hidden multiple>
+      <button id="copyCodeBtn" class="ghost">Copy peer code</button>
+      <span id="secureState" class="secure-state">Connecting…</span>
+    </div>
+
+    <div id="timeline" class="timeline"></div>
+
+    <form id="messageForm" class="message-form">
+      <textarea id="messageInput" rows="2" placeholder="Type or paste text / a link…" maxlength="20000"></textarea>
+      <button type="submit">Send</button>
+    </form>
+  </aside>
+
+  <div id="toastRegion" class="toast-region" aria-live="polite"></div>
+
+  <template id="messageTemplate">
+    <article class="message-item">
+      <div class="message-bubble"></div>
+      <div class="message-time"></div>
+    </article>
+  </template>
+
+  <template id="fileTemplate">
+    <article class="file-item">
+      <div class="file-main">
+        <div class="file-icon">⇩</div>
+        <div>
+          <strong class="file-name"></strong>
+          <div class="file-meta muted"></div>
+        </div>
+      </div>
+      <div class="file-actions">
+        <progress class="file-progress" value="0" max="1"></progress>
+        <button class="file-download ghost" type="button">Save</button>
+      </div>
+    </article>
+  </template>
+
+  <script type="module" src="/app.js"></script>
+</body>
+</html>
