@@ -8,15 +8,16 @@ A Docker-first, browser-first experiment for ephemeral local peer communication.
 - Shows device name, short code, platform/browser, connection state, RTT, and WebRTC bytes sent/received.
 - Opens a direct peer session from the table with **Chat**, **Text**, or **File** actions.
 - Provides **connect by code** as a fallback if presence UI is stale or awkward.
-- Hosts **ephemeral rooms** of up to six devices, joined from the room table or by room code.
+- Hosts **ephemeral rooms** (up to 20 devices by default), joined from the room table or by room code.
 - Uses WebRTC DataChannels for peer payload transport.
 - Adds an application-layer ephemeral ECDH/AES-GCM encryption layer on top of WebRTC transport encryption.
 - Displays a short safety code derived from both devices' long-lived identity keys, stable across sessions.
-- Installs as a PWA on phones, tablets, and desktops, with an offline app shell and share-target support for text and links.
+- Installs as a PWA on phones, tablets, and desktops, with an offline app shell, and appears in the phone's share sheet for files, text and links.
 - Keeps messages and completed file blobs **only in browser memory**.
 - Re-syncs chat/file metadata from any surviving peer when a browser reconnects with the same local device identity.
 - Allows a returned peer to request an in-memory file again from whichever peer still holds the bytes.
 - Falls back to a **server relay** for messages and files when a direct connection cannot be made — sealed so the server cannot read them, deleted once delivered, and gone within 24 hours regardless.
+- Asks before receiving files from a device you have not met (configurable).
 - Contains no server-side database.
 - Verifies every device's long-lived identity key and shows a stable safety code.
 - Works as an ordinary browser page too — installing is optional.
@@ -82,9 +83,9 @@ host. See `deploy/README.md` for an optional host cron.
 
 Rooms extend the same model to a small group. Create one from the rooms table, then share its `ABCD-EFGH` code with the other devices — or let them join from the table, since rooms are advertised to everyone connected to the server.
 
-- **Transport is a full mesh.** Every member holds one DataChannel per other member, each with its own ECDH/AES-GCM key and its own safety code (hover a member chip to read it). Nothing is relayed through other peers; a member a direct link cannot reach gets its copy through the server relay instead, sealed to it.
-- **Six devices is the cap**, enforced server side. The mesh costs O(n²) connections, and a sender uploads each file once per recipient, so bandwidth — not the limit — is what you feel first on a large transfer.
-- **Membership is live presence.** Leaving, closing the tab, or dropping off the network removes you from the room.
+- **Up to six members, transport is a full mesh.** Every member holds one DataChannel per other member, each with its own ECDH/AES-GCM key and its own safety code (hover a member chip to read it). Nothing is relayed through other peers; a member a direct link cannot reach gets its copy through the server relay instead, sealed to it.
+- **Past six, a room runs through the server.** A mesh costs O(n²) connections and a sender uploads each file once per recipient, so a bigger room opens no direct links at all: every message and file goes through the relay, sealed separately to each member, and a file is uploaded once however many members there are. The room says `Large room · sealed to each member via server`. There are no per-link safety codes in this mode — authenticity rests on each item's signature. The cap is `ROOM_MAX_MEMBERS` (default 20, at most 64).
+- **Dropping off does not lose your seat.** A member whose connection drops shows as *away*: it keeps its seat, is still sent to through the relay, and catches up when it rejoins. Leaving on purpose gives the seat up; so does reloading without rejoining, or 24 hours away.
 - **A room survives while at least one member is still connected.** The last participant leaving destroys the server-side record, and the payloads only ever existed in the participants' browsers. If signaling blips while your browser is still open, it restores the room on reconnect rather than losing it.
 - **History heals itself.** Messages and file manifests carry immutable IDs, so every pair of peers exchanges its full manifest when their link comes up and merges by ID. A device that rejoins after a reload recovers what the survivors still hold, with no elected leader and no duplicates.
 - **File bytes are never re-broadcast on rejoin.** A returning member sees the file metadata and pulls the bytes on demand from a peer that still has them; if nobody online holds them any more, the entry reads `Gone`.
@@ -126,7 +127,7 @@ Mobile-specific behaviour:
 - **Layout.** Below 700px the device and room tables become labelled cards instead of a seven-column table in a horizontal scroller, and controls meet the 44px touch-target minimum.
 - **Backgrounding.** iOS tears down WebSockets and peer connections when you lock the screen or switch apps. Returning to the foreground re-checks signaling and rebuilds any dead links rather than waiting on a timer that was suspended too.
 - **Screen lock during transfers.** A screen wake lock is held only while a transfer or hash is actually in flight, and released as soon as nothing is, so a long transfer is not killed by the display sleeping.
-- **Share target.** Sharing text or a link from another app opens aria-drop with it prefilled, ready to aim at a device or room. Sharing *files* into the app is not wired up yet.
+- **Share target.** Once installed, aria-drop appears in the share sheet of other apps. Shared text or a link is prefilled in the composer; shared files wait behind a banner until you pick a device or room — including a device that is offline, which gets them through the relay. The files are caught by the service worker and never reach the server unencrypted. (Android and desktop Chrome/Edge; iOS does not support web share targets.)
 - **Updates.** A new build never reloads the page underneath you; a banner offers the reload, so an in-flight transfer is not interrupted.
 
 Large files remain the weak spot on phones: received blobs are held in memory until saved, and a memory-constrained browser may evict the tab. That is a known limitation, not a solved problem.
@@ -148,10 +149,11 @@ Large files remain the weak spot on phones: received blobs are held in memory un
 | `BLOB_STORE_BYTES` | `4294967296` (4 GiB) | Total space all buffered transfers may use together. |
 | `BLOB_PER_DEVICE` | `32` | Files one device may have waiting on the server at once. |
 | `BLOB_MESSAGES_PER_DEVICE` | `2000` | Messages one device may have waiting on the server at once. |
+| `ROOM_MAX_MEMBERS` | `20` | Seats per room, clamped to 2–64. Rooms of up to six use the direct mesh; larger ones run entirely through the relay. |
 
 On the same LAN, host ICE candidates are usually sufficient. If peers are separated by routed networks, restrictive firewalls, or VPN topology, configure TURN.
 
-The room size cap (6) and the per-server room cap (64) are compile-time constants in `server.js`, not environment variables — raising the member cap changes the mesh cost quadratically, so it is deliberately a code change. The rate limits and defensive budgets live next to them in the `LIMITS` object.
+The mesh size (6) and the per-server room cap (64) are constants in `server.js`, not environment variables — the mesh cost grows quadratically, so changing it is deliberately a code change. The rate limits and defensive budgets live next to them in the `LIMITS` object.
 
 ## Transfer integrity
 
@@ -202,6 +204,11 @@ After the first successful publish, set package visibility/permissions in GitHub
   choice.
 - **Known devices** — review the devices this browser remembers, and forget any
   of them, from **Known devices** in the header.
+- **Incoming files** — **Settings** in the header chooses what happens when a
+  device sends you a file: *ask for new devices* (the default), *always ask*, or
+  *accept automatically*. When asked, nothing is received until you press
+  **Accept**; the sender sees that it is waiting. **Decline** tells the sender,
+  and a file waiting on the server is deleted there. Messages are never gated.
 - **Keyboard** — everything is reachable by Tab; <kbd>Esc</kbd> closes the
   session panel and dialogs, and focus is returned to wherever it came from.
   The device and room tables re-render constantly, and focus survives that.

@@ -77,7 +77,8 @@ Do not treat the rest of this file as a queue to burn down.
       `npm run lint`. Also `npm run check` to run lint + typecheck + tests.
 - [ ] **Browser suites are not in the repo.** The mesh, direct, integrity and
       PWA suites live outside version control because they need Playwright and
-      the project is otherwise dependency-free. CI therefore covers none of the
+      the project is otherwise dependency-free. (There are now also relay,
+      offline, large-room, accept and share suites.) CI therefore covers none of the
       WebRTC, PWA or identity behaviour — only what `node --test` reaches.
       Adding Playwright as a dev-only dependency and an `npm run test:e2e`
       would fix that; it is the largest remaining hole in the test story.
@@ -90,24 +91,22 @@ Do not treat the rest of this file as a queue to burn down.
       stays — even after both devices disconnect — until the 24h sweep, which
       also removes empty directories. `blobstore.js`, `public/relay.js`.
 
+- [x] **Sending to an offline device.** The server keeps the signed key record
+      of every device seen in the last 24h, so a known device that is offline is
+      still listed and can be sent to; clients verify the record exactly as a
+      live one, so the server cannot substitute a key.
+- [x] **Room members who drop off stay "away"** instead of leaving: they keep
+      their seat, are still sent to through the relay, and catch up on rejoin.
+- [x] **A failed relayed download retries by itself** when the device reconnects.
+
 To keep in mind — deliberately not being worked on:
 
-- [ ] **No sending to an offline device.** A recipient's seal key comes from
-      presence, so the sender needs the recipient online at the moment of
-      sending. Once sent, an item already waits up to 24h for a recipient who
-      drops off; the gap is only in *starting* a send to someone already gone.
-      Caching verified seal keys of known devices would close it.
-- [ ] **Relay is not resumable.** A dropped upload or download starts over.
-      Direct transfers resume from held chunks; the relay could do the same with
-      HTTP `Range` on download and chunked PUTs on upload.
-- [ ] **A server restart drops everything waiting.** Item records live only in
-      memory, so a restart erases items rather than keeping them for their full
-      24h. That errs on the side of deleting, which is the intent, but a
-      redeploy loses undelivered messages.
-- [ ] **Room messages to a member who reloaded are not delivered.** A reload
-      leaves the room, so the waiting item has no conversation to land in. It is
-      left for the 24h sweep rather than dropped, and arrives if the device
-      rejoins the same room before then.
+- [ ] **Relay transfers restart rather than resume.** Delivery already
+      survives an interruption (the item stays until taken, and a failed
+      download retries on reconnect); what is missing is continuing from the
+      middle. HTTP `Range` on download and chunked PUTs on upload would do it.
+      An upload interrupted before it finishes cannot be recovered by the
+      server at all: the bytes only ever existed on the sender.
 - [ ] **Sender pays 2× the file in memory while uploading** — the encrypted
       body is built as one Blob before the PUT, because streaming request bodies
       are not supported in Safari. Browsers may spill large Blobs to disk, but it
@@ -140,20 +139,28 @@ To keep in mind — deliberately not being worked on:
       landmarks and live regions, `scope` on table headers.
 - [x] Known-device management: review and forget remembered devices.
 - [x] Candidate path (host / srflx / relay) and live throughput in the table.
-- [ ] **Incoming transfer accept/reject mode** as an option for less-trusted
-      LANs. Currently every transfer is auto-accepted once a link is secure.
+- [x] **Incoming files can be accepted or declined.** Settings → Incoming
+      files: ask for new devices (default), always ask, or
+      accept automatically. Nothing is kept before accepting; a relayed file
+      waits on the server, and declining releases it there. Chat is not gated.
 - [ ] **QR code** for the server URL and device code. Deliberately not shipped:
       it needs a QR encoder written from scratch, and there is no QR decoder
       available here to verify the output actually scans. Shipping an unverified
       encoder is worse than not shipping one. Either add a decoder as a dev
       dependency for the test, or vendor an audited encoder.
-- [ ] **Share target for files.** Text and links already work over the GET
-      share target. Files need `method: POST`,
-      `enctype: multipart/form-data`, and a service worker that intercepts the
-      POST and hands the `FormData` to the page.
+- [x] **Share target for files.** The installed app appears in the share
+      sheet for files as well as text. The service worker catches the POST, so
+      the server never sees the plaintext; the files wait behind a banner until a
+      device or room is picked, and offline devices are offered via the server.
+      Not verifiable here on a real Android share sheet — only the request it
+      makes — and iOS does not support web share targets at all.
 
 ## Product
 
-- [ ] Room size is capped at six because the mesh is O(n²) in connections and
-      O(n) in upload bandwidth per file. Larger rooms need a different
-      transport strategy (a relay or selective forwarding), not a bigger cap.
+- [x] **Larger rooms.** Up to six members use the direct mesh; beyond that a
+      room runs entirely through the server relay (one sealed upload per file,
+      no direct links, no per-link safety codes). `ROOM_MAX_MEMBERS`, default
+      20, clamped to 2–64.
+- [ ] The mesh/relay switch has no hysteresis: a room hovering at six/seven
+      seats changes transport (and opens or drops its direct links) every time
+      someone joins or leaves. Harmless so far, but noisy.

@@ -373,6 +373,11 @@ progress { width: 100%; accent-color: var(--accent-2); }
 .dialog p { margin: 0; font-size: .85rem; line-height: 1.5; }
 .dialog-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 4px; }
 
+.setting-group { border: 1px solid var(--line); border-radius: 14px; padding: 12px 14px; margin: 0; display: grid; gap: 10px; }
+.setting-group legend { font-weight: 800; padding: 0 6px; }
+.setting-option { display: flex; gap: 10px; align-items: flex-start; cursor: pointer; font-size: .88rem; line-height: 1.4; }
+.setting-option input { width: auto; margin-top: 3px; accent-color: var(--accent); }
+
 .device-list { display: grid; gap: 8px; overflow-y: auto; max-height: 46vh; }
 .device-row {
   display: flex;
@@ -423,6 +428,18 @@ progress { width: 100%; accent-color: var(--accent-2); }
   padding: 10px 12px;
   box-shadow: var(--shadow);
   font-size: .85rem;
+}
+
+/* Sits above the update banner so both can show at once. */
+.share-banner {
+  bottom: calc(76px + env(safe-area-inset-bottom));
+  max-width: calc(100vw - 32px);
+}
+
+.share-banner span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 @media (max-width: 760px) {

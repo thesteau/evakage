@@ -70,7 +70,7 @@ const state = {
   joinedRoomIds: new Set(),  // rooms this browser is a member of
   activeConvId: null,
   activeSends: new Map(),    // transferId -> { cancelled, fileId, name }
-  config: { iceServers: [], maxFileBytes: 512 * 1024 * 1024, maxRoomMembers: 6 },
+  config: { iceServers: [], maxFileBytes: 512 * 1024 * 1024, maxRoomMembers: 20, roomMeshMax: 6 },
   pendingCodeRequests: new Map(),
   statsTimer: null,
   wakeLockTimer: null,
@@ -78,6 +78,11 @@ const state = {
   panelReturnFocus: null,
   panelReturnKey: null,
   forceRelay: false,
+  // Whether an incoming file needs a yes first: 'auto', 'new' (first contact
+  // with a device), or 'always'. Accepting once trusts that device for the
+  // rest of the session.
+  incomingPolicy: 'new',
+  consentedDevices: new Set(),
   // Last known record for every device we know of, online or not: presence,
   // room away lists, and server lookups all feed it. Offline devices seen in the
   // last 24h can still be sent to through the relay.
@@ -297,6 +302,9 @@ function connectWebSocket() {
         const conv = state.conversations.get(roomConvId(roomId));
         if (conv) ensureConversationLinks(conv);
       }
+      // A room that just grew past the mesh size no longer needs the direct
+      // links it opened while small; close any nothing else is using.
+      releaseIdleLinks();
       renderSession();
       return;
     }
@@ -314,6 +322,7 @@ function connectWebSocket() {
       // Anything left for this device in the room while it was away, including
       // items set aside because they arrived before this rejoin landed.
       wsSend({ type: 'blobs-request' });
+      requestRoomHistory(msg.room.id);
       return;
     }
 
@@ -518,9 +527,17 @@ function isSecure(link) {
 function neededPeerIds() {
   const needed = new Set();
   for (const conv of state.conversations.values()) {
+    // A large room runs entirely through the relay, so it needs no links.
+    if (isRelayRoom(conv)) continue;
     for (const id of onlineMembers(conv)) needed.add(id);
   }
   return needed;
+}
+
+// Rooms past the mesh size are relay-only: the server says which when it lists
+// the room, so every member makes the same choice.
+function isRelayRoom(conv) {
+  return conv.kind === 'room' && state.rooms.get(conv.roomId)?.transport === 'relay';
 }
 
 function releaseIdleLinks() {
@@ -550,6 +567,7 @@ function reconcileLinks(previousOnline) {
 }
 
 function ensureConversationLinks(conv) {
+  if (isRelayRoom(conv)) return;
   for (const peerId of onlineMembers(conv)) ensureLink(peerId);
 }
 
@@ -977,6 +995,12 @@ async function handleControl(link, conv, msg) {
     return;
   }
 
+  if (msg.type === 'sync-request') {
+    // resolveScope already refused a room this device is not in.
+    if (conversationMembers(conv).includes(link.peerId)) await syncConversationWith(link, conv);
+    return;
+  }
+
   if (msg.type === 'sync-state') {
     // Bound what one peer can make this tab allocate in a single sync.
     const messages = Array.isArray(msg.messages) ? msg.messages.slice(0, CAPS.syncMessages) : [];
@@ -1004,7 +1028,11 @@ async function handleControl(link, conv, msg) {
     let chunks = existing?.chunks;
     if (!Array.isArray(chunks) || chunks.length !== totalChunks) chunks = new Array(totalChunks);
 
-    conv.files.set(meta.id, {
+    // An accepted file resuming, or one already decided, is not asked again.
+    const alreadyDecided = existing?.offer === 'accepted' || existing?.offer === 'declined';
+    const ask = !alreadyDecided && needsConsent(link.peerId, link);
+
+    const record = {
       ...(existing || {}),
       ...meta,
       totalChunks,
@@ -1018,8 +1046,24 @@ async function handleControl(link, conv, msg) {
       available: Boolean(existing?.blob),
       direction: 'received',
       transferId: typeof msg.transferId === 'string' ? msg.transferId : null,
-      sourceId: link.peerId
-    });
+      sourceId: link.peerId,
+      offer: ask ? 'pending' : (existing?.offer || null)
+    };
+    conv.files.set(meta.id, record);
+
+    if (ask) {
+      // Stop the sender before the bytes arrive rather than buffering a file
+      // nobody has agreed to. Accepting later resumes it through file-request.
+      record.transferId = null;
+      sendControl(link, {
+        conv: convScope(conv),
+        type: 'transfer-cancel',
+        id: meta.id,
+        transferId: msg.transferId,
+        reason: 'awaiting-consent'
+      }).catch(() => {});
+      notifyOffer(conv, record);
+    }
     renderSession();
     return;
   }
@@ -1033,8 +1077,27 @@ async function handleControl(link, conv, msg) {
     const file = conv.files.get(msg.id);
     if (!file) return;
     const send = state.activeSends.get(msg.transferId);
-    if (send) send.cancelled = true;           // the peer cancelled our upload
-    if (file.transferId === msg.transferId) {  // or cancelled its upload to us
+    if (send) {
+      // A recipient stopping our upload stops it for that recipient only. In a
+      // room, one member declining or asking first must not cut off the others.
+      send.cancelledPeers.add(link.peerId);
+      if (file.direction === 'sent') {
+        if (msg.reason === 'awaiting-consent') {
+          file.awaitingConsent = mergeHolders(file.awaitingConsent, link.peerId);
+        } else if (msg.reason === 'declined') {
+          file.awaitingConsent = mergeHolders(file.awaitingConsent).filter(id => id !== link.peerId);
+          toast(`${displayName(link.peerId)} declined ${file.name}`);
+        }
+        renderSession();
+      }
+    } else if (file.direction === 'sent' && msg.reason === 'declined') {
+      // Declined after the transfer had already paused for consent.
+      file.awaitingConsent = mergeHolders(file.awaitingConsent).filter(id => id !== link.peerId);
+      toast(`${displayName(link.peerId)} declined ${file.name}`);
+      renderSession();
+    }
+    if (file.direction === 'received' && file.transferId === msg.transferId) {
+      // The sender stopped its upload to us.
       file.transferId = null;
       renderSession();
       toast(`${displayName(link.peerId)} stopped sending ${file.name}`);
@@ -1050,9 +1113,31 @@ async function handleControl(link, conv, msg) {
       await sendControl(link, { conv: convScope(conv), type: 'transfer-cancel', id: msg.id, transferId: msg.transferId, reason: 'busy' }).catch(() => {});
       return;
     }
+    // A request from a recipient we were waiting on means it said yes.
+    if (file.direction === 'sent' && file.awaitingConsent?.length) {
+      file.awaitingConsent = file.awaitingConsent.filter(id => id !== link.peerId);
+      renderSession();
+    }
     const have = Array.isArray(msg.have) ? msg.have : [];
     await sendBlobTo([link], conv, file.blob, file, have).catch(() => {});
   }
+}
+
+const INCOMING_POLICIES = ['auto', 'new', 'always'];
+
+/**
+ * Whether a file from this device needs the user's yes before any bytes are
+ * accepted. "New" means first contact: a device this browser had never
+ * completed a handshake with before this session, or, for a relayed file from
+ * a device never met directly, one with no remembered identity at all.
+ */
+function needsConsent(deviceId, link) {
+  if (state.incomingPolicy === 'auto') return false;
+  // "Always ask" means every file, even from a device accepted a moment ago.
+  if (state.incomingPolicy === 'always') return true;
+  if (state.consentedDevices.has(deviceId)) return false;
+  if (link?.trust) return link.trust.known === false;
+  return !deviceTrust(deviceId);
 }
 
 function validFileMeta(meta) {
@@ -1168,13 +1253,31 @@ function fileManifest(conv) {
 async function syncEverythingWith(link) {
   for (const conv of state.conversations.values()) {
     if (!conversationMembers(conv).includes(link.peerId)) continue;
-    const messages = [...conv.messages.values()].sort((a, b) => a.at - b.at);
-    await sendControl(link, {
-      conv: convScope(conv),
-      type: 'sync-state',
-      messages,
-      files: fileManifest(conv)
-    }).catch(() => {});
+    await syncConversationWith(link, conv);
+  }
+}
+
+function syncConversationWith(link, conv) {
+  const messages = [...conv.messages.values()].sort((a, b) => a.at - b.at);
+  return sendControl(link, {
+    conv: convScope(conv),
+    type: 'sync-state',
+    messages,
+    files: fileManifest(conv)
+  }).catch(() => {});
+}
+
+// A device that rejoins a room may already hold secure links to its members:
+// they reconnect to an away member as soon as it is back online, and send their
+// history then — before the rejoin lands, when it is discarded as belonging to
+// a room this device is not in. So on joining, ask each connected member for
+// the room's history instead of relying on which side got there first.
+function requestRoomHistory(roomId) {
+  const conv = state.conversations.get(roomConvId(roomId));
+  if (!conv) return;
+  for (const peerId of onlineMembers(conv)) {
+    const link = state.links.get(peerId);
+    if (isSecure(link)) sendControl(link, { conv: convScope(conv), type: 'sync-request' }).catch(() => {});
   }
 }
 
@@ -1216,9 +1319,10 @@ async function sendChat(conv, text) {
   const direct = [];
   /** @type {string[]} */
   const viaRelay = [...offline];
+  const relayOnly = canRelay && (state.forceRelay || isRelayRoom(conv));
   await Promise.all(recipients.map(async peerId => {
     const link = state.links.get(peerId);
-    if (canRelay && state.forceRelay) {
+    if (relayOnly) {
       viaRelay.push(peerId);
       return;
     }
@@ -1282,31 +1386,49 @@ async function sendMessageViaRelay(conv, message, recipientIds) {
     });
   }
 
-  const requestId = crypto.randomUUID();
-  const frame = {
+  // One sealed copy per recipient, so a long message to a large room can exceed
+  // what the server accepts in one frame. Pack recipients into as few frames as
+  // fit; each frame becomes its own item on the server.
+  const makeFrame = (subset) => ({
     type: 'blob-offer',
-    requestId,
+    requestId: crypto.randomUUID(),
     kind: 'message',
     conv: convScope(conv),
     bytes: 0,
     chunkSize: 1,
     totalChunks: 0,
-    envelopes
-  };
-  // One sealed copy per recipient, so a long message in a full room can exceed
-  // what the server accepts in a single frame. Say so rather than fail quietly.
-  if (JSON.stringify(frame).length > MAX_RELAY_FRAME_CHARS) {
-    toast('That message is too long to send via the server to this many devices. Try a shorter one.');
-    return 0;
+    envelopes: subset
+  });
+  /** @type {Record<string, any>[]} */
+  const batches = [];
+  let batch = {};
+  for (const [id, envelope] of Object.entries(envelopes)) {
+    const candidate = { ...batch, [id]: envelope };
+    if (Object.keys(batch).length && JSON.stringify(makeFrame(candidate)).length > MAX_RELAY_FRAME_CHARS) {
+      batches.push(batch);
+      batch = { [id]: envelope };
+    } else {
+      batch = candidate;
+    }
   }
+  if (Object.keys(batch).length) batches.push(batch);
 
-  try {
-    await awaitReply(requestId, () => wsSend(frame));
-    return targets.length;
-  } catch (err) {
-    toast(`Message not delivered via the server: ${err.message}`);
-    return 0;
+  let delivered = 0;
+  for (const subset of batches) {
+    const frame = makeFrame(subset);
+    if (JSON.stringify(frame).length > MAX_RELAY_FRAME_CHARS) {
+      // Even a single recipient's copy does not fit: the message itself is too big.
+      toast('That message is too long to send via the server. Try a shorter one.');
+      continue;
+    }
+    try {
+      await awaitReply(frame.requestId, () => wsSend(frame));
+      delivered += Object.keys(subset).length;
+    } catch (err) {
+      toast(`Message not delivered via the server: ${err.message}`);
+    }
   }
+  return delivered;
 }
 
 const relayEnabled = () => Boolean(state.config.relay?.enabled);
@@ -1340,7 +1462,8 @@ async function sendFiles(conv, fileList) {
   if (!recipients.length && !offline.length) throw unreachableError(conv);
 
   const canRelay = relayEnabled();
-  const skipDirect = canRelay && state.forceRelay;
+  // A large room is relay-only: one upload serves every member.
+  const skipDirect = canRelay && (state.forceRelay || isRelayRoom(conv));
   /** @type {any[]} */
   let links = [];
   if (!skipDirect && recipients.length) {
@@ -1433,7 +1556,10 @@ async function sendFiles(conv, fileList) {
 async function sendBlobTo(links, conv, blob, meta, alreadyHeld = []) {
   const totalChunks = Math.ceil(blob.size / CHUNK_SIZE);
   const transferId = crypto.randomUUID();
-  const transfer = { transferId, cancelled: false, fileId: meta.id, name: meta.name };
+  // `cancelled` is the sender stopping the whole upload; `cancelledPeers` is
+  // individual recipients stopping it for themselves (declining, or pausing to
+  // ask first) while it carries on to everyone else.
+  const transfer = { transferId, cancelled: false, cancelledPeers: new Set(), fileId: meta.id, name: meta.name };
   state.activeSends.set(transferId, transfer);
 
   const wire = {
@@ -1471,6 +1597,10 @@ async function sendBlobTo(links, conv, blob, meta, alreadyHeld = []) {
         renderSession();
         return { sent, failed: [], cancelled: true };
       }
+      // Recipients that stopped the transfer for themselves drop out quietly:
+      // they are neither sent to nor counted as failed (and so not relayed to).
+      alive = alive.filter(link => !transfer.cancelledPeers.has(link.peerId));
+      if (!alive.length) return { sent, failed, cancelled: false };
       if (inRanges(alreadyHeld, seq)) continue;
 
       const start = seq * CHUNK_SIZE;
@@ -1491,6 +1621,7 @@ async function sendBlobTo(links, conv, blob, meta, alreadyHeld = []) {
       }
     }
 
+    alive = alive.filter(link => !transfer.cancelledPeers.has(link.peerId));
     await Promise.all(alive.map(link =>
       sendControl(link, { conv: convScope(conv), type: 'file-complete', id: meta.id, transferId, sha256: wire.sha256 }).catch(() => {})));
     if (trackProgress) {
@@ -1721,6 +1852,16 @@ async function handleBlobAvailable(notice) {
     relayConvId: conv.id
   });
   conv.files.set(meta.id, record);
+
+  // Same rule as a direct transfer. Nothing is fetched until the user says yes;
+  // the item simply waits on the server meanwhile.
+  if (record.offer !== 'accepted' && needsConsent(notice.from, state.links.get(notice.from))) {
+    record.offer = 'pending';
+    record.relayStage = 'offered';
+    renderSession();
+    notifyOffer(conv, record);
+    return;
+  }
   renderSession();
   await downloadRelayed(conv, record);
 }
@@ -1856,6 +1997,9 @@ function cancelTransfer(conv, file) {
 function receiveFileChunk(link, conv, header, bytes) {
   const file = conv.files.get(header.id);
   if (!file) return;
+  // Chunks already in flight before the sender heard "wait" are discarded:
+  // nothing is kept for a file the user has not agreed to.
+  if (file.offer === 'pending' || file.offer === 'declined') return;
   // A chunk only counts if it belongs to the transfer we agreed to and lands in
   // the range that transfer declared.
   if (file.transferId && header.t && header.t !== file.transferId) return;
@@ -1881,6 +2025,8 @@ function receiveFileChunk(link, conv, header, bytes) {
 
 async function finalizeIncomingFile(conv, fileId, declaredHash) {
   const file = conv.files.get(fileId);
+  // A tiny file's completion can arrive before the sender saw our "wait".
+  if (file?.offer === 'pending' || file?.offer === 'declined') return;
   if (!file?.chunks || file.chunks.some(chunk => !chunk)) {
     toast(`Transfer incomplete: ${file?.name || 'file'}`);
     return;
@@ -1938,6 +2084,54 @@ async function requestFile(conv, file) {
     : 0;
   await sendControl(link, { conv: convScope(conv), type: 'file-request', id: file.id, transferId, have });
   renderSession();
+}
+
+/* ---------- accepting and declining incoming files ---------- */
+
+async function acceptOffer(conv, file) {
+  // Saying yes once trusts that device for the rest of the session, so a burst
+  // of files from it does not become a burst of prompts.
+  state.consentedDevices.add(file.from);
+  file.offer = 'accepted';
+  renderSession();
+  try {
+    if (file.via === 'relay') await downloadRelayed(conv, file);
+    else await requestFile(conv, file);
+  } catch (err) {
+    toast(err.message || `Could not fetch ${file.name}`);
+  }
+}
+
+function declineOffer(conv, file) {
+  file.offer = 'declined';
+  file.chunks = null;
+  file.progress = 0;
+  if (file.via === 'relay') {
+    // Our copy is no longer wanted; the server can drop it for us now.
+    wsSend({ type: 'blob-release', blobId: file.relayBlobId });
+    file.relayStage = 'declined';
+    file.relayKey = null;
+  } else {
+    const link = state.links.get(file.sourceId || file.from);
+    if (isSecure(link)) {
+      sendControl(link, { conv: convScope(conv), type: 'transfer-cancel', id: file.id, transferId: null, reason: 'declined' })
+        .catch(() => {});
+    }
+  }
+  renderSession();
+}
+
+function notifyOffer(conv, file) {
+  const who = file.fromName || displayName(file.from);
+  const text = `${who} wants to send you ${file.name} (${formatBytes(file.size)})`;
+  if (state.activeConvId === conv.id) {
+    toast(text);
+    return;
+  }
+  toast(text, {
+    label: 'Review',
+    run: () => openConversation(conv.id, conv.kind, conv.kind === 'room' ? conv.roomId : conv.peerId)
+  });
 }
 
 function downloadFile(file) {
@@ -2302,7 +2496,9 @@ function renderRoomsNow() {
     } else {
       const others = conv ? onlineMembers(conv) : [];
       const secured = others.filter(id => isSecure(state.links.get(id))).length;
-      const base = others.length ? `${secured} / ${others.length} encrypted` : 'Waiting for members';
+      const base = room.transport === 'relay'
+        ? 'Via server · large room'
+        : others.length ? `${secured} / ${others.length} encrypted` : 'Waiting for members';
       const awayOthers = away.filter(m => m.id !== state.self?.id).length;
       statusTd.textContent = awayOthers ? `${base} · ${awayOthers} away` : base;
     }
@@ -2409,6 +2605,12 @@ function renderSessionNow() {
       secureState.textContent = link?.dc?.readyState === 'open' ? 'Verifying device identity…' : 'Connecting…';
       secureState.classList.remove('ready');
     }
+  } else if (isRelayRoom(conv)) {
+    // No links at all in a large room: everything is sealed to each member and
+    // signed by the sender, then goes through the server.
+    secureState.textContent = 'Large room · sealed to each member via server';
+    secureState.title = `Past ${state.config.roomMeshMax || 6} devices a room stops opening direct connections between every pair and uses the server relay instead.`;
+    secureState.classList.add('ready');
   } else {
     const secured = others.filter(id => isSecure(state.links.get(id))).length;
     secureState.textContent = others.length
@@ -2451,6 +2653,10 @@ function renderMembers(conv) {
     if (member.id === state.self?.id) {
       chip.classList.add('self');
       chip.textContent = `${member.name} (you)`;
+    } else if (isRelayRoom(conv)) {
+      chip.textContent = member.name;
+      chip.classList.add('secure');
+      chip.title = 'Large room: messages to this member are sealed to its key and sent via the server.';
     } else {
       const link = state.links.get(member.id);
       chip.textContent = member.name;
@@ -2528,6 +2734,10 @@ function renderFile(conv, file) {
   // Say which path a file took: it is the first thing to check when one path
   // works on a network and the other does not.
   if (file.via === 'relay') details.push('via server');
+  if (file.direction === 'received' && file.offer === 'pending') details.push('wants to send you this');
+  if (file.direction === 'received' && file.offer === 'declined') details.push('declined');
+  const waitingOn = file.direction === 'sent' ? (file.awaitingConsent || []).length : 0;
+  if (waitingOn) details.push(`waiting for ${waitingOn === 1 ? displayName(file.awaitingConsent[0]) : `${waitingOn} devices`} to accept`);
   if (file.hashing) details.push('hashing…');
   else if (file.verifying) details.push('verifying…');
   else if (file.corrupt) details.push('SHA-256 mismatch');
@@ -2548,9 +2758,25 @@ function renderFile(conv, file) {
   const relayBusy = ['encrypting', 'uploading', 'downloading'].includes(file.relayStage);
   const inFlight = Boolean(file.transferId) || file.hashing || file.verifying || relayBusy;
 
-  // An in-flight transfer takes precedence over the Save button, so a sender can
-  // cancel its own upload while the blob it is reading is already local.
-  if (inFlight) {
+  // An offer waiting on the user comes first: nothing has been received yet.
+  if (file.direction === 'received' && file.offer === 'pending') {
+    btn.textContent = 'Accept';
+    btn.classList.remove('ghost');
+    btn.setAttribute('aria-label', `Accept ${file.name}`);
+    btn.addEventListener('click', () => acceptOffer(conv, file));
+    const decline = document.createElement('button');
+    decline.type = 'button';
+    decline.className = 'ghost file-decline';
+    decline.textContent = 'Decline';
+    decline.setAttribute('aria-label', `Decline ${file.name}`);
+    decline.addEventListener('click', () => declineOffer(conv, file));
+    actions.append(decline);
+  } else if (file.direction === 'received' && file.offer === 'declined') {
+    btn.textContent = 'Declined';
+    btn.disabled = true;
+  } else if (inFlight) {
+    // An in-flight transfer takes precedence over the Save button, so a sender
+    // can cancel its own upload while the blob it is reading is already local.
     btn.textContent = file.hashing ? 'Hashing…'
       : file.verifying ? 'Verifying…'
         : file.relayStage === 'encrypting' ? 'Encrypting…'
@@ -2795,6 +3021,26 @@ selfCode.addEventListener('click', async () => {
 
 $('#renameBtn').addEventListener('click', openRenameDialog);
 
+function setupSettings() {
+  const dialog = $('#settingsDialog');
+  const radios = [...dialog.querySelectorAll('input[name="incomingPolicy"]')];
+  try {
+    const stored = localStorage.getItem('aria-drop-incoming');
+    if (INCOMING_POLICIES.includes(stored)) state.incomingPolicy = stored;
+  } catch {}
+  for (const radio of radios) {
+    radio.checked = radio.value === state.incomingPolicy;
+    radio.addEventListener('change', () => {
+      if (!radio.checked) return;
+      state.incomingPolicy = radio.value;
+      try { localStorage.setItem('aria-drop-incoming', radio.value); } catch {}
+    });
+  }
+  $('#settingsBtn').addEventListener('click', () => {
+    openDialog(dialog, radios.find(radio => radio.checked) || radios[0]);
+  });
+}
+
 function setupRelayToggle() {
   const toggle = $('#relayToggle');
   const input = $('#forceRelayInput');
@@ -2960,6 +3206,16 @@ function pickTarget({ title, hint }) {
         label: peer.name,
         sub: `${peer.platform} · ${peer.browser}`,
         open: () => ensureConversation(directConvId(peer.id), 'direct', peer.id)
+      });
+    }
+    // Recently seen devices that have gone offline can still be sent to: the
+    // server holds the sealed copy until they come back.
+    for (const record of offlineDevicesToList()) {
+      if (state.peers.has(record.id)) continue;
+      targets.push({
+        label: record.name || displayName(record.id),
+        sub: `Offline · seen ${formatAgo(record.lastSeen)} · waits on the server`,
+        open: () => ensureConversation(directConvId(record.id), 'direct', record.id)
       });
     }
     for (const roomId of state.joinedRoomIds) {
@@ -3258,18 +3514,99 @@ async function setupServiceWorker() {
   });
 }
 
-// Text and links shared from another app arrive as query parameters declared by
-// the manifest's share_target.
-function consumeShareTarget() {
+/* ---------- share target ---------- */
+
+// Another app's share sheet POSTs to /share. The service worker keeps the files
+// in memory and redirects here with ?shared=<id>; this collects them.
+/** @returns {Promise<{title: string, text: string, url: string, files: File[]} | null>} */
+async function takeSharedBundle(id) {
+  if (!('serviceWorker' in navigator)) return null;
+  const ready = navigator.serviceWorker.ready.then(registration =>
+    navigator.serviceWorker.controller || registration.active);
+  const worker = await Promise.race([ready, new Promise(r => setTimeout(() => r(null), 5000))]);
+  if (!worker) return null;
+  return new Promise(resolve => {
+    const channel = new MessageChannel();
+    const timer = setTimeout(() => resolve(null), 5000);
+    channel.port1.onmessage = event => {
+      clearTimeout(timer);
+      resolve(event.data || null);
+    };
+    worker.postMessage({ type: 'take-share', id }, [channel.port2]);
+  });
+}
+
+/** @type {File[]} */
+let sharedFiles = [];
+
+function renderShareBanner() {
+  const banner = $('#shareBanner');
+  if (!sharedFiles.length) {
+    banner.classList.add('hidden');
+    return;
+  }
+  const label = sharedFiles.length === 1
+    ? `${sharedFiles[0].name} is ready to send`
+    : `${sharedFiles.length} shared files are ready to send`;
+  $('#shareBannerText').textContent = label;
+  banner.classList.remove('hidden');
+}
+
+async function sendSharedFiles() {
+  if (!sharedFiles.length) return;
+  const files = sharedFiles;
+  const conv = await pickTarget({
+    title: files.length === 1 ? `Send ${files[0].name} to…` : `Send ${files.length} files to…`,
+    hint: 'Offline devices get it through the server, sealed to them, when they next connect.'
+  });
+  if (!conv) return;
+  sharedFiles = [];
+  renderShareBanner();
+  await sendFilesTo(conv, files);
+}
+
+function setupShareBanner() {
+  $('#shareSendBtn').addEventListener('click', () => { sendSharedFiles(); });
+  $('#shareDiscardBtn').addEventListener('click', () => {
+    sharedFiles = [];
+    renderShareBanner();
+  });
+}
+
+// Text and links go into the composer; files wait behind a banner until a
+// target is picked, since at load there is nobody listed to send them to yet.
+async function consumeShareTarget() {
   const params = new URLSearchParams(location.search);
-  const shared = [params.get('share_title'), params.get('share_text'), params.get('share_url')]
+  const id = params.get('shared');
+  // share_* is the older GET form of the share target; kept so an install made
+  // before the manifest changed still works.
+  let text = [params.get('share_title'), params.get('share_text'), params.get('share_url')]
     .filter(Boolean)
-    .join('\n')
-    .trim();
-  if (!shared) return;
+    .join('\n');
+  if (!id && !text) return;
   history.replaceState(null, '', location.pathname);
-  messageInput.value = shared.slice(0, CAPS.messageChars);
-  toast('Shared text is ready — pick a device or room to send it to.');
+
+  if (id === 'failed') {
+    toast('That share did not reach aria-drop. Open the app once, then share again.');
+    return;
+  }
+  if (id) {
+    const bundle = await takeSharedBundle(id);
+    if (!bundle) {
+      toast('That share expired before it could be picked up. Please share it again.');
+      return;
+    }
+    // Android puts a shared link in `text` and often repeats it in `url`.
+    text = [bundle.title, bundle.text, bundle.url && !bundle.text?.includes(bundle.url) ? bundle.url : '']
+      .filter(Boolean)
+      .join('\n');
+    sharedFiles = bundle.files.filter(file => file instanceof File);
+    renderShareBanner();
+  }
+
+  text = text.trim();
+  if (text) messageInput.value = text.slice(0, CAPS.messageChars);
+  if (!sharedFiles.length && text) toast('Shared text is ready — pick a device or room to send it to.');
 }
 
 async function boot() {
@@ -3289,11 +3626,13 @@ async function boot() {
     return;
   }
 
+  setupShareBanner();
   consumeShareTarget();
   setupInstallPrompt();
   setupDragAndDrop();
   setupPasteToSend();
   setupRelayToggle();
+  setupSettings();
   connectWebSocket();
   state.statsTimer = setInterval(refreshStats, 3000);
   state.wakeLockTimer = setInterval(updateWakeLock, 2000);

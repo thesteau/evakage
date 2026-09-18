@@ -14,7 +14,7 @@
 // DOM lib does not know about.
 const worker = /** @type {ServiceWorkerGlobalScope} */ (/** @type {unknown} */ (self));
 
-const CACHE = 'aria-drop-v4';
+const CACHE = 'aria-drop-v5';
 
 const SHELL = [
   '/',
@@ -53,18 +53,63 @@ worker.addEventListener('activate', event => {
   })());
 });
 
-// The page asks for the update rather than having it applied underneath it, so a
-// transfer in progress is never cut off by a reload.
+// Files shared from another app (the manifest's share_target) are POSTed to
+// /share. They are caught here and never reach the server: the server would only
+// ever see plaintext, and it has no business holding it. They wait in this
+// worker's memory — not Cache Storage, so nothing is written to disk — until the
+// page it redirects to collects them, which happens as soon as that page loads.
+const SHARE_TTL_MS = 10 * 60 * 1000;
+/** @type {Map<string, {title: string, text: string, url: string, files: File[], at: number}>} */
+const pendingShares = new Map();
+
+/** @param {Request} request */
+async function receiveShare(request) {
+  let form;
+  try {
+    form = await request.formData();
+  } catch {
+    return Response.redirect('/?shared=failed', 303);
+  }
+  const field = (/** @type {string} */ name) => {
+    const value = form.get(name);
+    return typeof value === 'string' ? value : '';
+  };
+  const files = form.getAll('files').filter(value => value instanceof File);
+
+  const now = Date.now();
+  for (const [id, share] of pendingShares) {
+    if (now - share.at > SHARE_TTL_MS) pendingShares.delete(id);
+  }
+  const id = crypto.randomUUID();
+  pendingShares.set(id, { title: field('title'), text: field('text'), url: field('url'), files, at: now });
+  return Response.redirect(`/?shared=${id}`, 303);
+}
+
 worker.addEventListener('message', event => {
-  if (event.data === 'skip-waiting') worker.skipWaiting();
+  // The page asks for the update rather than having it applied underneath it,
+  // so a transfer in progress is never cut off by a reload.
+  if (event.data === 'skip-waiting') {
+    worker.skipWaiting();
+    return;
+  }
+  // Handed over once, then forgotten.
+  if (event.data?.type === 'take-share' && event.ports[0]) {
+    const share = pendingShares.get(event.data.id) || null;
+    pendingShares.delete(event.data.id);
+    event.ports[0].postMessage(share);
+  }
 });
 
 worker.addEventListener('fetch', event => {
   const request = event.request;
-  if (request.method !== 'GET') return;
-
   const url = new URL(request.url);
   if (url.origin !== location.origin) return;
+
+  if (request.method === 'POST' && url.pathname === '/share') {
+    event.respondWith(receiveShare(request));
+    return;
+  }
+  if (request.method !== 'GET') return;
   if (NETWORK_ONLY.has(url.pathname)) return;
   // Relayed transfers must never touch Cache Storage: that would persist file
   // bodies on the device and could replay a stale one.

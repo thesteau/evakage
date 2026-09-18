@@ -14,15 +14,23 @@ const DEFAULT_MAX_FILE_BYTES = 512 * 1024 * 1024;
 const WS_OPEN = 1;
 const WS_CLOSED = 3;
 
-// Full-mesh rooms cost O(n^2) DataChannels and O(n) upload bandwidth per file.
-// Six is the practical ceiling for the "small trusted group" this targets.
-const MAX_ROOM_MEMBERS = 6;
+// Rooms up to this size are a full mesh of direct DataChannels. The mesh costs
+// O(n^2) connections and a sender uploads each file once per member, so past
+// six a room switches to the server relay instead: one sealed copy per member,
+// one upload per file, no mesh.
+const MESH_MAX_MEMBERS = 6;
+// A share that missed the service worker is read and thrown away up to this size.
+const SHARE_DRAIN_LIMIT = 8 * 1024 * 1024;
+// The configurable room size (ROOM_MAX_MEMBERS) is clamped to this. Every
+// relayed item carries one sealed envelope per member, which bounds how many a
+// single item can sensibly address.
+const ROOM_MEMBERS_CEILING = 64;
+const DEFAULT_ROOM_MAX_MEMBERS = 20;
 const MAX_ROOMS = 64;
 const MAX_ROOMS_PER_DEVICE = 8;
 
 // Version of the peer-to-peer application protocol spoken over the DataChannel.
 // Published on /config.json for diagnostics; the browsers negotiate it directly.
-// v2 added signed long-lived device identities.
 // v2 added signed long-lived device identities. The server relay does not
 // change the DataChannel protocol: it is a separate HTTP path, available to any
 // client that publishes a signed seal key at registration.
@@ -358,7 +366,7 @@ function validSealedBox(box, maxChars) {
 function validEnvelopes(envelopes, kind) {
   if (!isPlainObject(envelopes)) return false;
   const recipients = Object.keys(envelopes);
-  if (!recipients.length || recipients.length > MAX_ROOM_MEMBERS) return false;
+  if (!recipients.length || recipients.length > ROOM_MEMBERS_CEILING) return false;
   const maxChars = SEALED_BOX_MAX_CHARS[kind];
   return recipients.every(id => matches(DEVICE_ID_PATTERN, id) && validSealedBox(envelopes[id], maxChars));
 }
@@ -475,9 +483,12 @@ export function createAriaDropServer({
   // A device that reconnects but does not rejoin a room within this long has
   // lost its room state (a reload), so it is dropped from the room's away list.
   rejoinGraceMs = 10000,
-  maxRecentDevices = 10000
+  maxRecentDevices = 10000,
+  maxRoomMembers = Number(process.env.ROOM_MAX_MEMBERS || DEFAULT_ROOM_MAX_MEMBERS)
 } = {}) {
   const limits = { ...DEFAULT_LIMITS, ...limitOverrides };
+  // Two is the smallest room that means anything; the ceiling bounds envelopes.
+  const roomCap = Math.min(ROOM_MEMBERS_CEILING, Math.max(2, Math.floor(maxRoomMembers) || DEFAULT_ROOM_MAX_MEMBERS));
   const blobStore = createBlobStore(blobOptions);
   // The cookie carries an HMAC of a constant, so holding it never reveals the
   // token, and it stays valid only while the server keeps the same secret.
@@ -548,6 +559,33 @@ export function createAriaDropServer({
         return;
       }
 
+      // Shares from other apps are meant to be caught by the service worker, so
+      // files never reach the server in the clear. If one gets here anyway (no
+      // worker in control yet), discard the body unread and let the app say so.
+      // The body is drained rather than cut off, because a browser that loses
+      // its upload shows a network error instead of following the redirect; past
+      // a few MB it is cut off anyway.
+      if (reqUrl.pathname === '/share') {
+        let seen = 0;
+        let answered = false;
+        const answer = () => {
+          if (answered) return;
+          answered = true;
+          res.writeHead(303, { ...SECURITY_HEADERS, location: '/?shared=failed', connection: 'close', 'cache-control': 'no-store' });
+          res.end();
+        };
+        req.on('data', chunk => {
+          seen += chunk.length;
+          if (seen > SHARE_DRAIN_LIMIT) {
+            answer();
+            req.destroy();
+          }
+        });
+        req.on('end', answer);
+        req.on('error', () => res.destroy());
+        return;
+      }
+
       if (authToken) {
         const presented = reqUrl.searchParams.get('token');
         if (presented && timingSafeEqualString(presented, authToken)) {
@@ -581,7 +619,8 @@ export function createAriaDropServer({
         res.end(JSON.stringify({
           iceServers,
           maxFileBytes,
-          maxRoomMembers: MAX_ROOM_MEMBERS,
+          maxRoomMembers: roomCap,
+          roomMeshMax: MESH_MAX_MEMBERS,
           protocol: PROTOCOL_VERSION,
           relay: {
             enabled: true,
@@ -713,7 +752,9 @@ export function createAriaDropServer({
       code: room.code,
       name: room.name,
       createdAt: room.createdAt,
-      maxMembers: MAX_ROOM_MEMBERS,
+      maxMembers: roomCap,
+      // Small rooms are a direct mesh; larger ones go entirely through the relay.
+      transport: roomSeatsTaken(room) > MESH_MAX_MEMBERS ? 'relay' : 'mesh',
       members: [...room.members]
         .map(id => clients.get(id))
         .filter(Boolean)
@@ -733,8 +774,15 @@ export function createAriaDropServer({
     return room.members.size + room.away.size;
   }
 
+  // A room nobody is connected to is dormant: kept so its away members can
+  // come back to their seats, but not advertised. Otherwise every room whose
+  // members all closed their tabs would sit in everyone's list for a day.
+  function listedRooms() {
+    return [...rooms.values()].filter(room => room.members.size > 0).map(roomPublic);
+  }
+
   function broadcastRooms() {
-    const list = [...rooms.values()].map(roomPublic);
+    const list = listedRooms();
     for (const client of clients.values()) json(client.ws, { type: 'rooms', rooms: list });
   }
 
@@ -933,7 +981,7 @@ export function createAriaDropServer({
         noteSeen(deviceId);
         json(ws, { type: 'registered', self: peerPublic(clients.get(deviceId)) });
         broadcastPresence();
-        json(ws, { type: 'rooms', rooms: [...rooms.values()].map(roomPublic) });
+        json(ws, { type: 'rooms', rooms: listedRooms() });
         // Anything relayed to this device while it was away, oldest first.
         deliverPending(ws, deviceId);
 
@@ -997,16 +1045,28 @@ export function createAriaDropServer({
         let room = byCode || rooms.get(String(msg.roomId || ''));
         // A browser that still holds the room's RAM state may outlive a signaling
         // blip, so let it restore the same room rather than lose it to a reconnect.
-        if (!room && msg.recreate === true) room = restoreRoom(msg);
+        let restoring = false;
+        if (!room && msg.recreate === true) {
+          room = restoreRoom(msg);
+          restoring = Boolean(room);
+        }
         if (!room) {
           json(ws, { type: 'error', context: 'join-room', message: 'That room is no longer active.' });
           return;
         }
         // An away member is reclaiming its own seat, so it always fits; anyone
         // else needs a seat that is neither taken nor held for someone away.
-        const returning = room.members.has(registeredId) || room.away.has(registeredId);
-        if (!returning && roomSeatsTaken(room) >= MAX_ROOM_MEMBERS) {
-          json(ws, { type: 'error', context: 'join-room', message: `Rooms are limited to ${MAX_ROOM_MEMBERS} devices.` });
+        // Restoring a room counts as returning to it: it has nobody connected
+        // yet, and the dormant-room rule below must not lock out its restorer.
+        const returning = restoring || room.members.has(registeredId) || room.away.has(registeredId);
+        // A dormant room is kept only for its own away members; to anyone else
+        // it has, in effect, ended.
+        if (!returning && room.members.size === 0) {
+          json(ws, { type: 'error', context: 'join-room', message: 'That room is no longer active.' });
+          return;
+        }
+        if (!returning && roomSeatsTaken(room) >= roomCap) {
+          json(ws, { type: 'error', context: 'join-room', message: `Rooms are limited to ${roomCap} devices.` });
           return;
         }
         room.away.delete(registeredId);
@@ -1032,7 +1092,7 @@ export function createAriaDropServer({
       }
 
       if (msg.type === 'rooms-request') {
-        json(ws, { type: 'rooms', rooms: [...rooms.values()].map(roomPublic) });
+        json(ws, { type: 'rooms', rooms: listedRooms() });
         return;
       }
 

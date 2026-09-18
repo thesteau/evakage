@@ -34,6 +34,7 @@
       <button id="themeBtn" class="icon-button" type="button" aria-label="Theme: follow system">
         <span id="themeIcon" aria-hidden="true">◐</span>
       </button>
+      <button id="settingsBtn" class="ghost" type="button">Settings</button>
       <button id="devicesBtn" class="ghost" type="button">Known devices</button>
       <button id="renameBtn" class="ghost" type="button">Rename device</button>
       <div class="identity-card">
@@ -185,6 +186,31 @@
     </form>
   </dialog>
 
+  <dialog id="settingsDialog" class="dialog">
+    <form method="dialog">
+      <h2>Settings</h2>
+      <fieldset class="setting-group">
+        <legend>Incoming files</legend>
+        <p class="muted">When asking, nothing is received until you accept — the sender pauses, and a file relayed through the server waits there.</p>
+        <label class="setting-option">
+          <input type="radio" name="incomingPolicy" value="new">
+          <span><strong>Ask for new devices</strong><span class="muted"> — recommended. Devices you have connected to before send without asking.</span></span>
+        </label>
+        <label class="setting-option">
+          <input type="radio" name="incomingPolicy" value="always">
+          <span><strong>Always ask</strong><span class="muted"> — for a network you do not fully trust.</span></span>
+        </label>
+        <label class="setting-option">
+          <input type="radio" name="incomingPolicy" value="auto">
+          <span><strong>Accept automatically</strong><span class="muted"> — every file is received as soon as it is sent.</span></span>
+        </label>
+      </fieldset>
+      <div class="dialog-actions">
+        <button value="close" type="submit">Done</button>
+      </div>
+    </form>
+  </dialog>
+
   <dialog id="devicesDialog" class="dialog wide">
     <form method="dialog">
       <h2>Known devices</h2>
@@ -210,6 +236,12 @@
       </div>
     </form>
   </dialog>
+
+  <div id="shareBanner" class="update-banner share-banner hidden" role="status">
+    <span id="shareBannerText"></span>
+    <button id="shareSendBtn" type="button">Send…</button>
+    <button id="shareDiscardBtn" type="button" class="ghost">Discard</button>
+  </div>
 
   <div id="updateBanner" class="update-banner hidden" role="status">
     <span>A new version of aria-drop is ready.</span>

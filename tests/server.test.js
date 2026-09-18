@@ -13,7 +13,8 @@ test('health, presence, stable codes, and code lookup work', async t => {
   const config = await fetch(`${base}/config.json`).then(r => r.json());
   assert.deepEqual(config.iceServers, []);
   assert.equal(config.maxFileBytes, 536870912);
-  assert.equal(config.maxRoomMembers, 6);
+  assert.equal(config.maxRoomMembers, 20, 'rooms default to 20 devices');
+  assert.equal(config.roomMeshMax, 6, 'and switch to the relay past 6');
   assert.equal(config.relay.enabled, true);
   assert.ok(config.relay.chunkSize > 0);
 
@@ -42,7 +43,8 @@ test('health, presence, stable codes, and code lookup work', async t => {
 });
 
 test('rooms advertise membership, cap size, and close when their last member leaves', async t => {
-  const { app, ...env } = await startServer(t);
+  // A cap of 6 keeps the full-room case quick to reach.
+  const { app, ...env } = await startServer(t, { maxRoomMembers: 6 });
   const wsBase = env.wsBase;
 
   const a = await register(wsBase, 'device_A_12345678', 'Laptop');
@@ -125,4 +127,42 @@ test('one device cannot claim every room slot', async t => {
 
   hog.close();
   other.close();
+});
+
+test('rooms past the mesh size switch to the relay, up to the configured cap', async t => {
+  const { wsBase } = await startServer(t, { maxRoomMembers: 8 });
+  const owner = await register(wsBase, 'device_large_owner0', 'Owner');
+  const created = waitFor(owner, m => m.type === 'room-joined');
+  owner.send(JSON.stringify({ type: 'create-room', name: 'Big' }));
+  const room = (await created).room;
+  assert.equal(room.maxMembers, 8);
+  assert.equal(room.transport, 'mesh', 'a small room is a direct mesh');
+
+  const members = [];
+  let last;
+  for (let i = 1; i < 8; i++) {
+    const ws = await register(wsBase, `device_large_mem00${i}`, `M${i}`);
+    const joined = waitFor(ws, m => m.type === 'room-joined');
+    ws.send(JSON.stringify({ type: 'join-room', roomId: room.id }));
+    last = (await joined).room;
+    members.push(ws);
+    // Six seats is still a mesh; the seventh tips it over.
+    assert.equal(last.transport, i + 1 > 6 ? 'relay' : 'mesh', `at ${i + 1} members`);
+  }
+  assert.equal(last.members.length, 8);
+
+  const ninth = await register(wsBase, 'device_large_nine00', 'Ninth');
+  const refused = waitFor(ninth, m => m.type === 'error' && m.context === 'join-room');
+  ninth.send(JSON.stringify({ type: 'join-room', roomId: room.id }));
+  assert.match((await refused).message, /limited to 8 devices/);
+
+  for (const ws of [owner, ninth, ...members]) ws.close();
+});
+
+test('the room cap is clamped to a sane range', async t => {
+  for (const [asked, expected] of [[1, 2], [500, 64], [Number.NaN, 20]]) {
+    const { base } = await startServer(t, { maxRoomMembers: asked });
+    const config = await fetch(`${base}/config.json`).then(r => r.json());
+    assert.equal(config.maxRoomMembers, expected, `asked for ${asked}`);
+  }
 });

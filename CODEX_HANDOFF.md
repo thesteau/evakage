@@ -17,11 +17,11 @@ The MVP implements one-to-one sessions **and** small full-mesh rooms (up to six 
 
 ## Architecture
 
-- **Node 22, dependency-free WebSocket server:** static HTTP server, health/config endpoints, WebSocket presence/signaling.
+- **Node 22+ (the image ships node:26-alpine), dependency-free WebSocket server:** static HTTP server, health/config endpoints, WebSocket presence/signaling.
 - **Vanilla browser client:** no compile step/framework.
 - **Presence:** every registered browser is advertised to every other browser connected to the server. Rooms are advertised the same way.
 - **Identity:** long-lived non-extractable ECDSA P-256 key in IndexedDB; the device ID is the base64url SHA-256 fingerprint of its public half. Display name and remembered-device fingerprints live in localStorage. Payload state is never persisted anywhere.
-- **PWA:** installable on phones/tablets/desktop, offline app shell via a precaching service worker, GET share target for text and links, foreground reconnection and a transfer-scoped screen wake lock for mobile.
+- **PWA:** installable on phones/tablets/desktop, offline app shell via a precaching service worker, a POST share target for files, text and links (caught by the service worker), foreground reconnection and a transfer-scoped screen wake lock for mobile.
 - **Fallback code:** deterministic short code from device UUID while registered; code lookup returns an online peer. Rooms get a separate random `ABCD-EFGH` code.
 - **Links vs. conversations:** the client keeps one *link* per peer device (`RTCPeerConnection` + ordered DataChannel + crypto) and separate *conversation* state per direct session or room. A single link carries every conversation shared with that device; frames name their scope (`direct` or `room:<id>`), and `direct` is resolved relative to the sender.
 - **Offer glare avoidance:** lexicographically smaller device ID is the designated offerer. The other side sends a signaling `knock` when it needs a connection.
@@ -82,7 +82,7 @@ Those browser scripts are **not** in the repo: they need Playwright, and the pro
 7. **Filename edge cases:** Unicode, very long names, same-name files, zero-byte files.
 8. **Network topology:** same Wi-Fi, wired↔Wi-Fi, VLAN routing, Tailscale/WireGuard, TURN-only.
 9. **Rooms on real devices:** six-device mesh on mixed platforms, a member leaving mid-transfer, two members joining simultaneously, and upload saturation when one sender fans a large file out to five recipients.
-10. **Installed PWA on a real phone:** Add to Home Screen on iOS and install on Android; confirm the identity key in IndexedDB survives an app relaunch and an OS restart (so the safety code and `known` marker persist); confirm the wake lock actually keeps a long transfer alive through a screen timeout; confirm the update banner appears after a redeploy and that accepting it does not interrupt a transfer; confirm sharing text and a link from another app prefills the composer.
+10. **Installed PWA on a real phone:** Add to Home Screen on iOS and install on Android; confirm the identity key in IndexedDB survives an app relaunch and an OS restart (so the safety code and `known` marker persist); confirm the wake lock actually keeps a long transfer alive through a screen timeout; confirm the update banner appears after a redeploy and that accepting it does not interrupt a transfer; confirm sharing text and a link from another app prefills the composer, and that sharing a photo from the gallery shows the share banner and sends it.
 11. **Storage eviction:** let iOS evict the site's storage (or clear it manually) and confirm the device reappears as a new identity with a new safety code rather than failing in a confusing way.
 
 Items 3, 4 and 5, and the zero-byte case in 7, were reproduced headlessly on loopback (see above); they still need real devices and real radios.
@@ -95,7 +95,7 @@ Items 3, 4 and 5, and the zero-byte case in 7, were reproduced headlessly on loo
 - **Server hardening done** — message schema validation, per-connection and per-address rate limiting, WebSocket origin checks with a proxy-aware allowlist, optional `AUTH_TOKEN` access control, and validated re-serialisation of signaling payloads. Dependency and container scanning wired into CI.
 - **Protocol and integrity done** — version negotiation, SHA-256 verification of every transfer, transfer IDs with cancel and chunk-level resume, bounded reconnect, and client-side memory caps.
 - **Signed device identity (protocol v2).** Device IDs are now SHA-256 fingerprints of a long-lived, non-extractable ECDSA P-256 key held in IndexedDB, and peers sign a transcript binding both ephemeral keys and both nonces. The signaling server is no longer trusted for identity. Safety codes are derived from the long-lived fingerprints, so they are stable across sessions; devices are remembered on first use and marked `new`/`known`.
-- **PWA / mobile.** Real PNG icons at 192/512 plus a maskable variant and an iOS `apple-touch-icon`; a full manifest with scope, display override, launch handler, and a GET share target for text and links; a service worker that precaches the app shell, serves it offline, keeps `/config.json` and `/healthz` network-only, and offers updates instead of applying them mid-transfer; a card layout replacing the seven-column tables below 700px; safe-area insets; 44px touch targets; foreground reconnection for iOS backgrounding; and a screen wake lock held only while a transfer is in flight.
+- **PWA / mobile.** Real PNG icons at 192/512 plus a maskable variant and an iOS `apple-touch-icon`; a full manifest with scope, display override, launch handler, and a share target; a service worker that precaches the app shell, serves it offline, keeps `/config.json` and `/healthz` network-only, and offers updates instead of applying them mid-transfer; a card layout replacing the seven-column tables below 700px; safe-area insets; 44px touch targets; foreground reconnection for iOS backgrounding; and a screen wake lock held only while a transfer is in flight.
 - **Audit pass after the above, five more gaps closed:**
   - **`MAX_FILE_BYTES` was enforced only on send.** A peer could declare any size and make the receiver allocate against it. The limit now holds on receive, chunk count and declared size must agree, no chunk may exceed `CHUNK_SIZE`, and the running total may not exceed the declared size.
   - **Room message spoofing.** `from`/`fromName` came straight from the envelope, so one room member could post as another. A live chat frame is now accepted only if its author matches the authenticated sender. Relayed history still carries third-party authorship by necessity and is marked `relayed` in the UI; see `SECURITY.md`.
@@ -129,6 +129,10 @@ Items 3, 4 and 5, and the zero-byte case in 7, were reproduced headlessly on loo
   across re-renders.
 
 - **Server relay for messages and files.** Reverses the "no server-side payload relay" non-goal, because direct transfer depends on ICE succeeding and can simply fail on routed, VPN or firewalled networks. Both go direct when possible and fall back per recipient — including a file whose link dies mid-transfer — to the server: messages over the WebSocket, file bodies over HTTP. Everything is sealed to each recipient's signed seal key and signed by the sender, with the item kind inside the signature, so the server stores ciphertext it can neither read nor forge, and a relayed message carries verified authorship. Items live in the container's own layer with no volume, one directory per conversation (the same two devices or the same room always share one). An item is unlinked once every recipient has it; otherwise it deliberately stays — through every device disconnecting — until the 24h sweep, which also removes empty directories. A device that returns within the window receives what it missed. `blobstore.js`, `public/relay.js`, `deploy/`.
+- **Offline devices and away members.** The server remembers the signed key record of every device seen in the last 24h, so a known device that is offline is still listed and can be sent to through the relay; a room member whose connection drops stays *away* in its seat instead of leaving. A failed relayed download retries by itself on reconnect.
+- **Larger rooms.** `ROOM_MAX_MEMBERS` (default 20, clamped to 2–64). Up to six members keep the direct mesh; past that a room is relay-only — no links, one sealed upload per file, relayed messages batched under the WebSocket frame limit. No per-link safety codes in that mode (see `SECURITY.md`).
+- **Accept / decline incoming files.** Settings: ask for new devices (default), always ask, or accept automatically. A pending direct transfer is paused per recipient (`transfer-cancel` with reason `awaiting-consent`, so other room members keep receiving); a pending relayed file stays on the server until accepted, and declining releases it.
+- **Share target for files.** Manifest `share_target` is now a multipart POST to `/share`. The service worker catches it, holds the files in memory, and redirects to `/?shared=<id>`; the page collects them and shows a banner with a target picker that includes offline devices. The server's `/share` only ever discards the body and redirects to `/?shared=failed`.
 - **CI and release fixes.** The pushed commit could not start: `server.js` imported `blobstore.js`, which the Dockerfile never copied, and nothing ran the image to notice. The Dockerfile now copies it and CI smoke-tests the built image before pushing. Trivy was pinned to a tag that does not exist (`0.28.0`; the project uses `v`-prefixed tags), CodeQL lacked `actions: read`, and every action was moved to a Node 24 major.
 
 **See `TODO.md`** for the tracked backlog; the sections below are the original
@@ -190,15 +194,14 @@ Mostly done now:
 - In-app rename dialog replacing `prompt()`.
 - Drag-and-drop onto a device row, a room row, or the open session.
 - Paste-to-send for text and files, with a target picker when no session is open.
+- Accept/decline for incoming files, and a share target for files.
 - A screen for reviewing and forgetting remembered devices.
 - Candidate path (host/srflx/relay, with relay highlighted) and live throughput in the table.
 - Light/dark/system theme with a persisted choice, plus an accessibility pass.
 
 Still open:
 
-- **Incoming transfer accept/reject mode** for less-trusted LANs. Every transfer is auto-accepted once a link is secure.
 - **QR code** for the server URL and device code. Deliberately skipped: it needs a QR encoder written from scratch, and there is no QR decoder available here to verify the output actually scans, so it would ship unverified. Add a decoder as a dev dependency for the test, or vendor an audited encoder.
-- **Share target for files**, which needs `method: POST`, `enctype: multipart/form-data`, and a service worker that intercepts the POST and hands the `FormData` to the page. Text and links already work over the GET share target.
 
 ### Name / release housekeeping — done
 

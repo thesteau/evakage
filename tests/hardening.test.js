@@ -222,3 +222,14 @@ test('X-Forwarded-* headers only count when TRUST_PROXY is set', async t => {
     'X-Forwarded-Host': 'drop.home.arpa'
   }), 101);
 });
+
+test('a share POSTed to the server is refused unread and redirected, never stored', async t => {
+  const { app, port } = await withServer(t);
+  const form = new FormData();
+  form.append('text', 'hello');
+  form.append('files', new Blob([new Uint8Array(64 * 1024)]), 'secret.bin');
+  const response = await fetch(`http://127.0.0.1:${port}/share`, { method: 'POST', body: form, redirect: 'manual' });
+  assert.equal(response.status, 303);
+  assert.equal(response.headers.get('location'), '/?shared=failed');
+  assert.equal(app.blobStore.stats().files, 0);
+});

@@ -160,7 +160,7 @@ test('a room message can be addressed to an away member, who gets it on rejoinin
 });
 
 test('an away seat is held in a full room and only its owner can reclaim it', async t => {
-  const { wsBase } = await startServer(t);
+  const { wsBase } = await startServer(t, { maxRoomMembers: 6 });
   const owner = await register(wsBase, 'device_owner_00006', 'Owner');
   const room = await createRoom(owner);
   const members = [];
@@ -245,5 +245,39 @@ test('away seats expire with the window, and a room with no seats left closes', 
   const refused = waitFor(back, m => m.type === 'error' && m.context === 'join-room');
   back.send(JSON.stringify({ type: 'join-room', roomId: '11111111-2222-3333-4444-555555555555' }));
   assert.match((await refused).message, /no longer active/);
+  back.close();
+});
+
+test('a dormant room is kept for its away members but hidden from everyone else', async t => {
+  const { app, wsBase } = await startServer(t);
+  const a = await register(wsBase, 'device_alice_00010', 'Alice');
+  const room = await createRoom(a, 'Everyone left');
+  a.close();
+  await settle();
+  assert.equal(app.rooms.has(room.id), true, 'kept, so Alice can come back to it');
+
+  // A newcomer does not see it and cannot walk into it.
+  const outsider = new WebSocket(wsBase);
+  await new Promise(resolve => outsider.addEventListener('open', resolve, { once: true }));
+  const listing = waitFor(outsider, m => m.type === 'rooms');
+  outsider.send(JSON.stringify({ type: 'register', deviceId: 'device_outsider_010', name: 'Outsider' }));
+  assert.deepEqual((await listing).rooms, [], 'a room nobody is connected to is not advertised');
+  const refused = waitFor(outsider, m => m.type === 'error' && m.context === 'join-room');
+  outsider.send(JSON.stringify({ type: 'join-room', roomId: room.id }));
+  assert.match((await refused).message, /no longer active/);
+  const byCode = waitFor(outsider, m => m.type === 'error' && m.context === 'join-room');
+  outsider.send(JSON.stringify({ type: 'join-room', code: room.code }));
+  assert.match((await byCode).message, /no longer active/);
+
+  // Alice, returning, reclaims it and it is listed again.
+  const back = await register(wsBase, 'device_alice_00010', 'Alice');
+  const rejoined = await joinRoom(back, room.id);
+  assert.equal(rejoined.id, room.id);
+  const relisted = waitFor(outsider, m => m.type === 'rooms' && m.rooms.some(r => r.id === room.id));
+  back.send(JSON.stringify({ type: 'rooms-request' }));
+  outsider.send(JSON.stringify({ type: 'rooms-request' }));
+  await relisted;
+
+  outsider.close();
   back.close();
 });
