@@ -22,8 +22,13 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
+      - name: Lint
+        run: npm run lint
+      - name: Type-check
+        run: npm run typecheck
       - run: npm test
-      - run: node --check public/app.js
+      - name: Audit dependencies
+        run: npm audit --audit-level=high
 
   container:
     runs-on: ubuntu-latest
@@ -56,6 +61,27 @@ jobs:
             type=ref,event=branch
             type=ref,event=tag
             type=sha,prefix=sha-
+
+      # Build one arch locally first so the image can be scanned before anything
+      # is pushed to the registry.
+      - name: Build scan candidate
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64
+          load: true
+          tags: aria-drop:scan
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Scan image for known vulnerabilities
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: aria-drop:scan
+          format: table
+          exit-code: '1'
+          ignore-unfixed: true
+          severity: HIGH,CRITICAL
 
       - name: Build and publish
         uses: docker/build-push-action@v6

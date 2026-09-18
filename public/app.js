@@ -1,10 +1,31 @@
+import { hashBlob, hashChunks } from './sha256.js';
+import {
+  loadIdentity,
+  fingerprintOf,
+  transcriptFor,
+  signTranscript,
+  verifyTranscript,
+  safetyCode,
+  deviceTrust,
+  rememberDevice,
+  knownDevices,
+  forgetDevice,
+  bytesToBase64,
+  base64ToBytes
+} from './identity.js';
+
 const $ = (sel) => document.querySelector(sel);
 const peerRows = $('#peerRows');
 const emptyPeers = $('#emptyPeers');
+const roomRows = $('#roomRows');
+const emptyRooms = $('#emptyRooms');
 const serverState = $('#serverState');
 const sessionPanel = $('#sessionPanel');
 const sessionTitle = $('#sessionTitle');
 const sessionMeta = $('#sessionMeta');
+const sessionKind = $('#sessionKind');
+const sessionMembers = $('#sessionMembers');
+const leaveRoomBtn = $('#leaveRoomBtn');
 const secureState = $('#secureState');
 const timeline = $('#timeline');
 const messageForm = $('#messageForm');
@@ -14,17 +35,37 @@ const pickFileBtn = $('#pickFileBtn');
 const selfCode = $('#selfCode');
 const toastRegion = $('#toastRegion');
 const codeFeedback = $('#codeFeedback');
+const roomFeedback = $('#roomFeedback');
+const renameDialog = $('#renameDialog');
+const renameInput = $('#renameInput');
+const devicesDialog = $('#devicesDialog');
+const knownDeviceList = $('#knownDeviceList');
+const pickTargetDialog = $('#pickTargetDialog');
+const pickTargetList = $('#pickTargetList');
+const pickTargetTitle = $('#pickTargetTitle');
+const pickTargetHint = $('#pickTargetHint');
+const themeBtn = $('#themeBtn');
+const themeIcon = $('#themeIcon');
 
 const state = {
   ws: null,
   wsBackoff: 500,
   self: null,
-  peers: new Map(),
-  sessions: new Map(),
-  activePeerId: null,
-  config: { iceServers: [], maxFileBytes: 512 * 1024 * 1024 },
+  identity: null,            // long-lived device keypair + fingerprint
+  peers: new Map(),          // deviceId -> online peer record from the server
+  links: new Map(),          // deviceId -> pairwise transport + crypto
+  conversations: new Map(),  // convId -> in-memory chat/file state
+  rooms: new Map(),          // roomId -> server room record
+  joinedRoomIds: new Set(),  // rooms this browser is a member of
+  activeConvId: null,
+  activeSends: new Map(),    // transferId -> { cancelled, fileId, name }
+  config: { iceServers: [], maxFileBytes: 512 * 1024 * 1024, maxRoomMembers: 6 },
   pendingCodeRequests: new Map(),
-  statsTimer: null
+  statsTimer: null,
+  wakeLockTimer: null,
+  theme: 'system',
+  panelReturnFocus: null,
+  panelReturnKey: null
 };
 
 const encoder = new TextEncoder();
@@ -35,19 +76,39 @@ const CHUNK_SIZE = 64 * 1024;
 const HIGH_WATER = 8 * 1024 * 1024;
 const LOW_WATER = 3 * 1024 * 1024;
 
-function getIdentity() {
-  let deviceId = localStorage.getItem('drop-pak-device-id');
-  if (!deviceId) {
-    deviceId = crypto.randomUUID();
-    localStorage.setItem('drop-pak-device-id', deviceId);
-  }
-  let name = localStorage.getItem('drop-pak-device-name');
+// Peer application protocol. Bump PROTOCOL_VERSION for any wire change; widen
+// [MIN_PROTOCOL, PROTOCOL_VERSION] only for versions this build can actually
+// speak. A peer outside that window is refused with an explanation instead of
+// being left to fail somewhere deeper in the exchange.
+// v2 added signed long-lived device identities, so a v1 peer cannot prove who it
+// is and is refused rather than silently downgraded.
+const PROTOCOL_VERSION = 2;
+const MIN_PROTOCOL = 2;
+
+// Defensive caps. A cooperating peer stays well under all of them; they bound
+// what a hostile or broken one can make this tab allocate.
+const CAPS = {
+  messagesPerConversation: 2000,
+  filesPerConversation: 200,
+  syncMessages: 2000,
+  syncFiles: 200,
+  messageChars: 20000,
+  controlBytes: 512 * 1024,
+  chunkBytes: 128 * 1024,
+  fileChunks: 1_000_000,
+  queuedIceCandidates: 64,
+  concurrentSends: 4,
+  concurrentNegotiations: 3,
+  reconnectAttempts: 8
+};
+
+function deviceName() {
+  let name = localStorage.getItem('aria-drop-device-name');
   if (!name) {
-    const platform = detectPlatform();
-    name = `${platform} browser`;
-    localStorage.setItem('drop-pak-device-name', name);
+    name = `${detectPlatform()} browser`;
+    localStorage.setItem('aria-drop-device-name', name);
   }
-  return { deviceId, name };
+  return name;
 }
 
 function detectPlatform() {
@@ -86,11 +147,10 @@ function connectWebSocket() {
 
   ws.addEventListener('open', () => {
     state.wsBackoff = 500;
-    const identity = getIdentity();
     wsSend({
       type: 'register',
-      deviceId: identity.deviceId,
-      name: identity.name,
+      deviceId: state.identity.deviceId,
+      name: deviceName(),
       platform: detectPlatform(),
       browser: detectBrowser()
     });
@@ -101,24 +161,61 @@ function connectWebSocket() {
   ws.addEventListener('message', async (event) => {
     let msg;
     try { msg = JSON.parse(event.data); } catch { return; }
+
     if (msg.type === 'registered') {
       state.self = msg.self;
       selfCode.textContent = msg.self.code;
-      document.title = `${msg.self.name} · drop-pak`;
+      document.title = `${msg.self.name} · aria-drop`;
       renderPeers();
+      rejoinRooms();
       return;
     }
+
     if (msg.type === 'presence') {
       const previousOnline = new Set(state.peers.keys());
       state.peers = new Map(msg.peers.filter(p => p.id !== state.self?.id).map(p => [p.id, p]));
       renderPeers();
-      for (const [peerId, session] of state.sessions) {
-        if (state.peers.has(peerId) && (!previousOnline.has(peerId) || !session.pc || ['closed', 'failed', 'disconnected'].includes(session.pc.connectionState))) {
-          ensureConnection(peerId, !previousOnline.has(peerId));
-        }
-      }
+      renderRooms();
+      reconcileLinks(previousOnline);
+      renderSession();
       return;
     }
+
+    if (msg.type === 'rooms') {
+      state.rooms = new Map(msg.rooms.map(room => [room.id, room]));
+      for (const roomId of [...state.joinedRoomIds]) {
+        const room = state.rooms.get(roomId);
+        if (room && !room.members.some(m => m.id === state.self?.id)) state.joinedRoomIds.delete(roomId);
+      }
+      renderRooms();
+      for (const roomId of state.joinedRoomIds) {
+        const conv = state.conversations.get(roomConvId(roomId));
+        if (conv) ensureConversationLinks(conv);
+      }
+      renderSession();
+      return;
+    }
+
+    if (msg.type === 'room-joined') {
+      state.rooms.set(msg.room.id, msg.room);
+      state.joinedRoomIds.add(msg.room.id);
+      const conv = ensureConversation(roomConvId(msg.room.id), 'room', msg.room.id);
+      conv.lastKnownName = msg.room.name;
+      conv.lastKnownCode = msg.room.code;
+      roomFeedback.textContent = `Joined ${msg.room.name} · ${msg.room.code}`;
+      renderRooms();
+      ensureConversationLinks(conv);
+      renderSession();
+      return;
+    }
+
+    if (msg.type === 'room-left') {
+      state.joinedRoomIds.delete(msg.roomId);
+      forgetConversation(roomConvId(msg.roomId));
+      renderRooms();
+      return;
+    }
+
     if (msg.type === 'resolved-code') {
       const pending = state.pendingCodeRequests.get(msg.requestId);
       if (pending) {
@@ -127,18 +224,25 @@ function connectWebSocket() {
       }
       return;
     }
+
     if (msg.type === 'signal') {
       await handleSignal(msg.from, msg.data);
       return;
     }
-    if (msg.type === 'error') toast(msg.message || 'Server error');
+
+    if (msg.type === 'error') {
+      if (msg.context === 'join-room' || msg.context === 'create-room') roomFeedback.textContent = msg.message;
+      toast(msg.message || 'Server error');
+    }
   });
 
   ws.addEventListener('close', () => {
     serverState.textContent = 'Signaling disconnected';
     serverState.classList.remove('online');
     state.peers.clear();
+    state.rooms.clear();
     renderPeers();
+    renderRooms();
     setTimeout(connectWebSocket, state.wsBackoff);
     state.wsBackoff = Math.min(state.wsBackoff * 1.8, 10000);
   });
@@ -146,232 +250,478 @@ function connectWebSocket() {
   ws.addEventListener('error', () => ws.close());
 }
 
-function createSession(peerId) {
-  const existing = state.sessions.get(peerId);
+// A signaling blip must not destroy a room this browser still holds state for,
+// so rejoin asks the server to restore the same room id/code if it dropped it.
+function rejoinRooms() {
+  for (const roomId of state.joinedRoomIds) {
+    const conv = state.conversations.get(roomConvId(roomId));
+    wsSend({
+      type: 'join-room',
+      roomId,
+      recreate: true,
+      name: conv?.lastKnownName,
+      code: conv?.lastKnownCode
+    });
+  }
+}
+
+/* ---------- conversations ---------- */
+
+const directConvId = (peerId) => `d:${peerId}`;
+const roomConvId = (roomId) => `r:${roomId}`;
+
+function ensureConversation(convId, kind, ref) {
+  const existing = state.conversations.get(convId);
   if (existing) return existing;
-  const session = {
+  const conv = {
+    id: convId,
+    kind,
+    peerId: kind === 'direct' ? ref : null,
+    roomId: kind === 'room' ? ref : null,
+    lastKnownName: null,
+    lastKnownCode: null,
+    messages: new Map(),
+    files: new Map()
+  };
+  state.conversations.set(convId, conv);
+  return conv;
+}
+
+function forgetConversation(convId) {
+  state.conversations.delete(convId);
+  if (state.activeConvId === convId) closeSessionPanel();
+  releaseIdleLinks();
+}
+
+// Wire-level scope. "direct" is resolved relative to the sender, so each side
+// maps it onto its own conversation id for the other device.
+function convScope(conv) {
+  return conv.kind === 'room' ? `room:${conv.roomId}` : 'direct';
+}
+
+function resolveScope(scope, fromPeerId) {
+  if (!scope || scope === 'direct') return ensureConversation(directConvId(fromPeerId), 'direct', fromPeerId);
+  if (!scope.startsWith('room:')) return null;
+  const roomId = scope.slice(5);
+  // Only accept room traffic for rooms this browser actually joined.
+  if (!state.joinedRoomIds.has(roomId)) return null;
+  return state.conversations.get(roomConvId(roomId)) || null;
+}
+
+function conversationMembers(conv) {
+  if (conv.kind === 'direct') return [conv.peerId];
+  const room = state.rooms.get(conv.roomId);
+  if (!room) return [];
+  return room.members.map(m => m.id).filter(id => id !== state.self?.id);
+}
+
+function onlineMembers(conv) {
+  return conversationMembers(conv).filter(id => state.peers.has(id));
+}
+
+function conversationTitle(conv) {
+  if (conv.kind === 'room') return state.rooms.get(conv.roomId)?.name || conv.lastKnownName || 'Room';
+  return getPeer(conv.peerId).name;
+}
+
+function displayName(deviceId) {
+  if (deviceId === state.self?.id) return state.self.name;
+  return state.peers.get(deviceId)?.name || 'Unknown device';
+}
+
+/* ---------- links ---------- */
+
+function createLink(peerId) {
+  const existing = state.links.get(peerId);
+  if (existing) return existing;
+  const link = {
     peerId,
     pc: null,
     dc: null,
     candidateQueue: [],
     crypto: { keyPair: null, ownPublic: null, remotePublic: null, key: null, safety: null },
-    messages: new Map(),
-    files: new Map(),
     status: 'idle',
+    protocol: null,
+    incompatible: false,
     rttMs: null,
     bytesSent: 0,
     bytesReceived: 0,
+    sendRate: 0,
+    receiveRate: 0,
+    statsAt: 0,
+    path: null,
+    pathDetail: null,
     reconnectTimer: null,
-    lastActivity: Date.now()
+    queueTimer: null,
+    reconnectAttempts: 0,
+    gaveUp: false,
+    trust: null
   };
-  state.sessions.set(peerId, session);
-  return session;
+  state.links.set(peerId, link);
+  return link;
 }
 
-function getPeer(peerId) {
-  return state.peers.get(peerId) || { id: peerId, name: 'Peer', code: 'offline', platform: 'Unknown', browser: 'Browser' };
+// A derived key is not enough: the peer must also have proved ownership of the
+// device key its ID is derived from, or the link stays unusable.
+function isSecure(link) {
+  return Boolean(link?.crypto.key && link.crypto.identityVerified && link.dc?.readyState === 'open');
 }
 
-function openSession(peerId, focus = 'chat') {
-  createSession(peerId);
-  state.activePeerId = peerId;
-  sessionPanel.classList.add('open');
-  sessionPanel.setAttribute('aria-hidden', 'false');
-  renderSession();
-  ensureConnection(peerId);
-  if (focus === 'text') setTimeout(() => messageInput.focus(), 80);
-  if (focus === 'file') setTimeout(() => fileInput.click(), 80);
-}
-
-function closeSessionPanel() {
-  sessionPanel.classList.remove('open');
-  sessionPanel.setAttribute('aria-hidden', 'true');
-  state.activePeerId = null;
-}
-
-function sendKnock(peerId) {
-  signal(peerId, { type: 'knock' });
-}
-
-async function ensureConnection(peerId, force = false) {
-  if (!state.self || !state.peers.has(peerId)) return;
-  const session = createSession(peerId);
-  if (!force && session.pc && ['new', 'connecting', 'connected'].includes(session.pc.connectionState)) return;
-
-  if (session.pc) {
-    try { session.pc.close(); } catch {}
+// Every open conversation decides which pairwise links stay alive. One link can
+// carry a direct session and several rooms at once.
+function neededPeerIds() {
+  const needed = new Set();
+  for (const conv of state.conversations.values()) {
+    for (const id of onlineMembers(conv)) needed.add(id);
   }
-  session.pc = new RTCPeerConnection({ iceServers: state.config.iceServers || [] });
-  session.status = 'connecting';
-  session.candidateQueue = [];
-  resetCrypto(session);
-  renderPeers();
-  renderSession();
+  return needed;
+}
 
-  const pc = session.pc;
+function releaseIdleLinks() {
+  const needed = neededPeerIds();
+  for (const [peerId, link] of state.links) {
+    if (needed.has(peerId)) continue;
+    clearTimeout(link.reconnectTimer);
+    clearTimeout(link.queueTimer);
+    try { link.dc?.close(); } catch {}
+    try { link.pc?.close(); } catch {}
+    state.links.delete(peerId);
+  }
+}
+
+function reconcileLinks(previousOnline) {
+  for (const peerId of neededPeerIds()) {
+    const link = state.links.get(peerId);
+    // A device that just came back online earns a fresh retry budget.
+    if (!previousOnline.has(peerId)) {
+      retryLink(peerId);
+      continue;
+    }
+    if (link?.incompatible || link?.gaveUp) continue;
+    if (!link?.pc || ['closed', 'failed', 'disconnected'].includes(link.pc.connectionState)) ensureLink(peerId);
+  }
+  releaseIdleLinks();
+}
+
+function ensureConversationLinks(conv) {
+  for (const peerId of onlineMembers(conv)) ensureLink(peerId);
+}
+
+function attachPeerConnection(link) {
+  const peerId = link.peerId;
+  const pc = link.pc;
   pc.onicecandidate = (event) => {
     if (event.candidate) signal(peerId, { type: 'ice', candidate: event.candidate });
   };
   pc.onconnectionstatechange = () => {
-    session.status = pc.connectionState;
+    if (link.incompatible) return;
+    link.status = pc.connectionState;
+    // A connection that actually came up clears the retry budget.
+    if (pc.connectionState === 'connected') {
+      link.reconnectAttempts = 0;
+      link.gaveUp = false;
+    }
     renderPeers();
+    renderRooms();
     renderSession();
     if (['failed', 'disconnected'].includes(pc.connectionState)) scheduleReconnect(peerId);
   };
-  pc.ondatachannel = (event) => setupDataChannel(session, event.channel);
+  pc.ondatachannel = (event) => setupDataChannel(link, event.channel);
+}
 
+// Joining a full room otherwise starts five negotiations at once, each with its
+// own ICE gathering and key exchange. Admit a few at a time and let the rest wait.
+function negotiatingCount() {
+  let count = 0;
+  for (const link of state.links.values()) {
+    if (link.pc && ['new', 'connecting'].includes(link.pc.connectionState) && !link.crypto.identityVerified) count++;
+  }
+  return count;
+}
+
+async function ensureLink(peerId, force = false) {
+  if (!state.self || !state.peers.has(peerId)) return;
+  const link = createLink(peerId);
+  if (!force && (link.incompatible || link.gaveUp)) return;
+  if (!force && link.pc && ['new', 'connecting', 'connected'].includes(link.pc.connectionState)) return;
+
+  if (negotiatingCount() >= CAPS.concurrentNegotiations) {
+    if (!link.queueTimer) {
+      link.status = 'queued';
+      link.queueTimer = setTimeout(() => {
+        link.queueTimer = null;
+        if (state.peers.has(peerId) && neededPeerIds().has(peerId)) ensureLink(peerId, force);
+      }, 400);
+      renderPeers();
+      renderRooms();
+    }
+    return;
+  }
+
+  if (link.pc) {
+    try { link.pc.close(); } catch {}
+  }
+  link.pc = new RTCPeerConnection({ iceServers: state.config.iceServers || [] });
+  link.status = 'connecting';
+  link.candidateQueue = [];
+  resetCrypto(link);
+  attachPeerConnection(link);
+  renderPeers();
+  renderSession();
+
+  // Lexicographically smaller id offers; the other side knocks to ask for one.
   const initiator = state.self.id.localeCompare(peerId) < 0;
   if (initiator) {
-    const dc = pc.createDataChannel('drop-pak-v1', { ordered: true });
-    setupDataChannel(session, dc);
-    const offer = await pc.createOffer();
-    await pc.setLocalDescription(offer);
-    signal(peerId, { type: 'offer', sdp: pc.localDescription });
+    const dc = link.pc.createDataChannel('aria-drop-v1', { ordered: true });
+    setupDataChannel(link, dc);
+    const offer = await link.pc.createOffer();
+    await link.pc.setLocalDescription(offer);
+    signal(peerId, { type: 'offer', sdp: link.pc.localDescription });
   } else {
-    sendKnock(peerId);
+    signal(peerId, { type: 'knock' });
   }
 }
 
+// Bounded retry: exponential backoff with jitter, then stop and offer a manual
+// retry instead of reconnecting forever against a peer that will not answer.
 function scheduleReconnect(peerId) {
-  const session = state.sessions.get(peerId);
-  if (!session || session.reconnectTimer) return;
-  session.reconnectTimer = setTimeout(() => {
-    session.reconnectTimer = null;
-    if (state.peers.has(peerId)) ensureConnection(peerId);
-  }, 1300);
+  const link = state.links.get(peerId);
+  if (!link || link.reconnectTimer || link.incompatible || link.gaveUp) return;
+  if (link.reconnectAttempts >= CAPS.reconnectAttempts) {
+    link.gaveUp = true;
+    link.status = 'unreachable';
+    renderPeers();
+    renderRooms();
+    renderSession();
+    return;
+  }
+  const attempt = link.reconnectAttempts++;
+  const delay = Math.min(1300 * Math.pow(1.7, attempt), 20000) * (0.8 + Math.random() * 0.4);
+  link.reconnectTimer = setTimeout(() => {
+    link.reconnectTimer = null;
+    if (state.peers.has(peerId) && neededPeerIds().has(peerId)) ensureLink(peerId);
+  }, delay);
+}
+
+function retryLink(peerId) {
+  const link = createLink(peerId);
+  clearTimeout(link.reconnectTimer);
+  link.reconnectTimer = null;
+  link.reconnectAttempts = 0;
+  link.gaveUp = false;
+  link.incompatible = false;
+  ensureLink(peerId, true);
 }
 
 async function handleSignal(peerId, data) {
   if (!data || typeof data !== 'object') return;
+  const known = state.links.get(peerId);
+  if (known?.incompatible) return;
   if (data.type === 'knock') {
-    createSession(peerId);
-    await ensureConnection(peerId);
+    await ensureLink(peerId);
     return;
   }
 
-  const session = createSession(peerId);
-  if (!session.pc || session.pc.connectionState === 'closed') {
-    session.pc = new RTCPeerConnection({ iceServers: state.config.iceServers || [] });
-    session.status = 'connecting';
-    session.candidateQueue = [];
-    resetCrypto(session);
-    const pc = session.pc;
-    pc.onicecandidate = (event) => {
-      if (event.candidate) signal(peerId, { type: 'ice', candidate: event.candidate });
-    };
-    pc.onconnectionstatechange = () => {
-      session.status = pc.connectionState;
-      renderPeers();
-      renderSession();
-      if (['failed', 'disconnected'].includes(pc.connectionState)) scheduleReconnect(peerId);
-    };
-    pc.ondatachannel = (event) => setupDataChannel(session, event.channel);
+  const link = createLink(peerId);
+  if (!link.pc || link.pc.connectionState === 'closed') {
+    link.pc = new RTCPeerConnection({ iceServers: state.config.iceServers || [] });
+    link.status = 'connecting';
+    link.candidateQueue = [];
+    resetCrypto(link);
+    attachPeerConnection(link);
   }
 
-  const pc = session.pc;
+  const pc = link.pc;
   if (data.type === 'offer') {
     await pc.setRemoteDescription(data.sdp);
-    for (const candidate of session.candidateQueue.splice(0)) await pc.addIceCandidate(candidate).catch(() => {});
+    for (const candidate of link.candidateQueue.splice(0)) await pc.addIceCandidate(candidate).catch(() => {});
     const answer = await pc.createAnswer();
     await pc.setLocalDescription(answer);
     signal(peerId, { type: 'answer', sdp: pc.localDescription });
   } else if (data.type === 'answer') {
     await pc.setRemoteDescription(data.sdp);
-    for (const candidate of session.candidateQueue.splice(0)) await pc.addIceCandidate(candidate).catch(() => {});
+    for (const candidate of link.candidateQueue.splice(0)) await pc.addIceCandidate(candidate).catch(() => {});
   } else if (data.type === 'ice' && data.candidate) {
     if (pc.remoteDescription) await pc.addIceCandidate(data.candidate).catch(() => {});
-    else session.candidateQueue.push(data.candidate);
+    // Bounded queue: a peer that floods candidates before answering cannot make
+    // this tab buffer them without limit.
+    else if (link.candidateQueue.length < CAPS.queuedIceCandidates) link.candidateQueue.push(data.candidate);
   }
 }
 
-function resetCrypto(session) {
-  session.crypto = { keyPair: null, ownPublic: null, remotePublic: null, key: null, safety: null };
+/* ---------- per-link crypto ---------- */
+
+function resetCrypto(link) {
+  link.crypto = {
+    keyPair: null,
+    ownPublic: null,
+    ownNonce: null,
+    remotePublic: null,
+    remoteNonce: null,
+    remoteIdentity: null,
+    key: null,
+    safety: null,
+    identityVerified: false,
+    proofSent: false
+  };
+  link.trust = null;
 }
 
-function setupDataChannel(session, dc) {
-  session.dc = dc;
+function setupDataChannel(link, dc) {
+  link.dc = dc;
   dc.binaryType = 'arraybuffer';
   dc.bufferedAmountLowThreshold = LOW_WATER;
-  dc.onopen = () => startCryptoHandshake(session);
+  dc.onopen = () => startCryptoHandshake(link);
   dc.onclose = () => {
     renderSession();
     renderPeers();
+    renderRooms();
   };
-  dc.onerror = () => toast(`Data channel error with ${getPeer(session.peerId).name}`);
-  dc.onmessage = (event) => handleDataMessage(session, event.data);
+  dc.onerror = () => toast(`Data channel error with ${displayName(link.peerId)}`);
+  dc.onmessage = (event) => handleDataMessage(link, event.data);
 }
 
-async function startCryptoHandshake(session) {
-  if (!session.crypto.keyPair) {
-    session.crypto.keyPair = await crypto.subtle.generateKey({ name: 'ECDH', namedCurve: 'P-256' }, true, ['deriveKey']);
-    const raw = new Uint8Array(await crypto.subtle.exportKey('raw', session.crypto.keyPair.publicKey));
-    session.crypto.ownPublic = bytesToBase64(raw);
+async function startCryptoHandshake(link) {
+  if (link.incompatible || link.crypto.helloSent) return;
+  if (!link.crypto.keyPair) {
+    link.crypto.keyPair = await crypto.subtle.generateKey({ name: 'ECDH', namedCurve: 'P-256' }, true, ['deriveKey']);
+    const raw = new Uint8Array(await crypto.subtle.exportKey('raw', link.crypto.keyPair.publicKey));
+    link.crypto.ownPublic = bytesToBase64(raw);
+    link.crypto.ownNonce = bytesToBase64(crypto.getRandomValues(new Uint8Array(16)));
   }
-  session.dc.send(JSON.stringify({ kind: 'crypto-hello', publicKey: session.crypto.ownPublic }));
+  link.crypto.helloSent = true;
+  link.dc.send(JSON.stringify({
+    kind: 'crypto-hello',
+    publicKey: link.crypto.ownPublic,
+    identityKey: state.identity.identityKey,
+    nonce: link.crypto.ownNonce,
+    protocol: PROTOCOL_VERSION,
+    min: MIN_PROTOCOL,
+    max: PROTOCOL_VERSION
+  }));
   renderSession();
 }
 
-async function handleDataMessage(session, data) {
-  if (typeof data === 'string') {
-    let msg;
-    try { msg = JSON.parse(data); } catch { return; }
-    if (msg.kind === 'crypto-hello' && typeof msg.publicKey === 'string') {
-      await acceptRemoteKey(session, msg.publicKey);
-    }
-    return;
-  }
-  if (!session.crypto.key) return;
-  try {
-    if (data instanceof Blob) data = await data.arrayBuffer();
-    const packet = new Uint8Array(data);
-    if (packet.byteLength < 13) return;
-    const iv = packet.slice(0, 12);
-    const cipher = packet.slice(12);
-    const plain = new Uint8Array(await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, session.crypto.key, cipher));
-    await handlePlainFrame(session, plain);
-  } catch {
-    toast(`Could not decrypt a message from ${getPeer(session.peerId).name}`);
-  }
+function abortLink(link, message) {
+  link.incompatible = true;
+  link.status = 'untrusted';
+  try { link.dc?.close(); } catch {}
+  try { link.pc?.close(); } catch {}
+  toast(message);
+  renderPeers();
+  renderRooms();
+  renderSession();
 }
 
-async function acceptRemoteKey(session, publicKeyBase64) {
-  if (!session.crypto.keyPair) await startCryptoHandshake(session);
-  if (session.crypto.remotePublic === publicKeyBase64 && session.crypto.key) return;
-  const remoteRaw = base64ToBytes(publicKeyBase64);
-  const remoteKey = await crypto.subtle.importKey('raw', remoteRaw, { name: 'ECDH', namedCurve: 'P-256' }, false, []);
-  session.crypto.remotePublic = publicKeyBase64;
-  session.crypto.key = await crypto.subtle.deriveKey(
+// Refuse a peer whose supported range does not overlap ours, and say so, rather
+// than deriving a key and failing later on a frame we cannot parse.
+function negotiateProtocol(link, hello) {
+  const theirMin = Number.isInteger(hello.min) ? hello.min : Number(hello.protocol) || 0;
+  const theirMax = Number.isInteger(hello.max) ? hello.max : Number(hello.protocol) || 0;
+  const agreed = Math.min(PROTOCOL_VERSION, theirMax);
+  if (!theirMax || theirMax < MIN_PROTOCOL || theirMin > PROTOCOL_VERSION) {
+    link.incompatible = true;
+    link.status = 'incompatible';
+    link.protocol = null;
+    const who = displayName(link.peerId);
+    toast(theirMax
+      ? `${who} speaks aria-drop protocol ${theirMin}–${theirMax}; this build speaks ${MIN_PROTOCOL}–${PROTOCOL_VERSION}.`
+      : `${who} is running an older aria-drop that cannot negotiate a protocol version. Both sides need a reload.`);
+    try { link.dc?.close(); } catch {}
+    try { link.pc?.close(); } catch {}
+    renderPeers();
+    renderRooms();
+    renderSession();
+    return false;
+  }
+  link.protocol = agreed;
+  return true;
+}
+
+async function handleCryptoHello(link, hello) {
+  if (link.incompatible) return;
+  if (!negotiateProtocol(link, hello)) return;
+  if (typeof hello.identityKey !== 'string' || hello.identityKey.length > 256) return;
+  if (typeof hello.nonce !== 'string' || hello.nonce.length > 64) return;
+  if (link.crypto.remotePublic === hello.publicKey && link.crypto.key) return;
+
+  // The peer's device ID is the fingerprint of its identity key. If the key the
+  // peer presents does not hash to the ID the server routed us to, the server is
+  // misrepresenting who this is — refuse before deriving anything.
+  const remoteIdentityRaw = base64ToBytes(hello.identityKey);
+  const fingerprint = await fingerprintOf(remoteIdentityRaw);
+  if (fingerprint !== link.peerId) {
+    abortLink(link, `${displayName(link.peerId)} presented an identity key that does not match its device ID. Refused.`);
+    return;
+  }
+
+  if (!link.crypto.keyPair) await startCryptoHandshake(link);
+
+  const remoteKey = await crypto.subtle.importKey(
+    'raw', base64ToBytes(hello.publicKey), { name: 'ECDH', namedCurve: 'P-256' }, false, []
+  );
+  link.crypto.remotePublic = hello.publicKey;
+  link.crypto.remoteNonce = hello.nonce;
+  link.crypto.remoteIdentity = remoteIdentityRaw;
+  link.crypto.key = await crypto.subtle.deriveKey(
     { name: 'ECDH', public: remoteKey },
-    session.crypto.keyPair.privateKey,
+    link.crypto.keyPair.privateKey,
     { name: 'AES-GCM', length: 256 },
     false,
     ['encrypt', 'decrypt']
   );
-  session.crypto.safety = await safetyCode(session.crypto.ownPublic, publicKeyBase64);
+  // Derived from the long-lived fingerprints, so it is stable across sessions.
+  link.crypto.safety = await safetyCode(state.identity.fingerprint, fingerprint);
+
+  await sendProof(link);
   renderSession();
-  await sendSyncState(session);
 }
 
-async function safetyCode(a, b) {
-  const joined = [a, b].sort().join('|');
-  const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', encoder.encode(joined)));
-  const hex = [...digest.slice(0, 6)].map(x => x.toString(16).padStart(2, '0')).join('').toUpperCase();
-  return `${hex.slice(0, 4)}-${hex.slice(4, 8)}-${hex.slice(8, 12)}`;
+async function sendProof(link) {
+  if (link.crypto.proofSent || !link.crypto.remoteNonce) return;
+  link.crypto.proofSent = true;
+  const signature = await signTranscript(state.identity.privateKey, transcriptFor({
+    signerEcdh: link.crypto.ownPublic,
+    peerEcdh: link.crypto.remotePublic,
+    signerNonce: link.crypto.ownNonce,
+    peerNonce: link.crypto.remoteNonce
+  }));
+  link.dc.send(JSON.stringify({ kind: 'crypto-proof', signature }));
 }
 
-function bytesToBase64(bytes) {
-  let binary = '';
-  const step = 0x8000;
-  for (let i = 0; i < bytes.length; i += step) binary += String.fromCharCode(...bytes.subarray(i, i + step));
-  return btoa(binary);
+async function handleCryptoProof(link, message) {
+  if (link.incompatible || link.crypto.identityVerified) return;
+  if (!link.crypto.key || !link.crypto.remoteIdentity) return;
+  if (typeof message.signature !== 'string' || message.signature.length > 256) return;
+
+  // Swap the roles: the peer signed its own ephemeral key and nonce first.
+  const ok = await verifyTranscript(link.crypto.remoteIdentity, message.signature, transcriptFor({
+    signerEcdh: link.crypto.remotePublic,
+    peerEcdh: link.crypto.ownPublic,
+    signerNonce: link.crypto.remoteNonce,
+    peerNonce: link.crypto.ownNonce
+  }));
+  if (!ok) {
+    abortLink(link, `${displayName(link.peerId)} failed to prove ownership of its device key. Refused.`);
+    return;
+  }
+
+  link.crypto.identityVerified = true;
+  const previous = deviceTrust(link.peerId);
+  link.trust = {
+    known: Boolean(previous),
+    firstSeen: previous?.firstSeen || Date.now(),
+    previousName: previous?.name || ''
+  };
+  rememberDevice(link.peerId, displayName(link.peerId));
+
+  renderSession();
+  renderPeers();
+  renderRooms();
+  await syncEverythingWith(link);
 }
 
-function base64ToBytes(str) {
-  const binary = atob(str);
-  const out = new Uint8Array(binary.length);
-  for (let i = 0; i < binary.length; i++) out[i] = binary.charCodeAt(i);
-  return out;
-}
+/* ---------- framing ---------- */
 
 async function waitForWritable(dc) {
   if (dc.readyState !== 'open') throw new Error('Data channel is not open');
@@ -388,41 +738,70 @@ async function waitForWritable(dc) {
   });
 }
 
-async function encryptAndSend(session, plain) {
-  if (!session.crypto.key || session.dc?.readyState !== 'open') throw new Error('Secure channel is not ready');
-  await waitForWritable(session.dc);
+async function encryptAndSend(link, plain) {
+  if (!isSecure(link)) throw new Error('Secure channel is not ready');
+  await waitForWritable(link.dc);
   const iv = crypto.getRandomValues(new Uint8Array(12));
-  const cipher = new Uint8Array(await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, session.crypto.key, plain));
+  const cipher = new Uint8Array(await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, link.crypto.key, plain));
   const packet = new Uint8Array(iv.length + cipher.length);
   packet.set(iv, 0);
   packet.set(cipher, iv.length);
-  session.dc.send(packet.buffer);
+  link.dc.send(packet.buffer);
 }
 
-async function sendControl(session, obj) {
+async function sendControl(link, obj) {
   const json = encoder.encode(JSON.stringify(obj));
   const frame = new Uint8Array(1 + json.length);
   frame[0] = CONTROL_KIND;
   frame.set(json, 1);
-  await encryptAndSend(session, frame);
+  await encryptAndSend(link, frame);
 }
 
-async function sendFileChunk(session, id, seq, total, bytes) {
-  const headerBytes = encoder.encode(JSON.stringify({ id, seq, total }));
+async function sendFileChunk(link, conv, id, transferId, seq, total, bytes) {
+  const headerBytes = encoder.encode(JSON.stringify({ conv: convScope(conv), id, t: transferId, seq, total }));
   const frame = new Uint8Array(1 + 4 + headerBytes.length + bytes.length);
   frame[0] = FILE_CHUNK_KIND;
   new DataView(frame.buffer).setUint32(1, headerBytes.length);
   frame.set(headerBytes, 5);
   frame.set(bytes, 5 + headerBytes.length);
-  await encryptAndSend(session, frame);
+  await encryptAndSend(link, frame);
 }
 
-async function handlePlainFrame(session, frame) {
+async function handleDataMessage(link, data) {
+  if (typeof data === 'string') {
+    let msg;
+    try { msg = JSON.parse(data); } catch { return; }
+    if (msg.kind === 'crypto-hello' && typeof msg.publicKey === 'string' && msg.publicKey.length <= 256) {
+      await handleCryptoHello(link, msg);
+    } else if (msg.kind === 'crypto-proof') {
+      await handleCryptoProof(link, msg);
+    }
+    return;
+  }
+  if (!link.crypto.key) return;
+  try {
+    if (data instanceof Blob) data = await data.arrayBuffer();
+    const packet = new Uint8Array(data);
+    if (packet.byteLength < 13) return;
+    const iv = packet.slice(0, 12);
+    const cipher = packet.slice(12);
+    const plain = new Uint8Array(await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, link.crypto.key, cipher));
+    await handlePlainFrame(link, plain);
+  } catch {
+    toast(`Could not decrypt a message from ${displayName(link.peerId)}`);
+  }
+}
+
+async function handlePlainFrame(link, frame) {
   if (!frame.length) return;
   if (frame[0] === CONTROL_KIND) {
+    if (frame.length > CAPS.controlBytes) return;
     let msg;
     try { msg = JSON.parse(decoder.decode(frame.slice(1))); } catch { return; }
-    await handleControl(session, msg);
+    if (!msg || typeof msg !== 'object') return;
+    const conv = resolveScope(msg.conv, link.peerId);
+    if (!conv) return;
+    await handleControl(link, conv, msg);
     return;
   }
   if (frame[0] === FILE_CHUNK_KIND) {
@@ -431,124 +810,282 @@ async function handlePlainFrame(session, frame) {
     if (headerLen < 2 || 5 + headerLen > frame.length) return;
     let header;
     try { header = JSON.parse(decoder.decode(frame.slice(5, 5 + headerLen))); } catch { return; }
+    const conv = resolveScope(header.conv, link.peerId);
+    if (!conv) return;
     const bytes = frame.slice(5 + headerLen);
-    receiveFileChunk(session, header, bytes);
+    if (bytes.byteLength > CAPS.chunkBytes) return;
+    receiveFileChunk(link, conv, header, bytes);
   }
 }
 
-async function handleControl(session, msg) {
-  session.lastActivity = Date.now();
+async function handleControl(link, conv, msg) {
   if (msg.type === 'chat' && msg.message) {
-    mergeMessage(session, msg.message);
+    // A live chat frame must be authored by the peer that sent it. Without this
+    // one room member could post as another, since the link authenticates the
+    // sender but the envelope's `from` is just data.
+    if (msg.message.from !== link.peerId) return;
+    mergeMessage(conv, msg.message, { verifiedAuthor: true });
     renderSession();
     return;
   }
+
   if (msg.type === 'sync-state') {
-    if (Array.isArray(msg.messages)) for (const item of msg.messages) mergeMessage(session, item);
-    if (Array.isArray(msg.files)) for (const meta of msg.files) mergeFileMeta(session, meta);
+    // Bound what one peer can make this tab allocate in a single sync.
+    const messages = Array.isArray(msg.messages) ? msg.messages.slice(0, CAPS.syncMessages) : [];
+    const files = Array.isArray(msg.files) ? msg.files.slice(0, CAPS.syncFiles) : [];
+    // Relayed history is how a rejoining peer recovers what it missed, so a
+    // third-party author is legitimate here — but it is only as trustworthy as
+    // the peer relaying it, and the UI says so.
+    for (const item of messages) {
+      mergeMessage(conv, item, { verifiedAuthor: item?.from === link.peerId, relayedBy: link.peerId });
+    }
+    for (const meta of files) mergeFileMeta(conv, meta);
     renderSession();
     return;
   }
+
   if (msg.type === 'file-meta' && msg.file) {
     const meta = msg.file;
-    session.files.set(meta.id, {
+    if (!validFileMeta(meta)) return;
+    if (!conv.files.has(meta.id) && conv.files.size >= CAPS.filesPerConversation) return;
+    const totalChunks = Number.isFinite(meta.totalChunks) ? meta.totalChunks : Math.ceil(meta.size / CHUNK_SIZE);
+    const existing = conv.files.get(meta.id);
+
+    // Keep whatever chunks a cancelled or interrupted attempt already delivered
+    // so the new transfer can resume rather than start over.
+    let chunks = existing?.chunks;
+    if (!Array.isArray(chunks) || chunks.length !== totalChunks) chunks = new Array(totalChunks);
+
+    conv.files.set(meta.id, {
+      ...(existing || {}),
       ...meta,
-      blob: null,
-      chunks: new Array(meta.totalChunks || Math.ceil(meta.size / CHUNK_SIZE)),
-      receivedBytes: 0,
-      progress: 0,
+      totalChunks,
+      holders: mergeHolders(existing?.holders, meta.holders, link.peerId),
+      blob: existing?.blob || null,
+      chunks,
+      receivedBytes: countReceivedBytes(chunks),
+      progress: chunks.length ? countReceived(chunks) / chunks.length : 0,
       complete: false,
-      available: false,
-      direction: 'received'
+      corrupt: false,
+      available: Boolean(existing?.blob),
+      direction: 'received',
+      transferId: typeof msg.transferId === 'string' ? msg.transferId : null,
+      sourceId: link.peerId
     });
     renderSession();
     return;
   }
+
   if (msg.type === 'file-complete') {
-    finalizeIncomingFile(session, msg.id);
+    await finalizeIncomingFile(conv, msg.id, msg.sha256);
     return;
   }
+
+  if (msg.type === 'transfer-cancel') {
+    const file = conv.files.get(msg.id);
+    if (!file) return;
+    const send = state.activeSends.get(msg.transferId);
+    if (send) send.cancelled = true;           // the peer cancelled our upload
+    if (file.transferId === msg.transferId) {  // or cancelled its upload to us
+      file.transferId = null;
+      renderSession();
+      toast(`${displayName(link.peerId)} stopped sending ${file.name}`);
+    }
+    return;
+  }
+
   if (msg.type === 'file-request') {
-    const file = session.files.get(msg.id);
-    if (file?.blob) await sendBlob(session, file.blob, file, true);
+    const file = conv.files.get(msg.id);
+    // Rejoining peers pull bytes on demand; nothing is retransmitted automatically.
+    if (!file?.blob) return;
+    if (state.activeSends.size >= CAPS.concurrentSends) {
+      await sendControl(link, { conv: convScope(conv), type: 'transfer-cancel', id: msg.id, transferId: msg.transferId, reason: 'busy' }).catch(() => {});
+      return;
+    }
+    const have = Array.isArray(msg.have) ? msg.have : [];
+    await sendBlobTo([link], conv, file.blob, file, have).catch(() => {});
   }
 }
 
-function mergeMessage(session, message) {
-  if (!message?.id || typeof message.text !== 'string') return;
-  if (message.text.length > 20000) return;
-  session.messages.set(message.id, {
+function validFileMeta(meta) {
+  if (!meta || typeof meta !== 'object') return false;
+  if (typeof meta.id !== 'string' || meta.id.length > 64) return false;
+  if (typeof meta.name !== 'string' || !meta.name.length || meta.name.length > 512) return false;
+  if (!Number.isFinite(meta.size) || meta.size < 0) return false;
+  // The admission limit has to hold on receive too, or a peer can declare any
+  // size it likes and make this tab allocate against it.
+  if (meta.size > state.config.maxFileBytes) return false;
+  const totalChunks = meta.totalChunks;
+  if (totalChunks != null) {
+    if (!Number.isInteger(totalChunks) || totalChunks < 0 || totalChunks > CAPS.fileChunks) return false;
+    // Chunk count and size must agree, so neither can be inflated on its own.
+    if (totalChunks !== Math.ceil(meta.size / CHUNK_SIZE)) return false;
+  }
+  if (meta.sha256 != null && !/^[0-9a-f]{64}$/.test(meta.sha256)) return false;
+  return true;
+}
+
+const countReceived = (chunks) => chunks.reduce((n, chunk) => n + (chunk ? 1 : 0), 0);
+const countReceivedBytes = (chunks) => chunks.reduce((n, chunk) => n + (chunk?.byteLength || 0), 0);
+
+// Compact the chunk indices we already hold into [start, end] runs, so a resume
+// request stays small even for a file with a million chunks.
+function heldRanges(chunks) {
+  const ranges = [];
+  let start = -1;
+  for (let i = 0; i <= chunks.length; i++) {
+    const present = i < chunks.length && Boolean(chunks[i]);
+    if (present && start < 0) start = i;
+    else if (!present && start >= 0) {
+      ranges.push([start, i - 1]);
+      start = -1;
+    }
+  }
+  return ranges;
+}
+
+const inRanges = (ranges, seq) => ranges.some(([start, end]) => seq >= start && seq <= end);
+
+function mergeHolders(...sources) {
+  const out = new Set();
+  for (const source of sources) {
+    if (typeof source === 'string') out.add(source);
+    else if (Array.isArray(source)) for (const id of source) if (typeof id === 'string') out.add(id);
+  }
+  return [...out];
+}
+
+/* ---------- conversation state (merge by immutable id) ---------- */
+
+function mergeMessage(conv, message, { verifiedAuthor = true, relayedBy = null } = {}) {
+  if (!message?.id || typeof message.id !== 'string' || message.id.length > 64) return;
+  if (typeof message.from !== 'string' || message.from.length > 128) return;
+  if (typeof message.text !== 'string' || message.text.length > CAPS.messageChars) return;
+  if (conv.messages.has(message.id)) return;
+  if (conv.messages.size >= CAPS.messagesPerConversation) return;
+  conv.messages.set(message.id, {
     id: message.id,
     text: message.text,
     from: message.from,
-    at: Number(message.at) || Date.now()
+    fromName: typeof message.fromName === 'string' ? message.fromName.slice(0, 64) : '',
+    at: Number(message.at) || Date.now(),
+    verifiedAuthor,
+    relayedBy
   });
 }
 
-function mergeFileMeta(session, meta) {
-  if (!meta?.id || !meta.name || !Number.isFinite(meta.size)) return;
-  const existing = session.files.get(meta.id);
+function mergeFileMeta(conv, meta) {
+  if (!validFileMeta(meta)) return;
+  const existing = conv.files.get(meta.id);
   if (existing) {
-    Object.assign(existing, meta);
+    existing.holders = mergeHolders(existing.holders, meta.holders);
+    if (!existing.sha256 && meta.sha256) existing.sha256 = meta.sha256;
     return;
   }
-  session.files.set(meta.id, {
+  if (conv.files.size >= CAPS.filesPerConversation) return;
+  conv.files.set(meta.id, {
     ...meta,
+    holders: mergeHolders(meta.holders),
     blob: null,
     chunks: null,
     receivedBytes: 0,
     progress: 0,
     complete: false,
+    corrupt: false,
     available: false,
+    transferId: null,
+    sourceId: null,
     direction: 'history'
   });
 }
 
-async function sendSyncState(session) {
-  if (!session.crypto.key) return;
-  const messages = [...session.messages.values()].sort((a, b) => a.at - b.at);
-  const files = [...session.files.values()].map(file => ({
+function fileManifest(conv) {
+  return [...conv.files.values()].map(file => ({
     id: file.id,
     name: file.name,
     size: file.size,
     type: file.type || 'application/octet-stream',
     addedAt: file.addedAt,
     from: file.from,
-    totalChunks: file.totalChunks || Math.ceil(file.size / CHUNK_SIZE)
+    fromName: file.fromName || '',
+    totalChunks: Number.isFinite(file.totalChunks) ? file.totalChunks : Math.ceil(file.size / CHUNK_SIZE),
+    sha256: file.sha256 || null,
+    holders: mergeHolders(file.holders, file.blob ? state.self?.id : null)
   }));
-  await sendControl(session, { type: 'sync-state', messages, files }).catch(() => {});
 }
 
-async function sendChat(peerId, text) {
-  const session = createSession(peerId);
-  const clean = text.trim();
-  if (!clean) return;
-  const message = { id: crypto.randomUUID(), text: clean, from: state.self.id, at: Date.now() };
-  mergeMessage(session, message);
-  renderSession();
-  await waitForSecure(session);
-  await sendControl(session, { type: 'chat', message });
+// Everyone syncs the full manifest with every peer they link to, so a gap one
+// peer missed is healed by another. Merging by immutable id makes it idempotent,
+// which is why no surviving peer has to be elected as the authority.
+async function syncEverythingWith(link) {
+  for (const conv of state.conversations.values()) {
+    if (!conversationMembers(conv).includes(link.peerId)) continue;
+    const messages = [...conv.messages.values()].sort((a, b) => a.at - b.at);
+    await sendControl(link, {
+      conv: convScope(conv),
+      type: 'sync-state',
+      messages,
+      files: fileManifest(conv)
+    }).catch(() => {});
+  }
 }
 
-async function waitForSecure(session, timeoutMs = 12000) {
-  if (session.crypto.key && session.dc?.readyState === 'open') return;
-  await ensureConnection(session.peerId);
+/* ---------- sending ---------- */
+
+async function waitForSecure(peerId, timeoutMs = 12000) {
+  if (isSecure(state.links.get(peerId))) return state.links.get(peerId);
+  await ensureLink(peerId);
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
-    if (session.crypto.key && session.dc?.readyState === 'open') return;
+    if (isSecure(state.links.get(peerId))) return state.links.get(peerId);
     await new Promise(r => setTimeout(r, 80));
   }
-  throw new Error('Secure peer connection timed out');
+  throw new Error(`Secure connection to ${displayName(peerId)} timed out`);
 }
 
-async function sendFiles(peerId, fileList) {
-  const session = createSession(peerId);
-  await waitForSecure(session);
+async function secureLinksFor(conv) {
+  const memberIds = onlineMembers(conv);
+  if (!memberIds.length) {
+    throw new Error(conv.kind === 'room' ? 'No other members of this room are online.' : 'That device is offline.');
+  }
+  await Promise.all(memberIds.map(id => waitForSecure(id).catch(() => null)));
+  const ready = memberIds.map(id => state.links.get(id)).filter(isSecure);
+  if (!ready.length) throw new Error('Secure peer connection timed out');
+  return ready;
+}
+
+async function sendChat(conv, text) {
+  const clean = text.trim();
+  if (!clean) return;
+  const message = {
+    id: crypto.randomUUID(),
+    text: clean,
+    from: state.self.id,
+    fromName: state.self.name,
+    at: Date.now()
+  };
+  mergeMessage(conv, message);
+  renderSession();
+  const links = await secureLinksFor(conv);
+  const results = await Promise.allSettled(
+    links.map(link => sendControl(link, { conv: convScope(conv), type: 'chat', message }))
+  );
+  const failed = results.filter(r => r.status === 'rejected').length;
+  if (failed) toast(`Message not delivered to ${failed} of ${links.length} device${links.length === 1 ? '' : 's'}`);
+}
+
+async function sendFiles(conv, fileList) {
+  const links = await secureLinksFor(conv);
   for (const file of fileList) {
     if (file.size > state.config.maxFileBytes) {
       toast(`${file.name} exceeds this server's configured browser-memory limit.`);
       continue;
     }
+    if (conv.files.size >= CAPS.filesPerConversation) {
+      toast(`This conversation already holds ${CAPS.filesPerConversation} files.`);
+      break;
+    }
+
     const meta = {
       id: crypto.randomUUID(),
       name: file.name,
@@ -556,72 +1093,214 @@ async function sendFiles(peerId, fileList) {
       type: file.type || 'application/octet-stream',
       addedAt: Date.now(),
       from: state.self.id,
-      totalChunks: Math.ceil(file.size / CHUNK_SIZE)
+      fromName: state.self.name,
+      totalChunks: Math.ceil(file.size / CHUNK_SIZE),
+      sha256: null
     };
-    session.files.set(meta.id, {
+    const record = {
       ...meta,
+      holders: [state.self.id],
       blob: file,
+      chunks: null,
       progress: 0,
+      hashing: true,
       complete: true,
       available: true,
       direction: 'sent'
-    });
+    };
+    conv.files.set(meta.id, record);
     renderSession();
-    await sendBlob(session, file, meta, false);
+
+    // Hash before the first byte goes out so the digest can ride in the metadata
+    // and stay correct even if a later resume only re-sends part of the file.
+    meta.sha256 = await hashBlob(file, CHUNK_SIZE, fraction => {
+      record.progress = fraction;
+      updateFileProgress(conv, record);
+    });
+    record.sha256 = meta.sha256;
+    record.hashing = false;
+    record.progress = 0;
+    renderSession();
+
+    await sendBlobTo(links, conv, file, meta);
   }
 }
 
-async function sendBlob(session, blob, meta, retransmit) {
+// Full mesh means the sender uploads the file once per recipient. Chunks go out
+// to every live link in step so the blob is only read once.
+//
+// `alreadyHeld` carries the chunk ranges a resuming receiver still has, so an
+// interrupted transfer picks up where it stopped instead of restarting.
+async function sendBlobTo(links, conv, blob, meta, alreadyHeld = []) {
   const totalChunks = Math.ceil(blob.size / CHUNK_SIZE);
-  await sendControl(session, { type: 'file-meta', file: { ...meta, totalChunks } });
-  const local = session.files.get(meta.id);
-  for (let seq = 0; seq < totalChunks; seq++) {
-    const start = seq * CHUNK_SIZE;
-    const bytes = new Uint8Array(await blob.slice(start, Math.min(blob.size, start + CHUNK_SIZE)).arrayBuffer());
-    await sendFileChunk(session, meta.id, seq, totalChunks, bytes);
-    if (local) {
-      local.progress = (seq + 1) / totalChunks;
-      if (!retransmit) renderSession();
+  const transferId = crypto.randomUUID();
+  const transfer = { transferId, cancelled: false, fileId: meta.id, name: meta.name };
+  state.activeSends.set(transferId, transfer);
+
+  const wire = {
+    id: meta.id,
+    name: meta.name,
+    size: meta.size,
+    type: meta.type || 'application/octet-stream',
+    addedAt: meta.addedAt,
+    from: meta.from,
+    fromName: meta.fromName || '',
+    totalChunks,
+    sha256: meta.sha256 || null,
+    holders: mergeHolders(meta.holders, state.self?.id)
+  };
+
+  const local = conv.files.get(meta.id);
+  const trackProgress = local?.direction === 'sent';
+  if (trackProgress) local.transferId = transferId;
+
+  try {
+    await Promise.all(links.map(link =>
+      sendControl(link, { conv: convScope(conv), type: 'file-meta', file: wire, transferId }).catch(() => {})));
+
+    let alive = links.slice();
+    let sent = 0;
+    for (let seq = 0; seq < totalChunks; seq++) {
+      if (transfer.cancelled) {
+        await Promise.all(alive.map(link =>
+          sendControl(link, { conv: convScope(conv), type: 'transfer-cancel', id: meta.id, transferId, reason: 'cancelled' }).catch(() => {})));
+        if (trackProgress) local.transferId = null;
+        renderSession();
+        return;
+      }
+      if (inRanges(alreadyHeld, seq)) continue;
+
+      const start = seq * CHUNK_SIZE;
+      const bytes = new Uint8Array(await blob.slice(start, Math.min(blob.size, start + CHUNK_SIZE)).arrayBuffer());
+      const settled = await Promise.all(alive.map(async link => {
+        try { await sendFileChunk(link, conv, meta.id, transferId, seq, totalChunks, bytes); return link; }
+        catch { return null; }
+      }));
+      alive = settled.filter(Boolean);
+      if (!alive.length) throw new Error(`Transfer of ${meta.name} was interrupted`);
+      sent++;
+      if (trackProgress) {
+        local.progress = (seq + 1) / totalChunks;
+        updateFileProgress(conv, local);
+      }
     }
+
+    await Promise.all(alive.map(link =>
+      sendControl(link, { conv: convScope(conv), type: 'file-complete', id: meta.id, transferId, sha256: wire.sha256 }).catch(() => {})));
+    if (trackProgress) {
+      local.progress = 1;
+      local.transferId = null;
+    }
+    renderSession();
+    return sent;
+  } finally {
+    state.activeSends.delete(transferId);
+    if (trackProgress && local.transferId === transferId) local.transferId = null;
   }
-  await sendControl(session, { type: 'file-complete', id: meta.id });
-  if (local) local.progress = 1;
+}
+
+function cancelTransfer(conv, file) {
+  // Either side can stop a transfer: cancel our own upload, or tell the sender
+  // to stop pushing to us. Partial chunks are kept for a later resume.
+  for (const send of state.activeSends.values()) {
+    if (send.fileId === file.id) send.cancelled = true;
+  }
+  if (file.transferId && file.direction === 'received') {
+    const holder = file.sourceId && state.links.get(file.sourceId);
+    if (holder && isSecure(holder)) {
+      sendControl(holder, { conv: convScope(conv), type: 'transfer-cancel', id: file.id, transferId: file.transferId, reason: 'cancelled' }).catch(() => {});
+    }
+    file.transferId = null;
+  }
   renderSession();
 }
 
-function receiveFileChunk(session, header, bytes) {
-  const file = session.files.get(header.id);
+/* ---------- receiving files ---------- */
+
+function receiveFileChunk(link, conv, header, bytes) {
+  const file = conv.files.get(header.id);
   if (!file) return;
-  if (!file.chunks || file.chunks.length !== header.total) file.chunks = new Array(header.total);
-  if (!file.chunks[header.seq]) {
-    file.chunks[header.seq] = bytes;
-    file.receivedBytes = (file.receivedBytes || 0) + bytes.byteLength;
-    file.progress = Math.min(1, file.receivedBytes / Math.max(1, file.size));
-    renderSession();
+  // A chunk only counts if it belongs to the transfer we agreed to and lands in
+  // the range that transfer declared.
+  if (file.transferId && header.t && header.t !== file.transferId) return;
+  if (!Number.isInteger(header.seq) || !Number.isInteger(header.total)) return;
+  if (header.total > CAPS.fileChunks || header.seq < 0 || header.seq >= header.total) return;
+  if (!Array.isArray(file.chunks) || file.chunks.length !== header.total) {
+    if (file.chunks?.length) return; // declared length changed mid-transfer
+    file.chunks = new Array(header.total);
   }
+  if (file.chunks[header.seq]) return;
+  // A chunk can never exceed the protocol chunk size, and the running total can
+  // never exceed what the metadata declared — otherwise a peer could send
+  // oversized chunks for a file it described as small.
+  if (bytes.byteLength > CHUNK_SIZE) return;
+  if ((file.receivedBytes || 0) + bytes.byteLength > file.size) return;
+
+  file.chunks[header.seq] = bytes;
+  file.receivedBytes = (file.receivedBytes || 0) + bytes.byteLength;
+  file.sourceId = link.peerId;
+  file.progress = Math.min(1, countReceived(file.chunks) / Math.max(1, file.chunks.length));
+  updateFileProgress(conv, file);
 }
 
-function finalizeIncomingFile(session, fileId) {
-  const file = session.files.get(fileId);
+async function finalizeIncomingFile(conv, fileId, declaredHash) {
+  const file = conv.files.get(fileId);
   if (!file?.chunks || file.chunks.some(chunk => !chunk)) {
     toast(`Transfer incomplete: ${file?.name || 'file'}`);
     return;
   }
+
+  const expected = typeof declaredHash === 'string' ? declaredHash : file.sha256;
+  if (expected && /^[0-9a-f]{64}$/.test(expected)) {
+    file.verifying = true;
+    renderSession();
+    const actual = hashChunks(file.chunks);
+    file.verifying = false;
+    if (actual !== expected) {
+      // Refuse the bytes rather than hand the user a silently corrupt file.
+      file.chunks = null;
+      file.receivedBytes = 0;
+      file.progress = 0;
+      file.corrupt = true;
+      file.transferId = null;
+      renderSession();
+      toast(`${file.name} failed its SHA-256 check and was discarded.`);
+      return;
+    }
+    file.sha256 = actual;
+    file.verified = true;
+  }
+
   file.blob = new Blob(file.chunks, { type: file.type || 'application/octet-stream' });
   file.chunks = null;
   file.progress = 1;
   file.complete = true;
+  file.corrupt = false;
   file.available = true;
+  file.transferId = null;
+  file.holders = mergeHolders(file.holders, state.self?.id);
   renderSession();
-  toast(`Received ${file.name}`);
+  toast(file.verified ? `Received ${file.name} · SHA-256 verified` : `Received ${file.name}`);
 }
 
-async function requestFile(session, file) {
-  await waitForSecure(session);
+async function requestFile(conv, file) {
+  const holder = mergeHolders(file.holders)
+    .filter(id => id !== state.self?.id && state.peers.has(id))
+    .sort((a, b) => Number(isSecure(state.links.get(b))) - Number(isSecure(state.links.get(a))))[0];
+  if (!holder) throw new Error('No online device is still holding that file.');
+  const link = await waitForSecure(holder);
+  const transferId = crypto.randomUUID();
   file.direction = 'received';
-  file.progress = 0;
   file.complete = false;
-  await sendControl(session, { type: 'file-request', id: file.id });
+  file.corrupt = false;
+  file.transferId = transferId;
+  file.sourceId = holder;
+  // Tell the sender what we already have so a resume skips those chunks.
+  const have = Array.isArray(file.chunks) ? heldRanges(file.chunks) : [];
+  file.progress = Array.isArray(file.chunks) && file.chunks.length
+    ? countReceived(file.chunks) / file.chunks.length
+    : 0;
+  await sendControl(link, { conv: convScope(conv), type: 'file-request', id: file.id, transferId, have });
   renderSession();
 }
 
@@ -637,15 +1316,133 @@ function downloadFile(file) {
   setTimeout(() => URL.revokeObjectURL(url), 30000);
 }
 
+/* ---------- session panel ---------- */
+
+function getPeer(peerId) {
+  return state.peers.get(peerId) || { id: peerId, name: 'Peer', code: 'offline', platform: 'Unknown', browser: 'Browser' };
+}
+
+function openConversation(convId, kind, ref, focus) {
+  const conv = ensureConversation(convId, kind, ref);
+  const wasClosed = state.activeConvId !== convId;
+  if (wasClosed) {
+    // Store the key as well as the element: the row that opened the panel is
+    // very likely to be re-rendered before the panel closes again.
+    state.panelReturnFocus = document.activeElement;
+    state.panelReturnKey = focusKeyOf(document.activeElement);
+  }
+  state.activeConvId = convId;
+
+  // `hidden` keeps the panel out of the accessibility tree while closed, so it
+  // has to come off before the slide-in transition can run.
+  sessionPanel.hidden = false;
+  requestAnimationFrame(() => sessionPanel.classList.add('open'));
+
+  renderSession();
+  ensureConversationLinks(conv);
+
+  if (focus === 'text') setTimeout(() => messageInput.focus(), 80);
+  else if (focus === 'file') setTimeout(() => fileInput.click(), 80);
+  else if (wasClosed) setTimeout(() => $('#closeSession').focus(), 80);
+}
+
+const openSession = (peerId, focus = 'chat') => openConversation(directConvId(peerId), 'direct', peerId, focus);
+const openRoom = (roomId, focus = 'chat') => openConversation(roomConvId(roomId), 'room', roomId, focus);
+
+function closeSessionPanel() {
+  if (!state.activeConvId) return;
+  sessionPanel.classList.remove('open');
+  sessionPanel.classList.remove('dragging');
+  state.activeConvId = null;
+
+  // Hide only once it has slid out, so the panel is not yanked off screen.
+  const hide = () => { if (!state.activeConvId) sessionPanel.hidden = true; };
+  sessionPanel.addEventListener('transitionend', hide, { once: true });
+  setTimeout(hide, 400);
+
+  const returnTo = state.panelReturnFocus;
+  const returnKey = state.panelReturnKey;
+  state.panelReturnFocus = null;
+  state.panelReturnKey = null;
+  if (returnTo instanceof HTMLElement && document.contains(returnTo)) returnTo.focus();
+  else findByFocusKey(returnKey)?.focus();
+}
+
+function activeConversation() {
+  return state.activeConvId ? state.conversations.get(state.activeConvId) : null;
+}
+
+function leaveRoom(roomId) {
+  wsSend({ type: 'leave-room', roomId });
+  state.joinedRoomIds.delete(roomId);
+  forgetConversation(roomConvId(roomId));
+  renderRooms();
+}
+
+/* ---------- rendering ---------- */
+
+// The tables are rebuilt wholesale on every presence update and every stats
+// tick, which detaches whatever the user had focused. Keyed controls let focus
+// be put back on the logically-same button afterwards.
+function focusKeyOf(element) {
+  return element instanceof HTMLElement && element.dataset.focusKey ? element.dataset.focusKey : null;
+}
+
+function findByFocusKey(key) {
+  if (!key) return null;
+  const match = document.querySelector(`[data-focus-key="${CSS.escape(key)}"]`);
+  return match instanceof HTMLElement ? match : null;
+}
+
+function withPreservedFocus(render) {
+  const key = focusKeyOf(document.activeElement);
+  render();
+  if (!key) return;
+  findByFocusKey(key)?.focus();
+}
+
+function formatStatus(status) {
+  const map = {
+    idle: 'Available',
+    new: 'Connecting',
+    connecting: 'Connecting',
+    connected: 'Connected',
+    disconnected: 'Reconnecting',
+    failed: 'Retrying',
+    closed: 'Closed',
+    unreachable: 'Unreachable',
+    incompatible: 'Version mismatch',
+    untrusted: 'Identity refused',
+    queued: 'Queued'
+  };
+  return map[status] || status;
+}
+
+function trustLabel(link) {
+  if (!isSecure(link)) return null;
+  if (!link.trust) return 'Verified';
+  return link.trust.known
+    ? `Known device since ${new Date(link.trust.firstSeen).toLocaleDateString()}`
+    : 'New device — compare the safety code';
+}
+
 function renderPeers() {
+  withPreservedFocus(renderPeersNow);
+}
+
+function renderPeersNow() {
   peerRows.textContent = '';
   const peers = [...state.peers.values()].sort((a, b) => a.name.localeCompare(b.name));
   emptyPeers.classList.toggle('hidden', peers.length > 0);
   for (const peer of peers) {
-    const session = state.sessions.get(peer.id);
+    const link = state.links.get(peer.id);
     const tr = document.createElement('tr');
+    tr.dataset.dropTarget = peer.id;
+    tr.dataset.dropKind = 'direct';
+    tr.title = 'Drop a file here to send it to this device';
 
     const nameTd = document.createElement('td');
+    nameTd.dataset.label = 'Device';
     const nameWrap = document.createElement('div');
     nameWrap.className = 'device-name';
     const pip = document.createElement('span');
@@ -653,23 +1450,52 @@ function renderPeers() {
     const name = document.createElement('span');
     name.textContent = peer.name;
     nameWrap.append(pip, name);
+    // Trust state belongs next to the name, not buried in a tooltip.
+    const trust = trustLabel(link);
+    if (trust) {
+      const badge = document.createElement('span');
+      badge.className = link.trust?.known === false ? 'trust-badge new' : 'trust-badge';
+      badge.textContent = link.trust?.known === false ? 'new' : 'known';
+      badge.title = `${trust} · safety code ${link.crypto.safety}`;
+      nameWrap.append(badge);
+    }
     nameTd.append(nameWrap);
 
     const codeTd = document.createElement('td');
     codeTd.className = 'peer-code';
+    codeTd.dataset.label = 'Code';
     codeTd.textContent = peer.code;
 
     const platformTd = document.createElement('td');
+    platformTd.dataset.label = 'Platform';
     platformTd.textContent = `${peer.platform} · ${peer.browser}`;
 
     const statusTd = document.createElement('td');
-    statusTd.textContent = formatStatus(session?.status || 'idle');
+    statusTd.dataset.label = 'Status';
+    statusTd.textContent = formatStatus(link?.status || 'idle');
+    if (link?.gaveUp || link?.incompatible) statusTd.classList.add('danger');
+    if (link?.protocol) statusTd.title = `aria-drop protocol v${link.protocol}`;
 
-    const rttTd = document.createElement('td');
-    rttTd.textContent = session?.rttMs != null ? `${Math.round(session.rttMs)} ms` : '—';
+    // Candidate path answers "is this actually peer-to-peer, or going through a
+    // TURN relay?", which is the first thing you want when a transfer is slow.
+    const pathTd = document.createElement('td');
+    pathTd.dataset.label = 'Path';
+    pathTd.textContent = link?.path || '—';
+    if (link?.rttMs != null) pathTd.textContent += ` · ${Math.round(link.rttMs)} ms`;
+    if (link?.path === 'relay') {
+      pathTd.classList.add('danger');
+      pathTd.title = 'Relayed through TURN: slower, and the relay sees traffic metadata.';
+    } else if (link?.path) {
+      pathTd.title = link.pathDetail || '';
+    }
+
+    const rateTd = document.createElement('td');
+    rateTd.dataset.label = 'Rate';
+    rateTd.textContent = formatRate(link);
 
     const bytesTd = document.createElement('td');
-    bytesTd.textContent = session ? `${formatBytes(session.bytesSent)} ↑ / ${formatBytes(session.bytesReceived)} ↓` : '—';
+    bytesTd.dataset.label = 'Transferred';
+    bytesTd.textContent = link ? `${formatBytes(link.bytesSent)} ↑ / ${formatBytes(link.bytesReceived)} ↓` : '—';
 
     const actionsTd = document.createElement('td');
     actionsTd.className = 'actions-col';
@@ -679,41 +1505,188 @@ function renderPeers() {
       const btn = document.createElement('button');
       btn.type = 'button';
       btn.textContent = label;
+      btn.dataset.focusKey = `peer:${peer.id}:${mode}`;
+      btn.setAttribute('aria-label', `${label} with ${peer.name}`);
       if (mode !== 'chat') btn.className = 'ghost';
       btn.addEventListener('click', () => openSession(peer.id, mode));
       actions.append(btn);
     }
+    // Retry is the manual escape hatch once the bounded backoff has given up.
+    if (link?.gaveUp || link?.incompatible) {
+      const retry = document.createElement('button');
+      retry.type = 'button';
+      retry.className = 'ghost';
+      retry.textContent = 'Retry';
+      retry.dataset.focusKey = `peer:${peer.id}:retry`;
+      retry.setAttribute('aria-label', `Retry connecting to ${peer.name}`);
+      retry.addEventListener('click', () => retryLink(peer.id));
+      actions.append(retry);
+    }
     actionsTd.append(actions);
-    tr.append(nameTd, codeTd, platformTd, statusTd, rttTd, bytesTd, actionsTd);
+    tr.append(nameTd, codeTd, platformTd, statusTd, pathTd, rateTd, bytesTd, actionsTd);
     peerRows.append(tr);
   }
 }
 
-function formatStatus(status) {
-  const map = { idle: 'Available', new: 'Connecting', connecting: 'Connecting', connected: 'Connected', disconnected: 'Reconnecting', failed: 'Retrying', closed: 'Closed' };
-  return map[status] || status;
+function renderRooms() {
+  withPreservedFocus(renderRoomsNow);
 }
 
-function renderSession() {
-  const peerId = state.activePeerId;
-  if (!peerId) return;
-  const session = createSession(peerId);
-  const peer = getPeer(peerId);
-  sessionTitle.textContent = peer.name;
-  sessionMeta.textContent = `${peer.platform} · ${peer.browser} · ${peer.code}`;
+function renderRoomsNow() {
+  roomRows.textContent = '';
+  const rooms = [...state.rooms.values()].sort((a, b) => a.createdAt - b.createdAt);
+  emptyRooms.classList.toggle('hidden', rooms.length > 0);
+  for (const room of rooms) {
+    const joined = state.joinedRoomIds.has(room.id);
+    const conv = state.conversations.get(roomConvId(room.id));
+    if (conv) {
+      conv.lastKnownName = room.name;
+      conv.lastKnownCode = room.code;
+    }
+    const tr = document.createElement('tr');
+    if (joined) {
+      tr.dataset.dropTarget = room.id;
+      tr.dataset.dropKind = 'room';
+      tr.title = 'Drop a file here to send it to everyone in the room';
+    }
 
-  if (session.crypto.key) {
-    secureState.textContent = `Encrypted · ${session.crypto.safety}`;
-    secureState.classList.add('ready');
+    const nameTd = document.createElement('td');
+    nameTd.dataset.label = 'Room';
+    const nameWrap = document.createElement('div');
+    nameWrap.className = 'device-name';
+    const pip = document.createElement('span');
+    pip.className = 'presence-pip';
+    const name = document.createElement('span');
+    name.textContent = room.name;
+    nameWrap.append(pip, name);
+    nameTd.append(nameWrap);
+
+    const codeTd = document.createElement('td');
+    codeTd.className = 'peer-code';
+    codeTd.dataset.label = 'Code';
+    codeTd.textContent = room.code;
+
+    const membersTd = document.createElement('td');
+    membersTd.dataset.label = 'Members';
+    membersTd.textContent = room.members.map(m => m.name).join(', ') || '—';
+
+    const countTd = document.createElement('td');
+    countTd.dataset.label = 'Size';
+    countTd.textContent = `${room.members.length} / ${room.maxMembers}`;
+
+    const statusTd = document.createElement('td');
+    statusTd.dataset.label = 'Links';
+    if (!joined) {
+      statusTd.textContent = 'Not joined';
+    } else {
+      const others = conv ? onlineMembers(conv) : [];
+      const secured = others.filter(id => isSecure(state.links.get(id))).length;
+      statusTd.textContent = others.length ? `${secured} / ${others.length} encrypted` : 'Waiting for members';
+    }
+
+    const actionsTd = document.createElement('td');
+    actionsTd.className = 'actions-col';
+    const actions = document.createElement('div');
+    actions.className = 'row-actions';
+    if (joined) {
+      const open = document.createElement('button');
+      open.type = 'button';
+      open.textContent = 'Open';
+      open.dataset.focusKey = `room:${room.id}:open`;
+      open.setAttribute('aria-label', `Open room ${room.name}`);
+      open.addEventListener('click', () => openRoom(room.id));
+      const leave = document.createElement('button');
+      leave.type = 'button';
+      leave.className = 'ghost';
+      leave.textContent = 'Leave';
+      leave.dataset.focusKey = `room:${room.id}:leave`;
+      leave.setAttribute('aria-label', `Leave room ${room.name}`);
+      leave.addEventListener('click', () => leaveRoom(room.id));
+      actions.append(open, leave);
+    } else {
+      const join = document.createElement('button');
+      join.type = 'button';
+      join.textContent = 'Join';
+      join.dataset.focusKey = `room:${room.id}:join`;
+      join.setAttribute('aria-label', `Join room ${room.name}`);
+      join.disabled = room.members.length >= room.maxMembers;
+      join.addEventListener('click', () => wsSend({ type: 'join-room', roomId: room.id }));
+      actions.append(join);
+    }
+    actionsTd.append(actions);
+    tr.append(nameTd, codeTd, membersTd, countTd, statusTd, actionsTd);
+    roomRows.append(tr);
+  }
+}
+
+// Rebuilding the timeline is O(messages + files). Chunk progress arrives many
+// times a second, so coalesce renders into one per frame — otherwise buttons
+// inside an active transfer are destroyed faster than they can be clicked.
+let sessionRenderQueued = false;
+function renderSession() {
+  if (sessionRenderQueued) return;
+  sessionRenderQueued = true;
+  setTimeout(() => {
+    sessionRenderQueued = false;
+    renderSessionNow();
+  }, 16);
+}
+
+// Progress ticks touch only the bar, leaving the surrounding controls in place.
+function updateFileProgress(conv, file) {
+  if (state.activeConvId !== conv.id) return;
+  const bar = timeline.querySelector(`.file-item[data-file-id="${CSS.escape(file.id)}"] .file-progress`);
+  if (bar) bar.value = Number.isFinite(file.progress) ? file.progress : 0;
+  else renderSession();
+}
+
+function renderSessionNow() {
+  const conv = activeConversation();
+  if (!conv) return;
+
+  sessionTitle.textContent = conversationTitle(conv);
+  sessionKind.textContent = conv.kind === 'room' ? 'ephemeral room' : 'ephemeral session';
+  leaveRoomBtn.classList.toggle('hidden', conv.kind !== 'room');
+
+  if (conv.kind === 'direct') {
+    const peer = getPeer(conv.peerId);
+    sessionMeta.textContent = `${peer.platform} · ${peer.browser} · ${peer.code}`;
   } else {
-    secureState.textContent = session.dc?.readyState === 'open' ? 'Establishing encryption…' : 'Connecting…';
-    secureState.classList.remove('ready');
+    const room = state.rooms.get(conv.roomId);
+    sessionMeta.textContent = room
+      ? `${room.code} · ${room.members.length} of ${room.maxMembers} devices`
+      : 'This room is no longer advertised';
+  }
+
+  renderMembers(conv);
+
+  const others = onlineMembers(conv);
+  if (conv.kind === 'direct') {
+    const link = state.links.get(conv.peerId);
+    if (isSecure(link)) {
+      secureState.textContent = `Encrypted · ${link.crypto.safety}`;
+      secureState.title = `${trustLabel(link)}. This safety code is derived from both devices' long-lived keys and will not change.`;
+      secureState.classList.add('ready');
+      secureState.classList.toggle('unverified', link.trust?.known === false);
+    } else if (link?.status === 'untrusted') {
+      secureState.textContent = 'Identity refused';
+      secureState.classList.remove('ready');
+    } else {
+      secureState.textContent = link?.dc?.readyState === 'open' ? 'Verifying device identity…' : 'Connecting…';
+      secureState.classList.remove('ready');
+    }
+  } else {
+    const secured = others.filter(id => isSecure(state.links.get(id))).length;
+    secureState.textContent = others.length
+      ? `${secured} of ${others.length} links encrypted`
+      : 'Waiting for other members';
+    secureState.classList.toggle('ready', others.length > 0 && secured === others.length);
   }
 
   timeline.textContent = '';
   const items = [];
-  for (const message of session.messages.values()) items.push({ kind: 'message', at: message.at, value: message });
-  for (const file of session.files.values()) items.push({ kind: 'file', at: file.addedAt || 0, value: file });
+  for (const message of conv.messages.values()) items.push({ kind: 'message', at: message.at, value: message });
+  for (const file of conv.files.values()) items.push({ kind: 'file', at: file.addedAt || 0, value: file });
   items.sort((a, b) => a.at - b.at);
 
   if (!items.length) {
@@ -724,17 +1697,62 @@ function renderSession() {
   }
 
   for (const item of items) {
-    if (item.kind === 'message') renderMessage(item.value);
-    else renderFile(session, item.value);
+    if (item.kind === 'message') renderMessage(conv, item.value);
+    else renderFile(conv, item.value);
   }
   timeline.scrollTop = timeline.scrollHeight;
 }
 
-function renderMessage(message) {
+function renderMembers(conv) {
+  sessionMembers.textContent = '';
+  if (conv.kind !== 'room') {
+    sessionMembers.classList.add('hidden');
+    return;
+  }
+  sessionMembers.classList.remove('hidden');
+  const room = state.rooms.get(conv.roomId);
+  for (const member of room?.members || []) {
+    const chip = document.createElement('span');
+    chip.className = 'member-chip';
+    if (member.id === state.self?.id) {
+      chip.classList.add('self');
+      chip.textContent = `${member.name} (you)`;
+    } else {
+      const link = state.links.get(member.id);
+      chip.textContent = member.name;
+      if (isSecure(link)) {
+        chip.classList.add('secure');
+        if (link.trust?.known === false) chip.classList.add('unverified');
+        chip.title = `${trustLabel(link)} · safety code ${link.crypto.safety} · protocol v${link.protocol}`;
+      } else if (link?.gaveUp || link?.incompatible) {
+        chip.classList.add('broken');
+        chip.title = `${formatStatus(link.status)} — use Retry in the device table`;
+      } else {
+        chip.title = formatStatus(link?.status || 'idle');
+      }
+    }
+    sessionMembers.append(chip);
+  }
+}
+
+function renderMessage(conv, message) {
   const node = $('#messageTemplate').content.firstElementChild.cloneNode(true);
-  if (message.from === state.self?.id) node.classList.add('self');
-  const bubble = node.querySelector('.message-bubble');
-  appendLinkifiedText(bubble, message.text);
+  const mine = message.from === state.self?.id;
+  if (mine) node.classList.add('self');
+  const author = node.querySelector('.message-author');
+  if (conv.kind === 'room' && !mine) {
+    author.textContent = message.fromName || displayName(message.from);
+    // History relayed by a third peer is not proof of who wrote it, so mark it
+    // rather than presenting it with the same confidence as a live message.
+    if (!message.verifiedAuthor) {
+      author.classList.add('unverified');
+      author.textContent += ' · relayed';
+      author.title = `Recovered from ${displayName(message.relayedBy)}; authorship is not verified.`;
+    }
+  } else {
+    author.remove();
+  }
+  appendLinkifiedText(node.querySelector('.message-bubble'), message.text);
   node.querySelector('.message-time').textContent = new Date(message.at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
   timeline.append(node);
 }
@@ -756,24 +1774,60 @@ function appendLinkifiedText(container, text) {
   if (last < text.length) container.append(document.createTextNode(text.slice(last)));
 }
 
-function renderFile(session, file) {
+function renderFile(conv, file) {
   const node = $('#fileTemplate').content.firstElementChild.cloneNode(true);
+  node.dataset.fileId = file.id;
   node.querySelector('.file-name').textContent = file.name;
-  const owner = file.from === state.self?.id ? 'sent by you' : 'from peer';
-  node.querySelector('.file-meta').textContent = `${formatBytes(file.size)} · ${owner}`;
+  const owner = file.from === state.self?.id ? 'sent by you' : `from ${file.fromName || displayName(file.from)}`;
+
+  const details = [formatBytes(file.size), owner];
+  if (file.hashing) details.push('hashing…');
+  else if (file.verifying) details.push('verifying…');
+  else if (file.corrupt) details.push('SHA-256 mismatch');
+  else if (file.verified) details.push(`SHA-256 ✓ ${file.sha256.slice(0, 12)}`);
+  else if (file.sha256) details.push(`SHA-256 ${file.sha256.slice(0, 12)}`);
+  const metaLine = node.querySelector('.file-meta');
+  metaLine.textContent = details.join(' · ');
+  metaLine.classList.toggle('danger', Boolean(file.corrupt));
+  if (file.sha256) metaLine.title = `SHA-256 ${file.sha256}`;
+
   const progress = node.querySelector('.file-progress');
   progress.value = Number.isFinite(file.progress) ? file.progress : (file.blob ? 1 : 0);
+
+  const actions = node.querySelector('.file-actions');
   const btn = node.querySelector('.file-download');
-  if (file.blob) {
+  const holders = mergeHolders(file.holders).filter(id => id !== state.self?.id && state.peers.has(id));
+  const partial = Array.isArray(file.chunks) && countReceived(file.chunks) > 0;
+  const inFlight = Boolean(file.transferId) || file.hashing || file.verifying;
+
+  // An in-flight transfer takes precedence over the Save button, so a sender can
+  // cancel its own upload while the blob it is reading is already local.
+  if (inFlight) {
+    btn.textContent = file.hashing ? 'Hashing…'
+      : file.verifying ? 'Verifying…'
+        : file.direction === 'sent' ? 'Sending…' : 'Receiving…';
+    btn.disabled = true;
+    if (file.transferId) {
+      const cancel = document.createElement('button');
+      cancel.type = 'button';
+      cancel.className = 'ghost file-cancel';
+      cancel.textContent = 'Cancel';
+      cancel.addEventListener('click', () => cancelTransfer(conv, file));
+      actions.append(cancel);
+    }
+  } else if (file.blob) {
     btn.textContent = 'Save';
     btn.addEventListener('click', () => downloadFile(file));
-  } else if (session.crypto.key) {
-    btn.textContent = file.direction === 'received' && file.progress > 0 ? 'Receiving…' : 'Request';
-    btn.disabled = file.direction === 'received' && file.progress > 0 && file.progress < 1;
-    btn.addEventListener('click', () => requestFile(session, file).catch(err => toast(err.message)));
+  } else if (holders.length) {
+    btn.textContent = file.corrupt ? 'Retry' : partial ? 'Resume' : 'Request';
+    btn.title = partial && !file.corrupt
+      ? `${countReceived(file.chunks)} of ${file.chunks.length} chunks already held`
+      : '';
+    btn.addEventListener('click', () => requestFile(conv, file).catch(err => toast(err.message)));
   } else {
-    btn.textContent = 'Offline';
+    btn.textContent = 'Gone';
     btn.disabled = true;
+    btn.title = 'No online device is still holding these bytes.';
   }
   timeline.append(node);
 }
@@ -796,34 +1850,79 @@ function toast(message) {
   setTimeout(() => el.remove(), 3500);
 }
 
+// srflx/prflx both mean a NAT-reflexive address; relay means TURN is carrying
+// the traffic, which is the case worth surfacing loudly.
+const CANDIDATE_LABEL = { host: 'host', srflx: 'srflx', prflx: 'prflx', relay: 'relay' };
+
 async function refreshStats() {
-  for (const session of state.sessions.values()) {
-    if (!session.pc || session.pc.connectionState !== 'connected') continue;
+  for (const link of state.links.values()) {
+    if (!link.pc || link.pc.connectionState !== 'connected') continue;
     try {
-      const stats = await session.pc.getStats();
+      const stats = await link.pc.getStats();
       let sent = 0;
       let received = 0;
       let rtt = null;
+      /** @type {any} */
+      let pair = null;
+      /** @type {Map<string, any>} */
+      const byId = new Map();
+
       stats.forEach(report => {
+        byId.set(report.id, report);
         if (report.type === 'data-channel') {
           sent += report.bytesSent || 0;
           received += report.bytesReceived || 0;
         }
         if (report.type === 'candidate-pair' && report.state === 'succeeded' && (report.nominated || report.selected)) {
+          pair = report;
           if (Number.isFinite(report.currentRoundTripTime)) rtt = report.currentRoundTripTime * 1000;
         }
       });
-      session.bytesSent = sent;
-      session.bytesReceived = received;
-      session.rttMs = rtt;
+
+      if (pair) {
+        const local = byId.get(pair.localCandidateId);
+        const remote = byId.get(pair.remoteCandidateId);
+        const localType = CANDIDATE_LABEL[local?.candidateType] || '?';
+        const remoteType = CANDIDATE_LABEL[remote?.candidateType] || '?';
+        link.path = localType === 'relay' || remoteType === 'relay' ? 'relay' : `${localType}↔${remoteType}`;
+        link.pathDetail = `local ${localType} (${local?.protocol || '?'}) ↔ remote ${remoteType} (${remote?.protocol || '?'})`;
+      }
+
+      // Throughput from the delta since the previous sample, not a lifetime
+      // average, so it reflects what a transfer is doing right now.
+      const now = performance.now();
+      if (link.statsAt) {
+        const seconds = (now - link.statsAt) / 1000;
+        if (seconds > 0.2) {
+          link.sendRate = Math.max(0, (sent - link.bytesSent) / seconds);
+          link.receiveRate = Math.max(0, (received - link.bytesReceived) / seconds);
+        }
+      }
+      link.statsAt = now;
+      link.bytesSent = sent;
+      link.bytesReceived = received;
+      link.rttMs = rtt;
     } catch {}
   }
   renderPeers();
+  renderRooms();
 }
 
-async function resolveCode(code) {
+function formatRate(link) {
+  if (!link) return '—';
+  const up = link.sendRate || 0;
+  const down = link.receiveRate || 0;
+  // Below a kilobyte a second is idle chatter, not a transfer.
+  if (up < 1024 && down < 1024) return 'idle';
+  const parts = [];
+  if (up >= 1024) parts.push(`${formatBytes(up)}/s ↑`);
+  if (down >= 1024) parts.push(`${formatBytes(down)}/s ↓`);
+  return parts.join(' / ');
+}
+
+function resolveCode(code) {
   const requestId = crypto.randomUUID();
-  return await new Promise((resolve) => {
+  return new Promise((resolve) => {
     const timer = setTimeout(() => {
       state.pendingCodeRequests.delete(requestId);
       resolve(null);
@@ -835,6 +1934,8 @@ async function resolveCode(code) {
     wsSend({ type: 'resolve-code', requestId, code });
   });
 }
+
+/* ---------- events ---------- */
 
 $('#codeForm').addEventListener('submit', async (event) => {
   event.preventDefault();
@@ -852,13 +1953,32 @@ $('#codeForm').addEventListener('submit', async (event) => {
   openSession(peer.id);
 });
 
+$('#createRoomForm').addEventListener('submit', (event) => {
+  event.preventDefault();
+  const input = $('#roomNameInput');
+  const name = input.value.trim() || `${state.self?.name || 'New'} room`;
+  roomFeedback.textContent = 'Creating room…';
+  wsSend({ type: 'create-room', name });
+  input.value = '';
+});
+
+$('#joinRoomForm').addEventListener('submit', (event) => {
+  event.preventDefault();
+  const input = $('#roomCodeInput');
+  const code = input.value.trim().toUpperCase();
+  if (!code) return;
+  roomFeedback.textContent = 'Joining room…';
+  wsSend({ type: 'join-room', code });
+  input.value = '';
+});
+
 messageForm.addEventListener('submit', async (event) => {
   event.preventDefault();
-  const peerId = state.activePeerId;
+  const conv = activeConversation();
   const text = messageInput.value;
-  if (!peerId || !text.trim()) return;
+  if (!conv || !text.trim()) return;
   messageInput.value = '';
-  try { await sendChat(peerId, text); }
+  try { await sendChat(conv, text); }
   catch (err) { toast(err.message || 'Could not send message'); }
 });
 
@@ -871,51 +1991,523 @@ messageInput.addEventListener('keydown', (event) => {
 
 pickFileBtn.addEventListener('click', () => fileInput.click());
 fileInput.addEventListener('change', async () => {
-  const peerId = state.activePeerId;
-  if (!peerId || !fileInput.files?.length) return;
-  try { await sendFiles(peerId, [...fileInput.files]); }
+  const conv = activeConversation();
+  if (!conv || !fileInput.files?.length) return;
+  try { await sendFiles(conv, [...fileInput.files]); }
   catch (err) { toast(err.message || 'File transfer failed'); }
   finally { fileInput.value = ''; }
 });
 
 $('#closeSession').addEventListener('click', closeSessionPanel);
-$('#copyCodeBtn').addEventListener('click', async () => {
-  const peer = getPeer(state.activePeerId);
-  await navigator.clipboard.writeText(peer.code).catch(() => {});
-  toast('Peer code copied');
+
+leaveRoomBtn.addEventListener('click', () => {
+  const conv = activeConversation();
+  if (conv?.kind === 'room') leaveRoom(conv.roomId);
 });
+
+$('#copyCodeBtn').addEventListener('click', async () => {
+  const conv = activeConversation();
+  if (!conv) return;
+  const code = conv.kind === 'room' ? state.rooms.get(conv.roomId)?.code : getPeer(conv.peerId).code;
+  if (!code) return;
+  await navigator.clipboard.writeText(code).catch(() => {});
+  toast(conv.kind === 'room' ? 'Room code copied' : 'Peer code copied');
+});
+
 selfCode.addEventListener('click', async () => {
   if (!state.self?.code) return;
   await navigator.clipboard.writeText(state.self.code).catch(() => {});
   toast('Your device code copied');
 });
 
-$('#renameBtn').addEventListener('click', () => {
-  const current = localStorage.getItem('drop-pak-device-name') || getIdentity().name;
-  const value = prompt('Device name shown to other browsers:', current);
-  if (!value?.trim()) return;
-  const name = value.trim().slice(0, 64);
-  localStorage.setItem('drop-pak-device-name', name);
-  wsSend({ type: 'rename', name });
+$('#renameBtn').addEventListener('click', openRenameDialog);
+
+$('#devicesBtn').addEventListener('click', () => {
+  renderKnownDevices();
+  openDialog(devicesDialog, devicesDialog.querySelector('button'));
 });
 
-$('#refreshBtn').addEventListener('click', () => wsSend({ type: 'presence-request' }));
-
-window.addEventListener('beforeunload', () => {
-  for (const session of state.sessions.values()) {
-    try { session.dc?.close(); } catch {}
-    try { session.pc?.close(); } catch {}
+// Escape closes the session panel, matching the dialogs.
+document.addEventListener('keydown', event => {
+  if (event.key !== 'Escape') return;
+  if (document.querySelector('dialog[open]')) return; // the dialog handles its own
+  if (state.activeConvId) {
+    event.preventDefault();
+    closeSessionPanel();
   }
 });
 
+$('#refreshBtn').addEventListener('click', () => {
+  wsSend({ type: 'presence-request' });
+  wsSend({ type: 'rooms-request' });
+});
+
+window.addEventListener('beforeunload', () => {
+  for (const link of state.links.values()) {
+    try { link.dc?.close(); } catch {}
+    try { link.pc?.close(); } catch {}
+  }
+});
+
+/* ---------- theme ---------- */
+
+const THEMES = ['system', 'light', 'dark'];
+const THEME_GLYPH = { system: '◐', light: '☀', dark: '☾' };
+const THEME_LABEL = {
+  system: 'Theme: follow system',
+  light: 'Theme: light',
+  dark: 'Theme: dark'
+};
+
+function applyTheme(theme) {
+  const chosen = THEMES.includes(theme) ? theme : 'system';
+  if (chosen === 'system') document.documentElement.removeAttribute('data-theme');
+  else document.documentElement.setAttribute('data-theme', chosen);
+  themeIcon.textContent = THEME_GLYPH[chosen];
+  themeBtn.setAttribute('aria-label', THEME_LABEL[chosen]);
+  themeBtn.title = `${THEME_LABEL[chosen]} (click to change)`;
+  try { localStorage.setItem('aria-drop-theme', chosen); } catch {}
+  state.theme = chosen;
+}
+
+function setupTheme() {
+  let stored = 'system';
+  try { stored = localStorage.getItem('aria-drop-theme') || 'system'; } catch {}
+  applyTheme(stored);
+  themeBtn.addEventListener('click', () => {
+    applyTheme(THEMES[(THEMES.indexOf(state.theme) + 1) % THEMES.length]);
+  });
+}
+
+/* ---------- dialogs ---------- */
+
+// <dialog> gives a real modal with focus trapping and Escape for free; this only
+// has to remember where focus came from and put it back.
+function openDialog(dialog, focusTarget) {
+  const returnTo = document.activeElement;
+  dialog.addEventListener('close', () => {
+    if (returnTo instanceof HTMLElement && document.contains(returnTo)) returnTo.focus();
+  }, { once: true });
+  dialog.showModal();
+  if (focusTarget instanceof HTMLElement) focusTarget.focus();
+}
+
+function openRenameDialog() {
+  renameInput.value = deviceName();
+  openDialog(renameDialog, renameInput);
+  renameInput.select();
+}
+
+renameDialog.addEventListener('close', () => {
+  if (renameDialog.returnValue !== 'save') return;
+  const name = renameInput.value.trim().slice(0, 64);
+  if (!name) return;
+  localStorage.setItem('aria-drop-device-name', name);
+  if (state.self) state.self.name = name;
+  document.title = `${name} · aria-drop`;
+  wsSend({ type: 'rename', name });
+  toast(`This device is now "${name}"`);
+});
+
+function renderKnownDevices() {
+  knownDeviceList.textContent = '';
+  const devices = Object.entries(knownDevices())
+    .sort((a, b) => (b[1].lastSeen || 0) - (a[1].lastSeen || 0));
+
+  if (!devices.length) {
+    const empty = document.createElement('p');
+    empty.className = 'device-empty';
+    empty.textContent = 'No devices remembered yet. A device is remembered the first time you connect to it.';
+    knownDeviceList.append(empty);
+    return;
+  }
+
+  for (const [fingerprint, record] of devices) {
+    const row = document.createElement('div');
+    row.className = 'device-row';
+
+    const main = document.createElement('div');
+    main.className = 'device-row-main';
+    const name = document.createElement('strong');
+    name.textContent = record.name || 'Unnamed device';
+    const meta = document.createElement('div');
+    meta.className = 'muted';
+    meta.style.fontSize = '.74rem';
+    const online = state.peers.has(fingerprint);
+    meta.textContent = `${online ? 'Online now' : 'Not connected'} · first seen ${new Date(record.firstSeen).toLocaleDateString()}`;
+    const fp = document.createElement('div');
+    fp.className = 'device-fingerprint';
+    fp.textContent = fingerprint;
+    main.append(name, meta, fp);
+
+    const forget = document.createElement('button');
+    forget.type = 'button';
+    forget.className = 'ghost';
+    forget.textContent = 'Forget';
+    forget.addEventListener('click', () => {
+      forgetDevice(fingerprint);
+      const link = state.links.get(fingerprint);
+      if (link) link.trust = { known: false, firstSeen: Date.now(), previousName: record.name };
+      renderKnownDevices();
+      renderPeers();
+      renderSession();
+      toast(`Forgot ${record.name || 'device'}. It will show as new next time.`);
+    });
+
+    row.append(main, forget);
+    knownDeviceList.append(row);
+  }
+}
+
+// Used by paste-to-send and drag-and-drop when no session is open: pick a target
+// rather than guessing one.
+function pickTarget({ title, hint }) {
+  return new Promise(resolve => {
+    pickTargetTitle.textContent = title;
+    pickTargetHint.textContent = hint;
+    pickTargetList.textContent = '';
+
+    /** @type {Array<{label: string, sub: string, open: () => any}>} */
+    const targets = [];
+    for (const peer of [...state.peers.values()].sort((a, b) => a.name.localeCompare(b.name))) {
+      targets.push({
+        label: peer.name,
+        sub: `${peer.platform} · ${peer.browser}`,
+        open: () => ensureConversation(directConvId(peer.id), 'direct', peer.id)
+      });
+    }
+    for (const roomId of state.joinedRoomIds) {
+      const room = state.rooms.get(roomId);
+      if (!room) continue;
+      targets.push({
+        label: room.name,
+        sub: `Room · ${room.members.length} of ${room.maxMembers} devices`,
+        open: () => ensureConversation(roomConvId(roomId), 'room', roomId)
+      });
+    }
+
+    if (!targets.length) {
+      const empty = document.createElement('p');
+      empty.className = 'device-empty';
+      empty.textContent = 'Nothing to send to yet — no other devices are online and you have not joined a room.';
+      pickTargetList.append(empty);
+    }
+
+    let settled = false;
+    for (const target of targets) {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'device-row target';
+      const main = document.createElement('div');
+      main.className = 'device-row-main';
+      const strong = document.createElement('strong');
+      strong.textContent = target.label;
+      const sub = document.createElement('div');
+      sub.className = 'muted';
+      sub.style.fontSize = '.74rem';
+      sub.textContent = target.sub;
+      main.append(strong, sub);
+      button.append(main);
+      button.addEventListener('click', () => {
+        settled = true;
+        const conv = target.open();
+        pickTargetDialog.close('picked');
+        resolve(conv);
+      });
+      pickTargetList.append(button);
+    }
+
+    pickTargetDialog.addEventListener('close', () => {
+      if (!settled) resolve(null);
+    }, { once: true });
+    openDialog(pickTargetDialog, pickTargetList.querySelector('button'));
+  });
+}
+
+/* ---------- drag and drop, paste ---------- */
+
+async function sendFilesTo(conv, files) {
+  if (!conv || !files.length) return;
+  openConversation(conv.id, conv.kind, conv.kind === 'room' ? conv.roomId : conv.peerId);
+  try {
+    await sendFiles(conv, files);
+  } catch (err) {
+    toast(err.message || 'File transfer failed');
+  }
+}
+
+// One document-level pair of handlers, using a counter because dragenter and
+// dragleave fire for every child element the pointer crosses.
+function setupDragAndDrop() {
+  let depth = 0;
+
+  const rowFor = (target) => {
+    if (!(target instanceof Element)) return null;
+    const row = target.closest('#peerRows tr, #roomRows tr');
+    return row instanceof HTMLElement ? row : null;
+  };
+
+  const clearHighlights = () => {
+    for (const row of document.querySelectorAll('tr.drop-target')) row.classList.remove('drop-target');
+    sessionPanel.classList.remove('dragging');
+  };
+
+  const carriesFiles = (event) => [...(event.dataTransfer?.types || [])].includes('Files');
+
+  document.addEventListener('dragenter', event => {
+    if (!carriesFiles(event)) return;
+    event.preventDefault();
+    depth++;
+  });
+
+  document.addEventListener('dragover', event => {
+    if (!carriesFiles(event)) return;
+    event.preventDefault();
+    if (event.dataTransfer) event.dataTransfer.dropEffect = 'copy';
+    clearHighlights();
+    const row = rowFor(event.target);
+    if (row?.dataset.dropTarget) row.classList.add('drop-target');
+    else if (event.target instanceof Element && sessionPanel.contains(event.target) && state.activeConvId) {
+      sessionPanel.classList.add('dragging');
+    }
+  });
+
+  document.addEventListener('dragleave', event => {
+    if (!carriesFiles(event)) return;
+    depth = Math.max(0, depth - 1);
+    if (depth === 0) clearHighlights();
+  });
+
+  document.addEventListener('drop', async event => {
+    if (!carriesFiles(event)) return;
+    event.preventDefault();
+    depth = 0;
+    clearHighlights();
+
+    const files = [...(event.dataTransfer?.files || [])];
+    if (!files.length) return;
+
+    const row = rowFor(event.target);
+    if (row?.dataset.dropTarget) {
+      const conv = row.dataset.dropKind === 'room'
+        ? ensureConversation(roomConvId(row.dataset.dropTarget), 'room', row.dataset.dropTarget)
+        : ensureConversation(directConvId(row.dataset.dropTarget), 'direct', row.dataset.dropTarget);
+      await sendFilesTo(conv, files);
+      return;
+    }
+
+    if (state.activeConvId && event.target instanceof Element && sessionPanel.contains(event.target)) {
+      await sendFilesTo(activeConversation(), files);
+      return;
+    }
+
+    const conv = await pickTarget({
+      title: files.length === 1 ? `Send "${files[0].name}" to…` : `Send ${files.length} files to…`,
+      hint: 'Dropped on the page, so pick where it should go.'
+    });
+    await sendFilesTo(conv, files);
+  });
+
+  // A drop that lands outside a handled zone must not navigate the page away.
+  window.addEventListener('dragover', event => { if (carriesFiles(event)) event.preventDefault(); });
+  window.addEventListener('drop', event => { if (carriesFiles(event)) event.preventDefault(); });
+}
+
+function setupPasteToSend() {
+  document.addEventListener('paste', async event => {
+    const target = event.target;
+    // Let a paste into a text field behave normally.
+    if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement) return;
+    if (!event.clipboardData) return;
+
+    const files = [...event.clipboardData.files];
+    const text = event.clipboardData.getData('text/plain').trim();
+    if (!files.length && !text) return;
+    event.preventDefault();
+
+    let conv = activeConversation();
+    if (!conv) {
+      conv = await pickTarget({
+        title: files.length ? 'Send pasted file to…' : 'Send pasted text to…',
+        hint: files.length
+          ? `${files.length} file${files.length === 1 ? '' : 's'} from the clipboard.`
+          : text.length > 80 ? `${text.slice(0, 80)}…` : text
+      });
+      if (!conv) return;
+    }
+
+    if (files.length) {
+      await sendFilesTo(conv, files);
+      return;
+    }
+
+    openConversation(conv.id, conv.kind, conv.kind === 'room' ? conv.roomId : conv.peerId, 'text');
+    messageInput.value = text.slice(0, CAPS.messageChars);
+    messageInput.focus();
+    toast('Pasted text is ready — press Enter to send.');
+  });
+}
+
+/* ---------- installed-app and mobile behaviour ---------- */
+
+// Phones suspend background tabs aggressively: on iOS a lock screen or app
+// switch tears down the WebSocket and every RTCPeerConnection without firing
+// anything useful. On return to the foreground, check and rebuild rather than
+// waiting for a timer that was itself suspended.
+function handleForeground() {
+  if (document.visibilityState !== 'visible') return;
+  if (!state.identity) return;
+  if (!state.ws || state.ws.readyState === WebSocket.CLOSED || state.ws.readyState === WebSocket.CLOSING) {
+    state.wsBackoff = 500;
+    connectWebSocket();
+    return;
+  }
+  for (const peerId of neededPeerIds()) {
+    const link = state.links.get(peerId);
+    if (link?.incompatible) continue;
+    if (!link?.pc || ['closed', 'failed', 'disconnected'].includes(link.pc.connectionState)) retryLink(peerId);
+  }
+}
+
+document.addEventListener('visibilitychange', handleForeground);
+window.addEventListener('pageshow', handleForeground);
+window.addEventListener('online', handleForeground);
+
+// A locked screen also stops transfers. Hold a screen wake lock only while
+// something is actually in flight, and release it as soon as nothing is.
+let wakeLock = null;
+async function updateWakeLock() {
+  if (!('wakeLock' in navigator)) return;
+  let busy = state.activeSends.size > 0;
+  if (!busy) {
+    for (const conv of state.conversations.values()) {
+      for (const file of conv.files.values()) {
+        if (file.transferId || file.hashing) { busy = true; break; }
+      }
+      if (busy) break;
+    }
+  }
+  try {
+    if (busy && !wakeLock) {
+      wakeLock = await navigator.wakeLock.request('screen');
+      wakeLock.addEventListener('release', () => { wakeLock = null; });
+    } else if (!busy && wakeLock) {
+      await wakeLock.release();
+      wakeLock = null;
+    }
+  } catch {
+    wakeLock = null; // Denied, or the document lost visibility.
+  }
+}
+
+function setupInstallPrompt() {
+  const installBtn = $('#installBtn');
+  let deferred = null;
+
+  window.addEventListener('beforeinstallprompt', event => {
+    // Chrome/Edge/Android: take over the prompt so it can be offered in context.
+    event.preventDefault();
+    deferred = event;
+    installBtn.classList.remove('hidden');
+  });
+
+  installBtn.addEventListener('click', async () => {
+    if (!deferred) return;
+    installBtn.disabled = true;
+    deferred.prompt();
+    await deferred.userChoice.catch(() => {});
+    deferred = null;
+    installBtn.classList.add('hidden');
+    installBtn.disabled = false;
+  });
+
+  window.addEventListener('appinstalled', () => {
+    deferred = null;
+    installBtn.classList.add('hidden');
+  });
+
+  // iOS has no install prompt API; Add to Home Screen is manual, so say so once
+  // instead of showing a button that cannot work.
+  // navigator.standalone is iOS-only and not in the standard Navigator type.
+  const iosStandalone = /** @type {{ standalone?: boolean }} */ (navigator).standalone === true;
+  const standalone = matchMedia('(display-mode: standalone)').matches || iosStandalone;
+  if (!standalone && /iPhone|iPad|iPod/i.test(navigator.userAgent)) {
+    installBtn.classList.remove('hidden');
+    installBtn.textContent = 'Install';
+    installBtn.addEventListener('click', () => {
+      toast('In Safari, tap Share then "Add to Home Screen" to install aria-drop.');
+    });
+  }
+}
+
+async function setupServiceWorker() {
+  if (!('serviceWorker' in navigator)) return;
+  let registration;
+  try {
+    registration = await navigator.serviceWorker.register('/sw.js', { updateViaCache: 'none' });
+  } catch {
+    return;
+  }
+
+  const banner = $('#updateBanner');
+  const offerUpdate = (worker) => {
+    if (!worker) return;
+    banner.classList.remove('hidden');
+    $('#reloadBtn').onclick = () => {
+      // Reload only when the user says so: an update mid-transfer would drop it.
+      worker.postMessage('skip-waiting');
+      navigator.serviceWorker.addEventListener('controllerchange', () => location.reload(), { once: true });
+    };
+  };
+
+  if (registration.waiting) offerUpdate(registration.waiting);
+  registration.addEventListener('updatefound', () => {
+    const installing = registration.installing;
+    installing?.addEventListener('statechange', () => {
+      if (installing.state === 'installed' && navigator.serviceWorker.controller) offerUpdate(installing);
+    });
+  });
+}
+
+// Text and links shared from another app arrive as query parameters declared by
+// the manifest's share_target.
+function consumeShareTarget() {
+  const params = new URLSearchParams(location.search);
+  const shared = [params.get('share_title'), params.get('share_text'), params.get('share_url')]
+    .filter(Boolean)
+    .join('\n')
+    .trim();
+  if (!shared) return;
+  history.replaceState(null, '', location.pathname);
+  messageInput.value = shared.slice(0, CAPS.messageChars);
+  toast('Shared text is ready — pick a device or room to send it to.');
+}
+
 async function boot() {
+  // Theme first: it must not flash the wrong palette while config loads.
+  setupTheme();
+
   try {
     const response = await fetch('/config.json', { cache: 'no-store' });
     if (response.ok) state.config = { ...state.config, ...(await response.json()) };
   } catch {}
+
+  try {
+    state.identity = await loadIdentity();
+  } catch (err) {
+    serverState.textContent = 'Device identity unavailable';
+    toast('This browser could not create a device identity. Private browsing with storage disabled will not work.');
+    return;
+  }
+
+  consumeShareTarget();
+  setupInstallPrompt();
+  setupDragAndDrop();
+  setupPasteToSend();
   connectWebSocket();
   state.statsTimer = setInterval(refreshStats, 3000);
-  if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => {});
+  state.wakeLockTimer = setInterval(updateWakeLock, 2000);
+  setupServiceWorker();
 }
 
 boot();

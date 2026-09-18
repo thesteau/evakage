@@ -1,15 +1,25 @@
 {
-  "name": "drop-pak",
+  "name": "aria-drop",
   "version": "0.1.0",
   "private": true,
   "description": "Browser-first ephemeral peer chat and file transfer for trusted networks.",
+  "license": "MIT",
   "type": "module",
   "scripts": {
     "start": "node server.js",
     "dev": "node --watch server.js",
-    "test": "node --test"
+    "test": "node --test",
+    "lint": "eslint .",
+    "typecheck": "tsc --noEmit",
+    "check": "npm run lint && npm run typecheck && npm test"
   },
   "engines": {
     "node": ">=22"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "eslint": "^9.17.0",
+    "globals": "^15.14.0",
+    "typescript": "^5.7.2"
   }
 }

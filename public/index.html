@@ -3,64 +3,86 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <meta name="theme-color" content="#0b1020">
+  <meta name="theme-color" content="#0b1020" media="(prefers-color-scheme: dark)">
+  <meta name="theme-color" content="#f4f6fc" media="(prefers-color-scheme: light)">
   <meta name="description" content="Ephemeral browser-to-browser chat and file transfer for trusted networks.">
+  <meta name="color-scheme" content="dark light">
   <link rel="manifest" href="/manifest.webmanifest">
   <link rel="icon" href="/icon.svg" type="image/svg+xml">
+  <link rel="icon" href="/icons/favicon-32.png" sizes="32x32" type="image/png">
+
+  <!-- iOS ignores the manifest for these, so they have to be declared here. -->
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="aria-drop">
+  <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
+
   <link rel="stylesheet" href="/styles.css">
-  <title>drop-pak</title>
+  <title>aria-drop</title>
 </head>
 <body>
+  <a class="skip-link" href="#peersSection">Skip to devices</a>
+
   <header class="topbar">
     <div>
-      <div class="eyebrow">working codename</div>
-      <h1>drop-pak</h1>
+      <div class="eyebrow">ephemeral peer transfer</div>
+      <h1>aria-drop</h1>
     </div>
     <div class="topbar-actions">
-      <button id="renameBtn" class="ghost">Rename device</button>
+      <button id="installBtn" class="ghost hidden" type="button">Install app</button>
+      <button id="themeBtn" class="icon-button" type="button" aria-label="Theme: follow system">
+        <span id="themeIcon" aria-hidden="true">◐</span>
+      </button>
+      <button id="devicesBtn" class="ghost" type="button">Known devices</button>
+      <button id="renameBtn" class="ghost" type="button">Rename device</button>
       <div class="identity-card">
-        <span class="muted">Your code</span>
-        <button id="selfCode" class="code-button" title="Copy device code">----</button>
+        <span class="muted" id="selfCodeLabel">Your code</span>
+        <button id="selfCode" class="code-button" type="button" aria-describedby="selfCodeLabel"
+                aria-label="Your device code, activate to copy">----</button>
       </div>
     </div>
   </header>
 
   <main class="page-shell">
-    <section class="hero card">
+    <section class="hero card" aria-labelledby="heroHeading">
       <div>
-        <span id="serverState" class="status-dot offline">Connecting…</span>
-        <h2>Nearby browser peers</h2>
-        <p>Pick a device to chat, send text, or transfer a file. Payloads stay in browser memory and disappear when every participant is gone.</p>
+        <span id="serverState" class="status-dot offline" role="status">Connecting…</span>
+        <h2 id="heroHeading">Nearby browser peers</h2>
+        <p>Pick a device to chat, send text, or transfer a file. Drag files onto any row, or paste straight into the page. Payloads stay in browser memory and disappear when every participant is gone.</p>
       </div>
       <form id="codeForm" class="code-form">
         <label for="codeInput">Connect by code</label>
         <div class="inline-field">
-          <input id="codeInput" autocomplete="off" autocapitalize="characters" placeholder="ABCD-EFGH" maxlength="16">
+          <input id="codeInput" autocomplete="off" autocapitalize="characters" spellcheck="false"
+                 placeholder="ABCD-EFGH" maxlength="16" aria-describedby="codeFeedback">
           <button type="submit">Open</button>
         </div>
-        <span id="codeFeedback" class="form-feedback"></span>
+        <span id="codeFeedback" class="form-feedback" role="status"></span>
       </form>
     </section>
 
-    <section class="card peers-card">
+    <section class="card peers-card" id="peersSection" aria-labelledby="peersHeading">
       <div class="section-heading">
         <div>
-          <h2>Advertised devices</h2>
-          <p class="muted">Presence refreshes automatically through the local signaling server.</p>
+          <h2 id="peersHeading">Advertised devices</h2>
+          <p class="muted">Presence refreshes automatically. Drop a file on a device to send it.</p>
         </div>
-        <button id="refreshBtn" class="ghost">Refresh view</button>
+        <button id="refreshBtn" class="ghost" type="button">Refresh view</button>
       </div>
       <div class="table-wrap">
         <table>
+          <caption class="visually-hidden">Devices advertised on this server, with connection state and actions</caption>
           <thead>
             <tr>
-              <th>Device</th>
-              <th>Code</th>
-              <th>Platform</th>
-              <th>Status</th>
-              <th>RTT</th>
-              <th>Transferred</th>
-              <th class="actions-col">Actions</th>
+              <th scope="col">Device</th>
+              <th scope="col">Code</th>
+              <th scope="col">Platform</th>
+              <th scope="col">Status</th>
+              <th scope="col">Path</th>
+              <th scope="col">Rate</th>
+              <th scope="col">Transferred</th>
+              <th scope="col" class="actions-col">Actions</th>
             </tr>
           </thead>
           <tbody id="peerRows"></tbody>
@@ -68,40 +90,133 @@
       </div>
       <div id="emptyPeers" class="empty-state hidden">
         <strong>No other devices yet.</strong>
-        <span>Open this page on another browser connected to the same drop-pak server.</span>
+        <span>Open this page on another browser connected to the same aria-drop server.</span>
+      </div>
+    </section>
+
+    <section class="card peers-card" aria-labelledby="roomsHeading">
+      <div class="section-heading">
+        <div>
+          <h2 id="roomsHeading">Ephemeral rooms</h2>
+          <p class="muted">Small full-mesh groups. A room lives while at least one member is still connected.</p>
+        </div>
+        <div class="room-forms">
+          <form id="createRoomForm" class="inline-field">
+            <label class="visually-hidden" for="roomNameInput">New room name</label>
+            <input id="roomNameInput" autocomplete="off" placeholder="Room name" maxlength="64">
+            <button type="submit">Create</button>
+          </form>
+          <form id="joinRoomForm" class="inline-field">
+            <label class="visually-hidden" for="roomCodeInput">Join a room by code</label>
+            <input id="roomCodeInput" autocomplete="off" autocapitalize="characters" spellcheck="false"
+                   placeholder="ABCD-EFGH" maxlength="9">
+            <button type="submit" class="ghost">Join by code</button>
+          </form>
+        </div>
+      </div>
+      <span id="roomFeedback" class="form-feedback" role="status"></span>
+      <div class="table-wrap">
+        <table>
+          <caption class="visually-hidden">Rooms advertised on this server, with membership and actions</caption>
+          <thead>
+            <tr>
+              <th scope="col">Room</th>
+              <th scope="col">Code</th>
+              <th scope="col">Members</th>
+              <th scope="col">Size</th>
+              <th scope="col">Links</th>
+              <th scope="col" class="actions-col">Actions</th>
+            </tr>
+          </thead>
+          <tbody id="roomRows"></tbody>
+        </table>
+      </div>
+      <div id="emptyRooms" class="empty-state hidden">
+        <strong>No active rooms.</strong>
+        <span>Create one, then share its code with the other devices.</span>
       </div>
     </section>
   </main>
 
-  <aside id="sessionPanel" class="session-panel" aria-hidden="true">
+  <aside id="sessionPanel" class="session-panel" aria-label="Session" hidden>
     <div class="session-header">
       <div>
-        <div class="eyebrow">ephemeral session</div>
+        <div id="sessionKind" class="eyebrow">ephemeral session</div>
         <h2 id="sessionTitle">Peer</h2>
         <div id="sessionMeta" class="session-meta"></div>
+        <div id="sessionMembers" class="session-members hidden"></div>
       </div>
-      <button id="closeSession" class="icon-button" aria-label="Close session">×</button>
+      <button id="closeSession" class="icon-button" type="button" aria-label="Close session (Escape)">×</button>
     </div>
 
     <div class="session-toolbar">
-      <button id="pickFileBtn">Send file</button>
+      <button id="pickFileBtn" type="button">Send file</button>
       <input id="fileInput" type="file" hidden multiple>
-      <button id="copyCodeBtn" class="ghost">Copy peer code</button>
-      <span id="secureState" class="secure-state">Connecting…</span>
+      <button id="copyCodeBtn" class="ghost" type="button">Copy code</button>
+      <button id="leaveRoomBtn" class="ghost hidden" type="button">Leave room</button>
+      <span id="secureState" class="secure-state" role="status">Connecting…</span>
     </div>
 
-    <div id="timeline" class="timeline"></div>
+    <div id="timeline" class="timeline" role="log" aria-label="Messages and files" aria-live="polite"></div>
 
     <form id="messageForm" class="message-form">
+      <label class="visually-hidden" for="messageInput">Message</label>
       <textarea id="messageInput" rows="2" placeholder="Type or paste text / a link…" maxlength="20000"></textarea>
       <button type="submit">Send</button>
     </form>
+
+    <div id="dropHint" class="drop-hint" aria-hidden="true">Drop to send</div>
   </aside>
 
-  <div id="toastRegion" class="toast-region" aria-live="polite"></div>
+  <dialog id="renameDialog" class="dialog">
+    <form method="dialog">
+      <h2>Rename this device</h2>
+      <p class="muted">Other browsers on this server see this name. It is stored locally and is not part of your device identity.</p>
+      <label class="visually-hidden" for="renameInput">Device name</label>
+      <input id="renameInput" maxlength="64" autocomplete="off">
+      <div class="dialog-actions">
+        <button value="cancel" class="ghost" type="submit">Cancel</button>
+        <button id="renameSave" value="save" type="submit">Save</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="devicesDialog" class="dialog wide">
+    <form method="dialog">
+      <h2>Known devices</h2>
+      <p class="muted">
+        Devices are remembered by the fingerprint of their long-lived key the first
+        time you connect. Forgetting one means it shows as <em>new</em> again, and its
+        safety code is worth re-checking.
+      </p>
+      <div id="knownDeviceList" class="device-list"></div>
+      <div class="dialog-actions">
+        <button value="close" type="submit">Done</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="pickTargetDialog" class="dialog">
+    <form method="dialog">
+      <h2 id="pickTargetTitle">Send to…</h2>
+      <p class="muted" id="pickTargetHint"></p>
+      <div id="pickTargetList" class="device-list"></div>
+      <div class="dialog-actions">
+        <button value="cancel" class="ghost" type="submit">Cancel</button>
+      </div>
+    </form>
+  </dialog>
+
+  <div id="updateBanner" class="update-banner hidden" role="status">
+    <span>A new version of aria-drop is ready.</span>
+    <button id="reloadBtn" type="button">Reload</button>
+  </div>
+
+  <div id="toastRegion" class="toast-region" role="status" aria-live="polite"></div>
 
   <template id="messageTemplate">
     <article class="message-item">
+      <div class="message-author"></div>
       <div class="message-bubble"></div>
       <div class="message-time"></div>
     </article>
@@ -110,8 +225,8 @@
   <template id="fileTemplate">
     <article class="file-item">
       <div class="file-main">
-        <div class="file-icon">⇩</div>
-        <div>
+        <div class="file-icon" aria-hidden="true">⇩</div>
+        <div class="file-text">
           <strong class="file-name"></strong>
           <div class="file-meta muted"></div>
         </div>
