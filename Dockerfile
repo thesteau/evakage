@@ -1,4 +1,4 @@
-FROM node:22-alpine
+FROM node:26-alpine
 
 # BLOB_DIR sits in the container's own writable layer and is deliberately never
 # declared as a VOLUME: buffered transfers must not outlive the container, and a
