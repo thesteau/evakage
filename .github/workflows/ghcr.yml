@@ -16,8 +16,8 @@ jobs:
   test:
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/setup-node@v7
       - uses: actions/checkout@v7
-      - uses: actions/setup-node@v5
         with:
           # Matches the node:22-alpine base image the container ships on.
           node-version: 22
