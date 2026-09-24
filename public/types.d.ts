@@ -80,6 +80,8 @@ export interface FileRecord extends FileMeta {
   relayKey?: CryptoKey | null;
   relayMeta?: { id: string; size: number; chunkSize: number; totalChunks: number };
   relayConvId?: string;
+  /** When the server stops holding this item, from the server's own clock. */
+  relayExpiresAt?: number;
 }
 
 interface ConversationState {

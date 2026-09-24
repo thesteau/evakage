@@ -26,8 +26,8 @@ test('engine smoke: identity, relay chat and verified file download', async ({ b
       pages.push(page);
     }
     const [alice, bob] = pages;
-    await alice.getByRole('button', { name: 'Chat with Bob', exact: true }).click();
-    await bob.getByRole('button', { name: 'Chat with Alice', exact: true }).click();
+    await alice.getByRole('button', { name: 'Open conversation with Bob', exact: true }).click();
+    await bob.getByRole('button', { name: 'Open conversation with Alice', exact: true }).click();
     await alice.locator('#messageInput').fill('Across browser engines');
     await alice.locator('#messageForm').getByRole('button', { name: 'Send', exact: true }).click();
     await expect(bob.locator('#timeline')).toContainText('Across browser engines');

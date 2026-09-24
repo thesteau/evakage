@@ -21,7 +21,7 @@
 //   1. once every recipient has taken its copy, the item is unlinked early;
 //   2. otherwise it stays — including after every device has disconnected, so a
 //      device that comes back within the window still receives what was sent
-//      to it — until it passes its maximum age (24h by default);
+//      to it — until it passes its maximum age (1h by default);
 //   3. the age sweep runs on a short interval, removes aged items, and removes
 //      any empty directory it finds, so a conversation whose items have all gone
 //      disappears as a whole;
@@ -36,7 +36,9 @@ import path from 'node:path';
 import os from 'node:os';
 import crypto from 'node:crypto';
 
-const DAY_MS = 24 * 60 * 60 * 1000;
+const MINUTE_MS = 60 * 1000;
+const HOUR_MS = 60 * MINUTE_MS;
+const DAY_MS = 24 * HOUR_MS;
 
 export const BLOB_DEFAULTS = {
   dir: process.env.BLOB_DIR || path.join(os.tmpdir(), 'aria-drop-blobs'),
@@ -45,11 +47,25 @@ export const BLOB_DEFAULTS = {
   maxBlobsPerDevice: Number(process.env.BLOB_PER_DEVICE || 32),
   // Messages are small and frequent, so they get their own, larger budget.
   maxMessagesPerDevice: Number(process.env.BLOB_MESSAGES_PER_DEVICE || 2000),
-  // Maximum age. Anything younger survives a sweep; anything older is removed
-  // whether or not its recipients ever came back.
-  maxAgeMs: Number(process.env.BLOB_MAX_AGE_MS || DAY_MS),
-  // Physical cleanup interval. Access expires independently of this sweep.
-  sweepEveryMs: Number(process.env.BLOB_SWEEP_MS || 15 * 60 * 1000)
+  // An item lives with its conversation: while any device party to it is
+  // connected, it stays, however old it gets. Once they have all gone it is on
+  // borrowed time, and this is how much — long enough to survive a locked
+  // phone, a reload or a wifi drop, short enough that an ended session does not
+  // leave ciphertext lying around.
+  idleGraceMs: Number(process.env.BLOB_IDLE_GRACE_MS || 15 * MINUTE_MS),
+  // A one-to-one conversation where only one device is present is a half-open
+  // session: someone waiting for a peer that is not here. It is allowed to wait
+  // this long, and no longer — otherwise a browser left open keeps a dead
+  // pairing, and its ciphertext, alive indefinitely. Rooms are exempt: a room
+  // with one member connected is a room, not a stalled transfer.
+  soloMaxMs: Number(process.env.BLOB_SOLO_MAX_MS || 3 * HOUR_MS),
+  // The ceiling, so "the session never ended" cannot mean "kept forever". A
+  // conversation held open for three days has outlived its usefulness; start a
+  // new one rather than leaning on this.
+  maxAgeMs: Number(process.env.BLOB_MAX_AGE_MS || 3 * DAY_MS),
+  // Physical cleanup interval. Access expires independently of this sweep, so
+  // this bounds how long expired ciphertext stays on disk.
+  sweepEveryMs: Number(process.env.BLOB_SWEEP_MS || MINUTE_MS)
 };
 
 const token = () => crypto.randomBytes(32).toString('base64url');
@@ -77,9 +93,14 @@ const token = () => crypto.randomBytes(32).toString('base64url');
  * @property {number} written bytes actually received
  * @property {boolean} complete
  * @property {number} createdAt
+ * @property {number | null} idleSince when the last device party to this item
+ *   disconnected, or null while at least one of them is connected
+ * @property {number | null} soloSince when this direct conversation dropped to a
+ *   single connected device, or null when it has more, none, or is a room
  */
 
-/** @typedef {Partial<typeof BLOB_DEFAULTS> & {now?: () => number}} BlobStoreOptions */
+/** @typedef {Partial<typeof BLOB_DEFAULTS> & {now?: () => number,
+ *   isOnline?: (deviceId: string) => boolean}} BlobStoreOptions */
 
 /**
  * Directory name for a conversation. A direct conversation is keyed on both
@@ -111,7 +132,57 @@ async function removeIfEmpty(dir) {
 export function createBlobStore(options = {}) {
   const config = { ...BLOB_DEFAULTS, ...options };
   const now = options.now || Date.now;
-  const expired = (/** @type {BlobRecord} */ blob) => now() - blob.createdAt >= config.maxAgeMs;
+  // Whether a device is currently connected. The store has no view of the
+  // signaling server, so the owner supplies one; with no answer, every
+  // conversation counts as gone and items live out the grace and no longer.
+  const isOnline = options.isOnline || (() => false);
+
+  /**
+   * When an item stops being collectable: the earliest of its conversation
+   * having emptied, having sat half-open with one device, and the absolute cap.
+   * @param {BlobRecord} blob
+   */
+  function expiresAt(blob) {
+    const deadlines = [blob.createdAt + config.maxAgeMs];
+    if (blob.idleSince !== null) deadlines.push(blob.idleSince + config.idleGraceMs);
+    if (blob.soloSince !== null) deadlines.push(blob.soloSince + config.soloMaxMs);
+    return Math.min(...deadlines);
+  }
+
+  const expired = (/** @type {BlobRecord} */ blob) => now() >= expiresAt(blob);
+
+  /**
+   * Liveness for one item: nobody connected starts the grace, exactly one
+   * connected device in a direct conversation starts the half-open clock, and
+   * anything else clears both. Timers are left running once started, so
+   * reconnecting is what resets them, not a passing sweep.
+   * @param {BlobRecord} blob @param {number} at
+   */
+  function assess(blob, at) {
+    const present = [...blob.participants].filter(isOnline).length;
+    const direct = !blob.conv.startsWith('room:');
+    if (present === 0) {
+      if (blob.idleSince === null) blob.idleSince = at;
+      blob.soloSince = null;
+      return;
+    }
+    blob.idleSince = null;
+    if (direct && present === 1) {
+      if (blob.soloSince === null) blob.soloSince = at;
+    } else {
+      blob.soloSince = null;
+    }
+  }
+
+  /**
+   * Recomputes which items still have someone connected. Called when a device
+   * registers or drops, and on every sweep, so `idleSince` is the moment the
+   * conversation actually emptied rather than the moment anyone noticed.
+   */
+  function refreshLiveness() {
+    const at = now();
+    for (const blob of blobs.values()) assess(blob, at);
+  }
   /** @type {Map<string, BlobRecord>} */
   const blobs = new Map();
   let storeBytes = 0;
@@ -229,7 +300,9 @@ export function createBlobStore(options = {}) {
       envelopeBytes,
       written: 0,
       complete: isMessage,
-      createdAt: now()
+      createdAt: now(),
+      idleSince: null,
+      soloSince: null
     };
 
     // A release elsewhere in this conversation can remove the directory the
@@ -243,6 +316,7 @@ export function createBlobStore(options = {}) {
         if (err?.code !== 'ENOENT' || attempt >= 3) throw err;
       }
     }
+    assess(blob, blob.createdAt);
     blobs.set(id, blob);
     storeBytes += envelopeBytes;
     if (isMessage) onAvailable(blob);
@@ -347,7 +421,7 @@ export function createBlobStore(options = {}) {
       .filter(blob => !expired(blob) && blob.complete && blob.recipients.has(deviceId) && !blob.released.has(deviceId))
       .sort((a, b) => a.createdAt - b.createdAt);
     return (await Promise.all(ready.map(blob => describe(blob, deviceId))))
-      .filter(item => item !== null && now() - item.createdAt < config.maxAgeMs);
+      .filter(item => item !== null);
   }
 
   /** @param {BlobRecord} blob @param {string} deviceId */
@@ -364,7 +438,9 @@ export function createBlobStore(options = {}) {
       chunkSize: blob.chunkSize,
       totalChunks: blob.totalChunks,
       envelope,
-      createdAt: blob.createdAt
+      createdAt: blob.createdAt,
+      // So a recipient can show how long it has left rather than guessing.
+      expiresAt: expiresAt(blob)
     };
   }
 
@@ -373,10 +449,12 @@ export function createBlobStore(options = {}) {
    * whatever emptied it. Younger items are left alone.
    */
   async function sweepAged(maxAgeMs = config.maxAgeMs) {
+    refreshLiveness();
     const cutoff = now() - maxAgeMs;
+    /** @type {string[]} */
     const purged = [];
     for (const blob of [...blobs.values()]) {
-      if (blob.createdAt <= cutoff) {
+      if (expired(blob) || blob.createdAt <= cutoff) {
         await remove(blob.id);
         purged.push(blob.id);
       }
@@ -421,6 +499,8 @@ export function createBlobStore(options = {}) {
     pendingFor,
     describe,
     sweepAged,
+    refreshLiveness,
+    expiresAt,
     removeEmptyDirectories,
     stats,
     set onAvailable(/** @type {(blob: BlobRecord) => void} */ handler) { onAvailable = typeof handler === 'function' ? handler : () => {}; }

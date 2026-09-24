@@ -108,7 +108,7 @@ for (const attack of ['identity', 'signature']) {
         return send.call(this, data);
       };
     }, attack);
-    await bob.getByRole('button', { name: 'Chat with Alice', exact: true }).click();
+    await bob.getByRole('button', { name: 'Open conversation with Alice', exact: true }).click();
     await expect(bob.locator('#toastRegion')).toContainText(attack === 'identity' ? 'does not match its device ID' : 'failed to prove ownership');
     await expect(bob.locator('#secureState')).not.toContainText('Encrypted');
   });
@@ -224,9 +224,8 @@ test('room history catches up after an away member reconnects', async ({ devices
   const { alice, bob } = devices;
   await alice.locator('#roomNameInput').fill('Catch-up room');
   await alice.locator('#createRoomForm').getByRole('button', { name: 'Create' }).click();
-  await bob.getByRole('button', { name: 'Join room Catch-up room', exact: true }).click();
-  await alice.getByRole('button', { name: 'Open room Catch-up room', exact: true }).click();
   await bob.getByRole('button', { name: 'Open room Catch-up room', exact: true }).click();
+  await alice.getByRole('button', { name: 'Open room Catch-up room', exact: true }).click();
   await expect(bob.locator('#sessionTitle')).toHaveText('Catch-up room');
   await chat(alice, bob, 'Before going away');
   // Disconnect signaling while retaining the page's RAM state. Prevent the

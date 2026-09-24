@@ -64,7 +64,7 @@ export const test = base.extend(/** @type {import('@playwright/test').Fixtures<{
 /** @param {Page} page @param {string} name */
 export async function openPeer(page, name) {
   await page.locator('#peerRows tr').filter({ hasText: name })
-    .getByRole('button', { name: `Chat with ${name}`, exact: true }).click();
+    .getByRole('button', { name: `Open conversation with ${name}`, exact: true }).click();
   await expect(page.locator('#secureState')).toContainText('Encrypted');
 }
 

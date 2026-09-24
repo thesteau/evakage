@@ -16,7 +16,7 @@ A Docker-first, browser-first experiment for ephemeral local peer communication.
 - Keeps messages and completed file blobs **only in browser memory**.
 - Re-syncs chat/file metadata from any surviving peer when a browser reconnects with the same local device identity.
 - Allows a returned peer to request an in-memory file again from whichever peer still holds the bytes.
-- Falls back to a **server relay** for messages and files when a direct connection cannot be made — sealed so the server cannot read them, deleted once delivered, with access expiring after 24 hours by default.
+- Falls back to a **server relay** for messages and files when a direct connection cannot be made — sealed so the server cannot read them, deleted once delivered, and otherwise living only as long as the conversation they belong to.
 - Asks before receiving files from a device you have not met (configurable).
 - Contains no server-side database.
 - Verifies every device's long-lived identity key and shows a stable safety code.
@@ -65,17 +65,28 @@ regardless:
 two devices, or the same room, always share one; a new pairing or room gets a
 new one.
 
-- An item is deleted as soon as every recipient has received it.
-- If a recipient has not taken it yet, it **stays** — including after both
-  devices have disconnected — so a device that comes back within the window
-  still receives what was sent to it.
-- At **24 hours** (configurable), items stop appearing in pending delivery and
-  cannot be claimed, uploaded, or newly downloaded, even with an earlier token.
-  Uploads that cross the deadline are rejected. A download opened before expiry
-  may finish afterward; already delivered copies cannot be recalled.
-- Disk cleanup is separate: the default 15-minute sweep removes expired
-  ciphertext and empty directories. Scheduling delays can postpone cleanup;
-  there is no exact physical-deletion deadline.
+An item lives with its conversation rather than on a fixed clock. It is deleted
+at the first of:
+
+- every recipient has received it;
+- **everyone party to it has been gone for 15 minutes** — long enough to survive
+  a locked phone, a reload or a wifi drop, so a device that comes back still
+  receives what was left for it;
+- a **one-to-one conversation has had only one device present for 3 hours**. One
+  device waiting on a peer that is not coming back is a stalled session, not a
+  live one. Rooms are exempt: a room with one member connected is still a room;
+- **3 days**, whatever else is true. A conversation held open that long has
+  outlived its usefulness — start a new one rather than leaning on this.
+
+Expiry is about access, not just disk: an expired item stops appearing in
+pending delivery and cannot be claimed, uploaded or newly downloaded, even with
+a token issued earlier. Uploads that cross the deadline are rejected; a download
+opened before expiry may finish afterward, and delivered copies cannot be
+recalled. Physical cleanup follows on the sweep (every minute by default), so
+there is no exact physical-deletion deadline.
+
+The app shows the countdown next to anything the server is holding, and marks it
+when the deadline is close or when the session itself is at its 3-day limit.
 - A server restart or a recreated container erases everything immediately. Item
   records live only in the server's memory, so a restart ends items early,
   never late.
@@ -89,7 +100,7 @@ Rooms extend the same model to a small group. Create one from the rooms table, t
 
 - **Up to six members, transport is a full mesh.** Every member holds one DataChannel per other member, each with its own ECDH/AES-GCM key and its own safety code (hover a member chip to read it). Nothing is relayed through other peers; a member a direct link cannot reach gets its copy through the server relay instead, sealed to it.
 - **Past six, a room runs through the server.** A mesh costs O(n²) connections and a sender uploads each file once per recipient, so a bigger room opens no direct links at all: every message and file goes through the relay, sealed separately to each member, and a file is uploaded once however many members there are. The room says `Large room · sealed to each member via server`. There are no per-link safety codes in this mode — authenticity rests on each item's signature. The cap is `ROOM_MAX_MEMBERS` (default 20, at most 64).
-- **Dropping off does not lose your seat.** A member whose connection drops shows as *away*: it keeps its seat, is still sent to through the relay, and catches up when it rejoins. Leaving on purpose gives the seat up; so does reloading without rejoining, or 24 hours away.
+- **Dropping off does not lose your seat.** A member whose connection drops shows as *away*: it keeps its seat, is still sent to through the relay, and catches up when it rejoins. Leaving on purpose gives the seat up; so does reloading without rejoining, or staying away past the relay window (3 hours by default).
 - **A room survives while at least one member is still connected.** The last participant leaving destroys the server-side record, and the payloads only ever existed in the participants' browsers. If signaling blips while your browser is still open, it restores the room on reconnect rather than losing it.
 - **History heals itself.** Messages and file manifests carry immutable IDs, so every pair of peers exchanges its full manifest when their link comes up and merges by ID. A device that rejoins after a reload recovers what the survivors still hold, with no elected leader and no duplicates.
 - **File bytes are never re-broadcast on rejoin.** A returning member sees the file metadata and pulls the bytes on demand from a peer that still has them; if nobody online holds them any more, the entry reads `Gone`.
@@ -148,8 +159,10 @@ Large files remain the weak spot on phones: received blobs are held in memory un
 | `ALLOWED_ORIGINS` | *(same host)* | Comma-separated exact origins permitted to open the WebSocket. Unset means "must match the request's own host", which is what you want behind a normal reverse proxy. |
 | `TRUST_PROXY` | `0` | Set to `1` only when a proxy you control sits in front. It makes the server believe `X-Forwarded-Host` (for origin checks) and `X-Forwarded-For` (for per-address limits). Leave it off if clients can reach the port directly, or they can spoof both. |
 | `BLOB_DIR` | `/tmp/aria-drop-blobs` in the image | Where relayed messages and files wait, one subdirectory per conversation. Keep it inside the container; do not mount a volume here. |
-| `BLOB_MAX_AGE_MS` | `86400000` (24h) | Age from offer creation at which relay access expires. Disk removal follows on the sweep. |
-| `BLOB_SWEEP_MS` | `900000` (15 min) | How often the age sweep runs. It also removes any empty conversation directory. |
+| `BLOB_IDLE_GRACE_MS` | `900000` (15 min) | How long an item outlives the moment every device party to it disconnected. |
+| `BLOB_SOLO_MAX_MS` | `10800000` (3h) | How long a one-to-one conversation may sit with only one device present before its items expire. Rooms are exempt. Also how long an offline device stays listed as reachable, and how long an away member keeps its room seat. |
+| `BLOB_MAX_AGE_MS` | `259200000` (3 days) | Absolute ceiling from offer creation, however alive the session is. |
+| `BLOB_SWEEP_MS` | `60000` (1 min) | How often the sweep runs. It also removes any empty conversation directory. |
 | `BLOB_STORE_BYTES` | `4294967296` (4 GiB) | Total space all buffered transfers may use together. |
 | `BLOB_PER_DEVICE` | `32` | Files one device may have waiting on the server at once. |
 | `BLOB_MESSAGES_PER_DEVICE` | `2000` | Messages one device may have waiting on the server at once. |
@@ -217,10 +230,10 @@ After the first successful publish, set package visibility/permissions in GitHub
   session panel and dialogs, and focus is returned to wherever it came from.
   The device and room tables re-render constantly, and focus survives that.
 
-The **Path** column shows the actual ICE candidate pair (`host↔host`, `srflx↔host`,
-or a highlighted `relay`), so a slow transfer can be diagnosed as "this is going
-through TURN" rather than guessed at. **Rate** is live throughput, not a lifetime
-average.
+Hovering a device's **Status** shows the actual ICE candidate pair (`host↔host`,
+`srflx↔host`, or `relay`) and the round-trip time, so a slow transfer can be
+diagnosed as "this is going through TURN" rather than guessed at; a TURN-relayed
+link is highlighted. **Rate** is live throughput, not a lifetime average.
 
 ## Local development
 
@@ -264,4 +277,4 @@ MIT — see `LICENSE`.
 
 ## Threat model in one paragraph
 
-The server is designed not to be able to read chat or files. Anything that reaches it through the relay arrives as ciphertext sealed to the recipient and signed by the sender; access expires after 24 hours by default and disk cleanup follows on the sweep. WebRTC provides DTLS-encrypted DataChannels and the app additionally encrypts payload frames using an ephemeral ECDH-derived AES-GCM key. The displayed safety code can be compared out-of-band if you want to detect active interception. This MVP has **not** undergone a security audit; see `SECURITY.md` and `CODEX_HANDOFF.md` before exposing it beyond a trusted environment.
+The server is designed not to be able to read chat or files. Anything that reaches it through the relay arrives as ciphertext sealed to the recipient and signed by the sender; access expires with the conversation it belongs to — and in no case later than 3 days — with disk cleanup following on the sweep. WebRTC provides DTLS-encrypted DataChannels and the app additionally encrypts payload frames using an ephemeral ECDH-derived AES-GCM key. The displayed safety code can be compared out-of-band if you want to detect active interception. This MVP has **not** undergone a security audit; see `SECURITY.md` and `CODEX_HANDOFF.md` before exposing it beyond a trusted environment.

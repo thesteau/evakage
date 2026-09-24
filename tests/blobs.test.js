@@ -187,41 +187,104 @@ test('an item outlives both devices disconnecting and is delivered when one come
   back.close();
 });
 
-test('the age sweep removes items past 24h, keeps younger ones, and removes emptied directories', async t => {
-  const { base, wsBase, dir, app } = await startServer(t);
+test('the sweep keeps items while their session is live and removes them once it ends', async t => {
+  // A short grace so the end of a session can be observed without waiting.
+  const { base, wsBase, dir, app } = await startServer(t, { blobs: { idleGraceMs: 40 } });
   const a = await register(wsBase, 'device_sender_0003', 'A');
   const b = await register(wsBase, 'device_recver_0003', 'B');
-  const c = await register(wsBase, 'device_third_00003', 'C');
+  await register(wsBase, 'device_third_00003', 'C');
 
-  const old = await offer(a, 'device_recver_0003', 100);
-  const fresh = await offer(a, 'device_recver_0003', 100);
-  for (const item of [old, fresh]) {
+  const first = await offer(a, 'device_recver_0003', 100);
+  const second = await offer(a, 'device_recver_0003', 100);
+  for (const item of [first, second]) {
     assert.equal((await upload(base, item.reply.blobId, item.reply.uploadToken, crypto.randomBytes(item.bytes))).status, 204);
   }
-  // A second conversation whose only item is old: its whole directory should go.
-  const otherOld = await offer(a, 'device_third_00003', 0, { kind: 'message' });
+  // A second conversation, with a device that stays connected throughout.
+  const withC = await offer(a, 'device_third_00003', 0, { kind: 'message' });
+  assert.equal((await onDisk(dir)).directories.length, 2);
 
-  for (const id of [old.reply.blobId, otherOld.reply.blobId]) {
+  // Age alone means nothing: a day-old item whose session is still live stays.
+  for (const id of [first.reply.blobId, withC.reply.blobId]) {
     const record = app.blobStore.blobs.get(id);
     assert.ok(record);
     record.createdAt = Date.now() - (DAY + 1000);
   }
-  assert.equal((await onDisk(dir)).directories.length, 2);
+  assert.deepEqual(await app.blobStore.sweepAged(), [], 'a day-old item survives while its session is live');
+
+  // End the A-B session. C stays, so the conversation it is party to does not.
+  a.close();
+  b.close();
+  for (let i = 0; i < 40 && app.clients.size !== 1; i++) await settle(25);
+  assert.equal(app.clients.size, 1, 'only C should still be connected');
+  await settle(60); // past the 40ms grace
 
   const purged = await app.blobStore.sweepAged();
-  assert.deepEqual(purged.sort(), [old.reply.blobId, otherOld.reply.blobId].sort());
-  assert.equal(app.blobStore.blobs.has(fresh.reply.blobId), true, 'an item under 24h must survive the sweep');
+  assert.deepEqual(purged.sort(), [first.reply.blobId, second.reply.blobId].sort());
+  assert.equal(app.blobStore.blobs.has(withC.reply.blobId), true, 'an item whose session still has someone in it survives');
 
   const after = await onDisk(dir);
-  assert.equal(after.directories.length, 1, 'the conversation with nothing left is gone entirely');
-  assert.equal(after.files.length, 2, 'the young item keeps its body and envelopes');
+  assert.equal(after.directories.length, 1, 'the conversation whose session ended is gone entirely');
 
   // A stray empty directory is removed by the sweep too, whatever emptied it.
   await fsp.mkdir(path.join(dir, 'd-empty-leftover'));
   await app.blobStore.sweepAged();
   assert.equal((await onDisk(dir)).directories.includes('d-empty-leftover'), false);
+});
 
-  for (const ws of [a, b, c]) ws.close();
+test('a half-open direct session expires on its own clock; a room with one member does not', async t => {
+  // soloMaxMs is what a 1:1 conversation gets when only one device is present.
+  const { wsBase, app } = await startServer(t, { blobs: { soloMaxMs: 60, idleGraceMs: 60_000 } });
+  const a = await register(wsBase, 'device_solo_aaaa01', 'A');
+  const b = await register(wsBase, 'device_solo_bbbb01', 'B');
+
+  const created = waitFor(a, m => m.type === 'room-joined');
+  a.send(JSON.stringify({ type: 'create-room', name: 'Room' }));
+  const room = (await created).room;
+  const bJoined = waitFor(b, m => m.type === 'room-joined');
+  b.send(JSON.stringify({ type: 'join-room', roomId: room.id }));
+  await bJoined;
+
+  const direct = await offer(a, 'device_solo_bbbb01', 0, { kind: 'message' });
+  const inRoom = await offer(a, ['device_solo_bbbb01'], 0, { kind: 'message', conv: `room:${room.id}` });
+
+  // B leaves. A is still here, so neither item is idle — but the direct
+  // conversation is now half-open, and only that one is on a clock.
+  b.close();
+  for (let i = 0; i < 40 && app.clients.size !== 1; i++) await settle(25);
+  app.blobStore.refreshLiveness();
+
+  const directRecord = app.blobStore.blobs.get(direct.reply.blobId);
+  const roomRecord = app.blobStore.blobs.get(inRoom.reply.blobId);
+  assert.ok(directRecord && roomRecord);
+  assert.equal(directRecord.idleSince, null, 'A is still connected, so nothing is idle');
+  assert.notEqual(directRecord.soloSince, null, 'the direct conversation is half-open');
+  assert.equal(roomRecord.soloSince, null, 'a room is exempt from the half-open clock');
+
+  await settle(80); // past soloMaxMs
+  const purged = await app.blobStore.sweepAged();
+  assert.deepEqual(purged, [direct.reply.blobId]);
+  assert.equal(app.blobStore.blobs.has(inRoom.reply.blobId), true, 'the room item is untouched');
+
+  a.close();
+});
+
+test('an item carries the moment it expires, so a recipient can count down to it', async t => {
+  const { wsBase, app } = await startServer(t);
+  const a = await register(wsBase, 'device_when_aaaa01', 'A');
+  const b = await register(wsBase, 'device_when_bbbb01', 'B');
+
+  const available = waitFor(b, m => m.type === 'blob-available');
+  const item = await offer(a, 'device_when_bbbb01', 0, { kind: 'message' });
+  const notice = await available;
+
+  assert.equal(notice.blobId, item.reply.blobId);
+  assert.equal(typeof notice.expiresAt, 'number');
+  // Both devices are here, so only the absolute cap applies.
+  const record = app.blobStore.blobs.get(item.reply.blobId);
+  assert.ok(record);
+  assert.equal(notice.expiresAt, record.createdAt + app.blobStore.config.maxAgeMs);
+
+  for (const ws of [a, b]) ws.close();
 });
 
 test('the same two devices share one directory whichever sends; others get their own', async t => {
@@ -375,10 +438,10 @@ test('`node server.js --sweep-blobs` removes only items past the age, then empti
   await fsp.mkdir(staleDir, { recursive: true });
   await fsp.mkdir(liveDir, { recursive: true });
   await fsp.mkdir(path.join(dir, 'd-empty'), { recursive: true });
-  const twoDaysAgo = new Date(Date.now() - 2 * DAY);
+  const longAgo = new Date(Date.now() - 4 * DAY);
   for (const name of ['a.bin', 'a.env.json']) {
     await fsp.writeFile(path.join(staleDir, name), 'x');
-    await fsp.utimes(path.join(staleDir, name), twoDaysAgo, twoDaysAgo);
+    await fsp.utimes(path.join(staleDir, name), longAgo, longAgo);
   }
   await fsp.writeFile(path.join(liveDir, 'b.env.json'), 'x');
 
@@ -391,5 +454,5 @@ test('`node server.js --sweep-blobs` removes only items past the age, then empti
   assert.match(result.stdout, /Swept 2 relayed file\(s\).*kept 1; removed 2 empty directories/);
   assert.equal(fs.existsSync(staleDir), false, 'a conversation with only old items disappears entirely');
   assert.equal(fs.existsSync(path.join(dir, 'd-empty')), false, 'an empty directory is removed');
-  assert.equal(fs.existsSync(path.join(liveDir, 'b.env.json')), true, 'an item under 24h survives');
+  assert.equal(fs.existsSync(path.join(liveDir, 'b.env.json')), true, 'an item under the cap survives');
 });

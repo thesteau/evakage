@@ -533,7 +533,12 @@ export function createAriaDropServer({
   // How long a device that has disconnected can still be sent to, and how long a
   // room keeps a disconnected member's seat. Matches the relay's maximum age:
   // there is no point addressing something to a device the item cannot outlive.
-  recentWindowMs = Number(process.env.BLOB_MAX_AGE_MS || 24 * 60 * 60 * 1000),
+  // How long a device that has dropped off is still listed as reachable, and
+  // still holds its room seat. Deliberately the same as a half-open direct
+  // session's life: a device is offered as a target for exactly as long as
+  // something left for it would survive, so the list can never advertise a
+  // device seen many hours ago.
+  recentWindowMs = Number(process.env.BLOB_SOLO_MAX_MS || 3 * 60 * 60 * 1000),
   // A device that reconnects but does not rejoin a room within this long has
   // lost its room state (a reload), so it is dropped from the room's away list.
   rejoinGraceMs = 10000,
@@ -543,7 +548,13 @@ export function createAriaDropServer({
   const limits = { ...DEFAULT_LIMITS, ...limitOverrides };
   // Two is the smallest room that means anything; the ceiling bounds envelopes.
   const roomCap = Math.min(ROOM_MEMBERS_CEILING, Math.max(2, Math.floor(maxRoomMembers) || DEFAULT_ROOM_MAX_MEMBERS));
-  const blobStore = createBlobStore(blobOptions);
+  // `clients` is declared below; the callback only runs once the server is
+  // serving, by which point it exists. It is what makes a relayed item live
+  // with its conversation rather than on a clock.
+  const blobStore = createBlobStore({
+    isOnline: (deviceId) => clients.has(deviceId),
+    ...blobOptions
+  });
   // The cookie carries an HMAC of a constant, so holding it never reveals the
   // token, and it stays valid only while the server keeps the same secret.
   function authCookieValue() {
@@ -685,6 +696,11 @@ export function createAriaDropServer({
           relay: {
             enabled: true,
             chunkSize: BLOB_CHUNK_SIZE,
+            // What bounds an item's life: the grace once everyone in its
+            // conversation has gone, how long a half-open 1:1 session lasts,
+            // and the ceiling nothing passes however alive the session is.
+            idleGraceMs: blobStore.config.idleGraceMs,
+            soloMaxMs: blobStore.config.soloMaxMs,
             maxAgeMs: blobStore.config.maxAgeMs
           }
         }));
@@ -941,11 +957,13 @@ export function createAriaDropServer({
     clients.delete(deviceId);
     if (codeOwners.get(existing.code) === deviceId) codeOwners.delete(existing.code);
     const roomsChanged = markAway(deviceId);
+    // Start the clock on anything whose conversation this emptied. Items are
+    // deliberately not removed here: a device that comes back within the grace
+    // still receives what was left for it, and while anyone else party to the
+    // item is still connected the item is not idle at all.
+    blobStore.refreshLiveness();
     broadcastPresence();
     if (roomsChanged) broadcastRooms();
-    // Relayed items are deliberately NOT removed here. A device that comes back
-    // within the maximum age still receives what was sent to it; the age sweep
-    // is what removes anything left behind.
   }
 
   /** @param {TinyWebSocket} ws @param {string} deviceId */
@@ -1058,6 +1076,9 @@ export function createAriaDropServer({
           ip
         });
         noteSeen(deviceId);
+        // This device is back: anything waiting for a conversation it is party
+        // to is live again, and its grace starts over if it empties later.
+        blobStore.refreshLiveness();
         json(ws, { type: 'registered', self: peerPublic(clients.get(deviceId)) });
         broadcastPresence();
         json(ws, { type: 'rooms', rooms: listedRooms() });
@@ -1202,7 +1223,9 @@ export function createAriaDropServer({
             requestId: msg.requestId,
             blobId: result.blob.id,
             uploadToken: result.blob.kind === 'file' ? result.blob.uploadToken : undefined,
-            maxAgeMs: blobStore.config.maxAgeMs
+            maxAgeMs: blobStore.config.maxAgeMs,
+            // So the sender can show the same countdown the recipient sees.
+            expiresAt: blobStore.expiresAt(result.blob)
           });
         }).catch(err => {
           console.error('Could not store a relayed item:', err?.message || err);
@@ -1296,11 +1319,12 @@ export function createAriaDropServer({
     }
   };
 
-  // The age sweep. Runs often so nothing overshoots its maximum age by much;
-  // anything younger is left alone, and empty conversation directories go.
+  // The sweep. Runs often so nothing outlives its conversation by much; items
+  // whose conversation is still live are left alone, and empty conversation
+  // directories go.
   const blobSweep = setInterval(() => {
     blobStore.sweepAged().then(purged => {
-      if (purged.length) console.log(`Swept ${purged.length} relayed item(s) past ${blobStore.config.maxAgeMs}ms`);
+      if (purged.length) console.log(`Swept ${purged.length} relayed item(s) whose session ended or hit the cap`);
     }).catch(() => {});
     // Same window for away seats and remembered devices.
     if (expireAway()) broadcastRooms();

@@ -52,6 +52,18 @@ This is a prioritized plan, not an instruction to implement every deferred idea.
   Rejections redirect to `?shared=too-large|queue-full|too-many-files` and the
   app explains each. `tests/shares.test.js` covers the entry, file-count and
   byte budgets including in-flight bodies and recovery after rejection.
+- **Items live with their session, and say so.** A relayed item is deleted at
+  the first of: every recipient has it; every device party to it gone for 15
+  minutes; a one-to-one conversation left with a single device for 3 hours
+  (rooms exempt); 3 days absolute. `BLOB_IDLE_GRACE_MS`, `BLOB_SOLO_MAX_MS`,
+  `BLOB_MAX_AGE_MS`. The same 3-hour window bounds how long an offline device
+  stays listed, so the device table can no longer advertise something "seen 8h
+  ago". Every item carries its own `expiresAt`, and the UI counts down to it,
+  warning inside 15 minutes and naming the 3-day cap when that is what bites.
+- **Device table cut back.** Path, Rate and Transferred columns are gone; the
+  ICE candidate pair and RTT moved to the Status tooltip. Row actions are Open
+  and Exit — the session panel already carries text and file sending, and Open
+  on a room joins it in the same click.
 - **Cross-engine browser run.** `e2e/helpers.js` holds the shared fixture;
   `e2e/platform.spec.js` plus `playwright.platform.config.js` run an engine
   smoke test on Chromium, Firefox and WebKit.
@@ -75,13 +87,33 @@ The features work. What is left is making them hold up: under memory pressure,
 on interrupted transfers, and on networks that are not loopback. Each item says
 what to measure first, because none of them should be redesigned on a guess.
 
-1. **Large files.** Measure peak browser memory first. Both relay and direct
-   receive assemble a whole file in RAM; relay upload builds a complete
-   encrypted Blob before sending, so the sender pays roughly twice the file.
-   This is the most likely way the app fails on a phone today. Investigate
-   incremental disk receive (File System Access) where supported, keeping the
-   current path as the fallback. Do not promise universal mobile large-file
-   support.
+1. **Large files: stream through the server instead of buffering in RAM.** The
+   disk that holds a file is the server's, not the browser's — that is what the
+   relay already does, sealed to the recipient and reaped within the hour. No
+   browser storage API (File System Access, OPFS) is wanted here. What is left
+   is that both browsers still hold the whole file in memory anyway, which is
+   the most likely way this fails on a phone. Two halves, independent:
+
+   - **Receiving.** `downloadRelayed` decrypts into an array of chunks and
+     assembles one Blob. Instead, have the service worker intercept a download
+     URL, fetch the ciphertext, pipe it through a decrypting `TransformStream`
+     and answer with `Content-Disposition: attachment`; the browser then writes
+     to disk itself and RAM stays flat. This fits the existing format, where
+     each chunk is separately AES-GCM-sealed with its index and count in the
+     AAD, so tampering, reordering and truncation are still caught per chunk as
+     the bytes flow. The tradeoff: the whole-file SHA-256 can only be confirmed
+     at the end, so it becomes a report on a file already written rather than a
+     gate before saving. Decide whether that is acceptable before building it.
+   - **Sending.** `sendViaRelay` builds the entire encrypted Blob before the
+     PUT, so the sender pays roughly twice the file. Streaming the request body
+     fixes it on Chromium but not Safari, which has no duplex request streams;
+     the portable alternative is chunked PUTs, which needs a server-side append
+     or range API. Measure peak memory first — this may be the cheaper half to
+     leave alone.
+
+   Open product question: if every file goes to the server anyway, the direct
+   DataChannel path for files earns its keep only as a LAN speed optimisation.
+   Worth deciding explicitly rather than maintaining both by default.
 2. **Use it on a phone over real wifi.** One afternoon of actually sending
    things between a phone and a desktop across the LAN finds more than any
    amount of loopback testing. It is also the only way to learn whether item 1

@@ -436,6 +436,13 @@ progress { width: 100%; accent-color: var(--accent-2); }
   max-width: calc(100vw - 32px);
 }
 
+/* A countdown close to its deadline: readable, not alarming. Reserved for
+   things the server is about to delete. */
+.expiring,
+tbody tr.offline td.expiring {
+  color: var(--warn);
+}
+
 .share-banner span {
   overflow: hidden;
   text-overflow: ellipsis;

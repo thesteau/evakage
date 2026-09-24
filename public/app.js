@@ -85,9 +85,12 @@ const state = {
   activeSends: new Map(),    // transferId -> { cancelled, fileId, name }
   /** Defaults until /config.json answers. @type {{iceServers: RTCIceServer[], maxFileBytes: number,
    * maxRoomMembers: number, roomMeshMax: number, protocol?: number,
-   * relay?: {enabled: boolean, chunkSize: number, maxAgeMs: number}}} */
+   * relay?: {enabled: boolean, chunkSize: number, idleGraceMs: number,
+   *   soloMaxMs: number, maxAgeMs: number}}} */
   config: { iceServers: [], maxFileBytes: 512 * 1024 * 1024, maxRoomMembers: 20, roomMeshMax: 6 },
   pendingCodeRequests: new Map(),
+  /** Room the user asked to open, waiting on the server to confirm the seat. */
+  pendingOpenRoomId: /** @type {string | null} */ (null),
   statsTimer: /** @type {ReturnType<typeof setInterval> | null} */ (null),
   wakeLockTimer: /** @type {ReturnType<typeof setInterval> | null} */ (null),
   theme: 'system',
@@ -100,8 +103,8 @@ const state = {
   incomingPolicy: 'new',
   consentedDevices: new Set(),
   // Last known record for every device we know of, online or not: presence,
-  // room away lists, and server lookups all feed it. Offline devices seen in the
-  // last 24h can still be sent to through the relay.
+  // room away lists, and server lookups all feed it. An offline device seen
+  // within the relay window can still be sent to through the server.
   deviceRecords: new Map(/** @type {[string, Device][]} */ ([])),    // deviceId -> { ...record, online, lastSeen }
   pendingRequests: new Map(),  // requestId / blobId -> { resolve, reject, timer }
   relayInbound: new Set(),     // blob ids already being fetched, so a repeat notice is ignored
@@ -157,6 +160,46 @@ function lookupDevices(deviceIds) {
       return reply.devices || [];
     })
     .catch(() => []);
+}
+
+// How long the server holds something left for a device that is not here, in
+// words. Read from the server's own config so the copy cannot drift from it.
+function relayWindowText() {
+  const ms = state.config.relay?.soloMaxMs ?? 3 * 60 * 60 * 1000;
+  const minutes = Math.round(ms / 60000);
+  if (minutes < 60) return `${Math.max(1, minutes)} minutes`;
+  const hours = Math.round(minutes / 60);
+  return hours === 1 ? 'an hour' : `${hours} hours`;
+}
+
+// Anything inside this of its deadline is called out rather than just counted.
+const EXPIRY_WARNING_MS = 15 * 60 * 1000;
+
+/** Coarse at a distance, precise when it matters. @param {number} ms */
+function formatRemaining(ms) {
+  if (ms <= 0) return 'expired';
+  const seconds = Math.round(ms / 1000);
+  if (seconds < 60) return `${seconds}s left`;
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes}m left`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return minutes % 60 ? `${hours}h ${minutes % 60}m left` : `${hours}h left`;
+  const days = Math.floor(hours / 24);
+  return hours % 24 ? `${days}d ${hours % 24}h left` : `${days}d left`;
+}
+
+/**
+ * The countdown for one deadline, and whether it is close enough to warn about.
+ * `cap` marks a deadline that is the absolute session cap, where the answer is
+ * to start a fresh session rather than to hurry.
+ * @param {number | undefined} expiresAt
+ */
+function expiryState(expiresAt) {
+  if (!expiresAt) return null;
+  const remaining = expiresAt - Date.now();
+  const capMs = state.config.relay?.maxAgeMs;
+  const cap = Boolean(capMs && Math.abs(expiresAt - (Date.now() + capMs)) < 60_000);
+  return { remaining, text: formatRemaining(remaining), warn: remaining <= EXPIRY_WARNING_MS, cap };
 }
 
 /** @param {number | undefined} timestamp */
@@ -343,6 +386,10 @@ function connectWebSocket() {
       renderRooms();
       ensureConversationLinks(conv);
       renderSession();
+      if (state.pendingOpenRoomId === msg.room.id) {
+        state.pendingOpenRoomId = null;
+        openRoom(msg.room.id);
+      }
       // Anything left for this device in the room while it was away, including
       // items set aside because they arrived before this rejoin landed.
       wsSend({ type: 'blobs-request' });
@@ -1554,7 +1601,7 @@ async function offlineTargetsFor(conv) {
 function unreachableError(conv) {
   if (conv.kind === 'room') return new Error('Nobody else in this room is online or reachable through the server.');
   return new Error(relayEnabled()
-    ? 'That device has not been online in the last 24 hours, so there is nowhere to leave this for it.'
+    ? `That device has not been online in the last ${relayWindowText()}, so there is nowhere to leave this for it.`
     : 'That device is offline.');
 }
 
@@ -1868,6 +1915,7 @@ async function sendViaRelay(conv, blob, meta, record, recipientIds) {
 
   record.relayStage = 'uploading';
   record.relayBlobId = offered.blobId;
+  record.relayExpiresAt = offered.expiresAt;
   record.progress = 0;
   renderSession();
 
@@ -1972,7 +2020,8 @@ async function handleBlobAvailable(notice) {
     relayBlobId: notice.blobId,
     relayMeta: meta,
     relayKey: contentKey,
-    relayConvId: conv.id
+    relayConvId: conv.id,
+    relayExpiresAt: notice.expiresAt
   });
   conv.files.set(meta.id, record);
 
@@ -2469,54 +2518,23 @@ function renderPeersNow() {
     if (link?.gaveUp || link?.incompatible) statusTd.classList.add('danger');
     if (link?.protocol) statusTd.title = `aria-drop protocol v${link.protocol}`;
 
-    // Candidate path answers "is this actually peer-to-peer, or going through a
-    // TURN relay?", which is the first thing you want when a transfer is slow.
-    const pathTd = document.createElement('td');
-    pathTd.dataset.label = 'Path';
-    pathTd.textContent = link?.path || '—';
-    if (link?.rttMs != null) pathTd.textContent += ` · ${Math.round(link.rttMs)} ms`;
-    if (link?.path === 'relay') {
-      pathTd.classList.add('danger');
-      pathTd.title = 'Relayed through TURN: slower, and the relay sees traffic metadata.';
-    } else if (link?.path) {
-      pathTd.title = link.pathDetail || '';
+    // The candidate path answers "is this actually peer-to-peer, or going
+    // through TURN?" — worth keeping for a slow transfer, but not worth a
+    // column of its own. It hangs off Status instead.
+    if (link?.path) {
+      const rtt = link.rttMs != null ? ` · ${Math.round(link.rttMs)} ms` : '';
+      statusTd.title = link.path === 'relay'
+        ? `Relayed through TURN${rtt}: slower, and the relay sees traffic metadata.`
+        : `${link.pathDetail || link.path}${rtt}`;
+      if (link.path === 'relay') statusTd.classList.add('danger');
     }
-
-    const rateTd = document.createElement('td');
-    rateTd.dataset.label = 'Rate';
-    rateTd.textContent = formatRate(link);
-
-    const bytesTd = document.createElement('td');
-    bytesTd.dataset.label = 'Transferred';
-    bytesTd.textContent = link ? `${formatBytes(link.bytesSent)} ↑ / ${formatBytes(link.bytesReceived)} ↓` : '—';
 
     const actionsTd = document.createElement('td');
     actionsTd.className = 'actions-col';
-    const actions = document.createElement('div');
-    actions.className = 'row-actions';
-    for (const [label, mode] of [['Chat', 'chat'], ['Text', 'text'], ['File', 'file']]) {
-      const btn = document.createElement('button');
-      btn.type = 'button';
-      btn.textContent = label;
-      btn.dataset.focusKey = `peer:${peer.id}:${mode}`;
-      btn.setAttribute('aria-label', `${label} with ${peer.name}`);
-      if (mode !== 'chat') btn.className = 'ghost';
-      btn.addEventListener('click', () => openSession(peer.id, mode));
-      actions.append(btn);
-    }
-    // Retry is the manual escape hatch once the bounded backoff has given up.
-    if (link?.gaveUp || link?.incompatible) {
-      const retry = document.createElement('button');
-      retry.type = 'button';
-      retry.className = 'ghost';
-      retry.textContent = 'Retry';
-      retry.dataset.focusKey = `peer:${peer.id}:retry`;
-      retry.setAttribute('aria-label', `Retry connecting to ${peer.name}`);
-      retry.addEventListener('click', () => retryLink(peer.id));
-      actions.append(retry);
-    }
-    actionsTd.append(actions);
-    tr.append(nameTd, codeTd, platformTd, statusTd, pathTd, rateTd, bytesTd, actionsTd);
+    // One way in and one way out. The session panel already carries text and
+    // file controls, so opening it is the only thing a row needs to do.
+    actionsTd.append(rowActions(peer.id, peer.name, link));
+    tr.append(nameTd, codeTd, platformTd, statusTd, actionsTd);
     peerRows.append(tr);
   }
 
@@ -2536,13 +2554,50 @@ function offlineDevicesToList() {
     .sort((a, b) => (b.lastSeen || 0) - (a.lastSeen || 0));
 }
 
+/**
+ * Every device row offers the same two things: open the conversation, or end
+ * it. The session panel carries text and file sending, so a row does not need
+ * its own buttons for them.
+ * @param {string} peerId @param {string} label @param {Link | null | undefined} link
+ */
+function rowActions(peerId, label, link) {
+  const actions = document.createElement('div');
+  actions.className = 'row-actions';
+
+  const open = document.createElement('button');
+  open.type = 'button';
+  open.textContent = 'Open';
+  open.dataset.focusKey = `peer:${peerId}:open`;
+  open.setAttribute('aria-label', `Open conversation with ${label}`);
+  open.addEventListener('click', () => {
+    // Opening is also how a link that has given up gets another go, now that
+    // there is no separate Retry button.
+    if (link?.gaveUp || link?.incompatible) retryLink(peerId);
+    openSession(peerId, 'chat');
+  });
+  actions.append(open);
+
+  // Nothing to exit until there is a conversation.
+  if (state.conversations.has(directConvId(peerId))) {
+    const exit = document.createElement('button');
+    exit.type = 'button';
+    exit.className = 'ghost';
+    exit.textContent = 'Exit';
+    exit.dataset.focusKey = `peer:${peerId}:exit`;
+    exit.setAttribute('aria-label', `Exit conversation with ${label}`);
+    exit.addEventListener('click', () => forgetConversation(directConvId(peerId)));
+    actions.append(exit);
+  }
+  return actions;
+}
+
 /** @param {Device} record */
 function renderOfflineRow(record) {
   const tr = document.createElement('tr');
   tr.className = 'offline';
   tr.dataset.dropTarget = record.id;
   tr.dataset.dropKind = 'direct';
-  tr.title = 'Offline. Anything you send waits on the server for up to 24 hours.';
+  tr.title = `Offline. Anything you send waits on the server for up to ${relayWindowText()}.`;
 
   const cell = (/** @type {string} */ label, /** @type {string} */ text) => {
     const td = document.createElement('td');
@@ -2562,33 +2617,26 @@ function renderOfflineRow(record) {
   nameWrap.append(pip, name);
   nameTd.append(nameWrap);
 
-  const statusTd = cell('Status', `Offline · seen ${formatAgo(record.lastSeen)}`);
+  // The same window the server uses to keep this device listed at all, so the
+  // row never offers a device whose deadline has already passed.
+  const windowMs = state.config.relay?.soloMaxMs ?? 3 * 60 * 60 * 1000;
+  const left = expiryState((record.lastSeen || 0) + windowMs);
+  const statusTd = cell('Status', `Offline · seen ${formatAgo(record.lastSeen)}${left ? ` · ${left.text}` : ''}`);
   statusTd.classList.add('muted');
+  if (left?.warn) {
+    statusTd.classList.add('expiring');
+    statusTd.title = 'Nearly out of time. When this passes, the device drops off the list and anything left for it is deleted.';
+  }
 
   const actionsTd = document.createElement('td');
   actionsTd.className = 'actions-col';
-  const actions = document.createElement('div');
-  actions.className = 'row-actions';
-  for (const [label, mode] of [['Chat', 'chat'], ['Text', 'text'], ['File', 'file']]) {
-    const btn = document.createElement('button');
-    btn.type = 'button';
-    btn.textContent = label;
-    btn.dataset.focusKey = `peer:${record.id}:${mode}`;
-    btn.setAttribute('aria-label', `${label} with ${record.name || 'offline device'} (offline, via server)`);
-    if (mode !== 'chat') btn.className = 'ghost';
-    btn.addEventListener('click', () => openSession(record.id, mode));
-    actions.append(btn);
-  }
-  actionsTd.append(actions);
+  actionsTd.append(rowActions(record.id, `${record.name || 'offline device'} (offline, via server)`, null));
 
   tr.append(
     nameTd,
     cell('Code', '—'),
     cell('Platform', `${record.platform || 'Unknown'} · ${record.browser || 'Browser'}`),
     statusTd,
-    cell('Path', 'via server'),
-    cell('Rate', '—'),
-    cell('Transferred', '—'),
     actionsTd
   );
   return tr;
@@ -2664,30 +2712,33 @@ function renderRoomsNow() {
     actionsTd.className = 'actions-col';
     const actions = document.createElement('div');
     actions.className = 'row-actions';
+    const open = document.createElement('button');
+    open.type = 'button';
+    open.textContent = 'Open';
+    open.dataset.focusKey = `room:${room.id}:open`;
+    open.setAttribute('aria-label', `Open room ${room.name}`);
     if (joined) {
-      const open = document.createElement('button');
-      open.type = 'button';
-      open.textContent = 'Open';
-      open.dataset.focusKey = `room:${room.id}:open`;
-      open.setAttribute('aria-label', `Open room ${room.name}`);
       open.addEventListener('click', () => openRoom(room.id));
-      const leave = document.createElement('button');
-      leave.type = 'button';
-      leave.className = 'ghost';
-      leave.textContent = 'Leave';
-      leave.dataset.focusKey = `room:${room.id}:leave`;
-      leave.setAttribute('aria-label', `Leave room ${room.name}`);
-      leave.addEventListener('click', () => leaveRoom(room.id));
-      actions.append(open, leave);
     } else {
-      const join = document.createElement('button');
-      join.type = 'button';
-      join.textContent = 'Join';
-      join.dataset.focusKey = `room:${room.id}:join`;
-      join.setAttribute('aria-label', `Join room ${room.name}`);
-      join.disabled = room.members.length + (room.away || []).length >= room.maxMembers;
-      join.addEventListener('click', () => wsSend({ type: 'join-room', roomId: room.id }));
-      actions.append(join);
+      // Joining and opening are one action: nobody joins a room in order not to
+      // look at it. The panel opens when the server confirms the seat.
+      open.disabled = room.members.length + (room.away || []).length >= room.maxMembers;
+      open.addEventListener('click', () => {
+        state.pendingOpenRoomId = room.id;
+        wsSend({ type: 'join-room', roomId: room.id });
+      });
+    }
+    actions.append(open);
+
+    if (joined) {
+      const exit = document.createElement('button');
+      exit.type = 'button';
+      exit.className = 'ghost';
+      exit.textContent = 'Exit';
+      exit.dataset.focusKey = `room:${room.id}:exit`;
+      exit.setAttribute('aria-label', `Exit room ${room.name}`);
+      exit.addEventListener('click', () => leaveRoom(room.id));
+      actions.append(exit);
     }
     actionsTd.append(actions);
     tr.append(nameTd, codeTd, membersTd, countTd, statusTd, actionsTd);
@@ -2761,7 +2812,7 @@ function renderSessionNow() {
       secureState.textContent = isRecentlySeen(conv.peerId)
         ? 'Offline · messages wait on the server'
         : 'Offline';
-      secureState.title = 'Sealed to this device and left on the server for up to 24 hours.';
+      secureState.title = `Sealed to this device and left on the server for up to ${relayWindowText()}.`;
       secureState.classList.remove('ready');
     } else {
       secureState.textContent = link?.dc?.readyState === 'open' ? 'Verifying device identity…' : 'Connecting…';
@@ -2842,7 +2893,7 @@ function renderMembers(conv) {
     const chip = document.createElement('span');
     chip.className = 'member-chip away';
     chip.textContent = `${member.name} · away`;
-    chip.title = `Dropped off ${formatAgo(member.awaySince)}. Messages and files are left on the server for it until it rejoins, for up to 24 hours.`;
+    chip.title = `Dropped off ${formatAgo(member.awaySince)}. Messages and files are left on the server for it until it rejoins, for up to ${relayWindowText()}.`;
     sessionMembers.append(chip);
   }
 }
@@ -2907,6 +2958,12 @@ function renderFile(conv, file) {
   if (file.direction === 'received' && file.offer === 'declined') details.push('declined');
   const waitingOn = file.direction === 'sent' ? (file.awaitingConsent || []).length : 0;
   if (waitingOn) details.push(`waiting for ${waitingOn === 1 ? displayName(file.awaitingConsent?.[0]) : `${waitingOn} devices`} to accept`);
+  // Only while the server is still holding it: once collected it is released,
+  // and a file that arrived is the receiver's own copy with no deadline.
+  const waitingOnServer = file.via === 'relay' &&
+    (file.direction === 'sent' ? file.relayStage === 'uploaded' : !file.complete);
+  const expiry = waitingOnServer ? expiryState(file.relayExpiresAt) : null;
+  if (expiry) details.push(expiry.cap ? `session ends · ${expiry.text}` : expiry.text);
   if (file.hashing) details.push('hashing…');
   else if (file.verifying) details.push('verifying…');
   else if (file.corrupt) details.push('SHA-256 mismatch');
@@ -2915,6 +2972,12 @@ function renderFile(conv, file) {
   const metaLine = node.querySelector('.file-meta');
   metaLine.textContent = details.join(' · ');
   metaLine.classList.toggle('danger', Boolean(file.corrupt));
+  metaLine.classList.toggle('expiring', Boolean(expiry?.warn));
+  if (expiry?.warn) {
+    metaLine.title = expiry.cap
+      ? 'This session is at its three-day limit. Start a new conversation to keep sending.'
+      : 'The server drops this when the countdown ends.';
+  }
   if (file.sha256) metaLine.title = `SHA-256 ${file.sha256}`;
 
   const progress = node.querySelector('.file-progress');
@@ -2965,7 +3028,7 @@ function renderFile(conv, file) {
     btn.textContent = 'Save';
     btn.addEventListener('click', () => downloadFile(file));
   } else if (file.via === 'relay' && file.relayStage === 'failed' && file.relayKey) {
-    // The server keeps it until it is taken or 24h pass, so it can be retried.
+    // The server keeps it until it is taken or it expires, so it can be retried.
     btn.textContent = 'Retry download';
     btn.addEventListener('click', () => downloadRelayed(conv, file));
   } else if (holders.length) {
@@ -3076,20 +3139,12 @@ async function refreshStats() {
   }
   renderPeers();
   renderRooms();
+  // Keep a visible countdown moving. Only when something is actually counting
+  // down, so an idle session is not re-rendered every three seconds.
+  const conv = state.activeConvId ? state.conversations.get(state.activeConvId) : null;
+  if (conv && [...conv.files.values()].some(file => file.relayExpiresAt && !file.complete)) renderSession();
 }
 
-/** @param {Link | undefined} link */
-function formatRate(link) {
-  if (!link) return '—';
-  const up = link.sendRate || 0;
-  const down = link.receiveRate || 0;
-  // Below a kilobyte a second is idle chatter, not a transfer.
-  if (up < 1024 && down < 1024) return 'idle';
-  const parts = [];
-  if (up >= 1024) parts.push(`${formatBytes(up)}/s ↑`);
-  if (down >= 1024) parts.push(`${formatBytes(down)}/s ↓`);
-  return parts.join(' / ');
-}
 
 /** @param {string} code */
 function resolveCode(code) {

@@ -31,19 +31,21 @@ outlive the container.
 A relayed item is removed at the first of:
 
 1. every recipient has received it;
-2. the sweep finds it at or past 24 hours — the sweep leaves anything younger alone, even if
-   every device in the conversation has disconnected, so a device that comes
-   back within the window still gets it;
-3. the server restarts;
-4. the container is recreated.
+2. every device party to it has been gone for the grace period (15 minutes by
+   default), so a device that comes back sooner still gets it;
+3. a one-to-one conversation has sat with only one device present for 3 hours;
+   rooms are exempt from this one;
+4. it reaches the absolute cap of 3 days;
+5. the server restarts;
+6. the container is recreated.
 
 When a conversation's directory is left empty it is removed too, so a
 conversation with nothing waiting leaves nothing behind.
 
-Access expires at 24 hours regardless of the sweep: expired items cannot be
+Access expires on those rules regardless of the sweep: expired items cannot be
 listed, claimed, uploaded, or newly downloaded. Downloads opened before the
 deadline may finish afterward. Physical deletion waits for the next sweep,
-which normally runs every 15 minutes but can be delayed; no cron is needed.
+which normally runs every minute but can be delayed; no cron is needed.
 If you also want one driven from the host — say, nightly — the server has a
 one-shot mode that removes items past the maximum age, then any directory left
 empty, and exits:
@@ -53,8 +55,10 @@ empty, and exits:
 0 3 * * * docker exec aria-drop node server.js --sweep-blobs
 ```
 
-Pass an age in milliseconds to override the 24h default for that run, e.g.
-`node server.js --sweep-blobs 3600000` for anything over an hour.
+The one-shot mode judges age by file mtime, since it runs in a separate process
+with no knowledge of which sessions are alive; it uses the 3-day cap unless you
+pass an age in milliseconds, e.g. `node server.js --sweep-blobs 600000` for
+anything over ten minutes.
 
 ## Checking on it
 
