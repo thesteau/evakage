@@ -14,7 +14,7 @@
 // DOM lib does not know about.
 const worker = /** @type {ServiceWorkerGlobalScope} */ (/** @type {unknown} */ (self));
 
-const CACHE = 'aria-drop-v7';
+const CACHE = 'aria-drop-v8';
 
 const SHELL = [
   '/',
@@ -60,39 +60,80 @@ worker.addEventListener('activate', event => {
 // worker's memory — not Cache Storage, so nothing is written to disk — until the
 // page it redirects to collects them, which happens as soon as that page loads.
 const SHARE_TTL_MS = 10 * 60 * 1000;
-/** @type {Map<string, {title: string, text: string, url: string, files: File[], at: number, timer: ReturnType<typeof setTimeout>}>} */
+// Includes multipart overhead and text, not just file sizes. In-flight reads
+// reserve the same budget as queued shares, so concurrent POSTs cannot bypass it.
+const SHARE_BODY_BYTES = 16 * 1024 * 1024;
+const SHARE_QUEUE_BYTES = 32 * 1024 * 1024;
+const SHARE_QUEUE_ENTRIES = 8;
+const SHARE_FILES = 32;
+let shareBytes = 0;
+let incomingShares = 0;
+/** @type {Map<string, {title: string, text: string, url: string, files: File[], at: number, bytes: number, timer: ReturnType<typeof setTimeout>}>} */
 const pendingShares = new Map();
 
+/** @param {string} id */
 function forgetShare(id) {
   const share = pendingShares.get(id);
-  if (share) clearTimeout(share.timer);
+  if (share) {
+    clearTimeout(share.timer);
+    shareBytes -= share.bytes;
+  }
   pendingShares.delete(id);
 }
 
 /** @param {Request} request */
 async function receiveShare(request) {
-  let form;
-  try {
-    form = await request.formData();
-  } catch {
-    return Response.redirect('/?shared=failed', 303);
-  }
-  const field = (/** @type {string} */ name) => {
-    const value = form.get(name);
-    return typeof value === 'string' ? value : '';
-  };
-  const files = form.getAll('files').filter(value => value instanceof File);
-
   const now = Date.now();
   for (const [id, share] of pendingShares) {
     if (now - share.at >= SHARE_TTL_MS) forgetShare(id);
   }
-  const id = crypto.randomUUID();
-  // Best effort memory cleanup: workers can be suspended or terminated. The
-  // retrieval check below is authoritative even if this timer never runs.
-  const timer = setTimeout(() => forgetShare(id), SHARE_TTL_MS);
-  pendingShares.set(id, { title: field('title'), text: field('text'), url: field('url'), files, at: now, timer });
-  return Response.redirect(`/?shared=${id}`, 303);
+  if (pendingShares.size + incomingShares >= SHARE_QUEUE_ENTRIES) {
+    await request.body?.cancel().catch(() => {});
+    return Response.redirect('/?shared=queue-full', 303);
+  }
+  incomingShares++;
+  let bytes = 0;
+  let queued = false;
+  const reader = request.body?.getReader();
+  try {
+    if (!reader) return Response.redirect('/?shared=failed', 303);
+    const chunks = [];
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      const reason = bytes + value.byteLength > SHARE_BODY_BYTES ? 'too-large'
+        : shareBytes + value.byteLength > SHARE_QUEUE_BYTES ? 'queue-full' : null;
+      if (reason) {
+        await reader.cancel().catch(() => {});
+        return Response.redirect(`/?shared=${reason}`, 303);
+      }
+      bytes += value.byteLength;
+      shareBytes += value.byteLength;
+      chunks.push(value);
+    }
+    // The body is bounded before invoking the multipart parser.
+    const form = await new Response(new Blob(chunks), { headers: request.headers }).formData();
+    const field = (/** @type {string} */ name) => {
+      const value = form.get(name);
+      return typeof value === 'string' ? value : '';
+    };
+    const files = form.getAll('files').filter(value => value instanceof File);
+    if (files.length > SHARE_FILES) return Response.redirect('/?shared=too-many-files', 303);
+    const id = crypto.randomUUID();
+    // Cleanup is best effort; retrieval checks age even after suspension.
+    const timer = setTimeout(() => forgetShare(id), SHARE_TTL_MS);
+    pendingShares.set(id, { title: field('title'), text: field('text'), url: field('url'), files,
+      at: Date.now(), bytes, timer });
+    queued = true;
+    return Response.redirect(`/?shared=${id}`, 303);
+  } catch {
+    await reader?.cancel().catch(() => {});
+    return Response.redirect('/?shared=failed', 303);
+  } finally {
+    reader?.releaseLock();
+    incomingShares--;
+    if (!queued) shareBytes -= bytes;
+  }
 }
 
 worker.addEventListener('message', event => {

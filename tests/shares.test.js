@@ -15,9 +15,12 @@ function workerHarness() {
   let nextTimer = 0;
   const context = vm.createContext({
     self: { addEventListener: (type, handler) => handlers.set(type, handler) },
-    location: { origin }, File, URL, crypto,
+    location: { origin }, File, Blob, URL, crypto,
     Date: { now: () => now },
-    Response: { redirect: (url, status) => Response.redirect(new URL(url, origin), status) },
+    Response: class extends Response {
+      /** @override */
+      static redirect(url, status) { return Response.redirect(new URL(url, origin), status); }
+    },
     setTimeout: callback => { timers.set(++nextTimer, callback); return nextTimer; },
     clearTimeout: id => timers.delete(id)
   });
@@ -26,13 +29,18 @@ function workerHarness() {
     advance: ms => { now += ms; },
     timers,
     count: () => vm.runInContext('pendingShares.size', context),
-    async post() {
+    bytes: () => vm.runInContext('shareBytes', context),
+    async post(size = 10, fileCount = 1) {
       const form = new FormData();
       form.set('text', 'shared text');
-      form.set('files', new File(['file bytes'], 'shared.txt'));
+      for (let i = 0; i < fileCount; i++) form.append('files', new File([size === 10 ? 'file bytes' : new Uint8Array(size)], 'shared.txt'));
       /** @type {Promise<Response> | undefined} */
       let response;
-      handlers.get('fetch')({ request: { url: `${origin}/share`, method: 'POST', formData: async () => form },
+      // Encode before handing the body to the worker. This avoids Node's
+      // multipart producer racing cancellation; browsers supply encoded bytes.
+      const encoded = new Request(`${origin}/share`, { method: 'POST', body: form });
+      const request = new Request(encoded.url, { method: 'POST', headers: encoded.headers, body: await encoded.arrayBuffer() });
+      handlers.get('fetch')({ request,
         respondWith: value => { response = value; } });
       const result = await response;
       assert.ok(result);
@@ -80,4 +88,29 @@ test('cleanup releases unclaimed shares without another share arriving', async (
   for (const callback of worker.timers.values()) callback();
   assert.equal(worker.count(), 0);
   assert.equal(worker.timers.size, 0);
+});
+
+test('entry and file-count limits reject cleanly and release reservations', async () => {
+  const worker = workerHarness();
+  assert.equal(await worker.post(10, 33), 'too-many-files');
+  assert.equal(worker.bytes(), 0);
+  const ids = await Promise.all(Array.from({ length: 9 }, () => worker.post()));
+  assert.equal(ids.filter(id => id === 'queue-full').length, 1);
+  assert.equal(worker.count(), 8);
+  for (const id of ids.filter(id => id !== 'queue-full')) worker.take(id);
+  assert.equal(worker.bytes(), 0);
+  assert.notEqual(await worker.post(), 'queue-full');
+});
+
+test('byte budgets include in-flight bodies and recover after rejection and expiry', async () => {
+  const worker = workerHarness();
+  assert.equal(await worker.post(16 * 1024 * 1024), 'too-large', 'multipart overhead also counts');
+  assert.equal(worker.bytes(), 0);
+  const ids = await Promise.all(Array.from({ length: 3 }, () => worker.post(15 * 1024 * 1024)));
+  assert.ok(ids.includes('queue-full'));
+  assert.ok(worker.bytes() <= 32 * 1024 * 1024);
+  worker.advance(ttl);
+  for (const callback of worker.timers.values()) callback();
+  assert.equal(worker.bytes(), 0);
+  assert.notEqual(await worker.post(), 'queue-full');
 });

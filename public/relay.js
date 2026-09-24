@@ -34,12 +34,14 @@ export const CHUNK_OVERHEAD = IV_BYTES + TAG_BYTES;
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
 
-/** Ciphertext size and chunk count for a plaintext of `size` bytes. */
+/** Ciphertext size and chunk count for a plaintext of `size` bytes.
+ * @param {number} size @param {number} chunkSize */
 export function cipherLayout(size, chunkSize) {
   const totalChunks = Math.ceil(size / chunkSize);
   return { totalChunks, bytes: size + totalChunks * CHUNK_OVERHEAD };
 }
 
+/** @param {string} fileId @param {number} index @param {number} totalChunks */
 function chunkAad(fileId, index, totalChunks) {
   return encoder.encode(`aria-drop/blob/1|${fileId}|${index}|${totalChunks}`);
 }
@@ -49,7 +51,8 @@ function chunkAad(fileId, index, totalChunks) {
  * exact string that was signed, so the recipient verifies bytes rather than a
  * re-serialisation of parsed JSON. `kind` is inside the signature, so a message
  * can never be replayed as a file or the other way round.
- */
+
+ * @param {import('./types.js').SealOptions & {kind: string, body: object}} options */
 async function sealSigned({ identity, recipientId, recipientSealRaw, conv, kind, body }) {
   const inner = JSON.stringify({
     v: 1,
@@ -69,7 +72,8 @@ async function sealSigned({ identity, recipientId, recipientSealRaw, conv, kind,
  * with: that it was addressed to us, that it is the kind we expected, that the
  * claimed sender's key hashes to the sender id the server reported, and that the
  * sender actually signed it.
- */
+
+ * @param {import('./types.js').OpenOptions & {kind: string}} options */
 async function openSigned({ sealPrivateKey, box, selfId, expectedFrom, kind }) {
   const outer = JSON.parse(decoder.decode(await unseal(sealPrivateKey, box)));
   if (typeof outer?.inner !== 'string' || typeof outer?.signature !== 'string') {
@@ -90,7 +94,8 @@ async function openSigned({ sealPrivateKey, box, selfId, expectedFrom, kind }) {
   return meta;
 }
 
-/** Sealed, signed envelope carrying a file's metadata and content key. */
+/** Sealed, signed envelope carrying a file's metadata and content key.
+ * @param {import('./types.js').SealOptions & {meta: import('./types.js').FileMeta & {chunkSize: number}, contentKeyRaw: Uint8Array}} options */
 export function buildEnvelope({ identity, recipientId, recipientSealRaw, meta, contentKeyRaw, conv }) {
   return sealSigned({
     identity,
@@ -113,7 +118,8 @@ export function buildEnvelope({ identity, recipientId, recipientSealRaw, meta, c
   });
 }
 
-/** Sealed, signed envelope carrying one chat message. */
+/** Sealed, signed envelope carrying one chat message.
+ * @param {import('./types.js').SealOptions & {message: Omit<import('./types.js').Message, 'from'>}} options */
 export function buildMessageEnvelope({ identity, recipientId, recipientSealRaw, conv, message }) {
   return sealSigned({
     identity,
@@ -136,7 +142,8 @@ export function buildMessageEnvelope({ identity, recipientId, recipientSealRaw, 
  * Opens a message envelope. The author is taken from the verified signature,
  * never from the message body, so a relayed message cannot claim to be from
  * anyone other than the device that signed it.
- */
+
+ * @param {import('./types.js').OpenOptions & {maxChars?: number}} options */
 export async function openMessageEnvelope({ sealPrivateKey, box, selfId, expectedFrom, maxChars = 20000 }) {
   const meta = await openSigned({ sealPrivateKey, box, selfId, expectedFrom, kind: 'message' });
   const message = meta.message;
@@ -155,7 +162,8 @@ export async function openMessageEnvelope({ sealPrivateKey, box, selfId, expecte
   };
 }
 
-/** Opens a file envelope and validates the metadata it carries. */
+/** Opens a file envelope and validates the metadata it carries.
+ * @param {import('./types.js').OpenOptions} options */
 export async function openEnvelope({ sealPrivateKey, box, selfId, expectedFrom }) {
   const meta = await openSigned({ sealPrivateKey, box, selfId, expectedFrom, kind: 'file' });
 
@@ -175,7 +183,8 @@ export async function openEnvelope({ sealPrivateKey, box, selfId, expectedFrom }
 
 export { generateContentKey };
 
-/** Encrypts a Blob chunk by chunk; returns the ciphertext as a Blob. */
+/** Encrypts a Blob chunk by chunk; returns the ciphertext as a Blob.
+ * @param {Blob} blob @param {CryptoKey} key @param {string} fileId @param {number} chunkSize @param {(fraction: number) => void} [onProgress] */
 export async function encryptBody(blob, key, fileId, chunkSize, onProgress) {
   const totalChunks = Math.ceil(blob.size / chunkSize);
   /** @type {BlobPart[]} */
@@ -199,7 +208,8 @@ export async function encryptBody(blob, key, fileId, chunkSize, onProgress) {
  * Incremental decryptor: feed it ciphertext as it arrives from the network and
  * it decrypts each chunk as soon as the chunk is complete. Peak memory is the
  * plaintext plus one chunk, rather than the whole ciphertext and plaintext.
- */
+
+ * @param {{key: CryptoKey, fileId: string, chunkSize: number, size: number}} options */
 export function createBodyDecryptor({ key, fileId, chunkSize, size }) {
   const totalChunks = Math.ceil(size / chunkSize);
   const hash = new Sha256();
@@ -229,7 +239,7 @@ export function createBodyDecryptor({ key, fileId, chunkSize, size }) {
 
   return {
     get progress() { return totalChunks ? index / totalChunks : 1; },
-    async push(bytes) {
+    async push(/** @type {Uint8Array} */ bytes) {
       const merged = new Uint8Array(pending.length + bytes.length);
       merged.set(pending, 0);
       merged.set(bytes, pending.length);

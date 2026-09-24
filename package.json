@@ -19,6 +19,7 @@
     "dev": "node --watch server.js",
     "test": "node --test",
     "test:e2e": "playwright test",
+    "test:e2e:platform": "playwright test --config playwright.platform.config.js",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
     "check": "npm run lint && npm run typecheck && npm test"

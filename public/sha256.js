@@ -24,7 +24,7 @@ const INITIAL = new Uint32Array([
   0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19
 ]);
 
-const rotr = (value, bits) => (value >>> bits) | (value << (32 - bits));
+const rotr = (/** @type {number} */ value, /** @type {number} */ bits) => (value >>> bits) | (value << (32 - bits));
 
 export class Sha256 {
   #h = new Uint32Array(INITIAL);
@@ -35,6 +35,7 @@ export class Sha256 {
   #bytes = 0;
   #done = false;
 
+  /** @param {Uint8Array | ArrayBuffer} bytes */
   update(bytes) {
     if (this.#done) throw new Error('Sha256 already finalised');
     const input = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
@@ -87,6 +88,7 @@ export class Sha256 {
     return [...this.digest()].map(byte => byte.toString(16).padStart(2, '0')).join('');
   }
 
+  /** @param {DataView} view @param {number} offset */
   #compress(view, offset) {
     const w = this.#w;
     for (let i = 0; i < 16; i++) w[i] = view.getUint32(offset + i * 4);
@@ -124,6 +126,7 @@ export class Sha256 {
 }
 
 // Hash a Blob/File without ever holding more than one chunk in memory.
+/** @param {Blob} blob @param {number} [chunkSize] @param {(fraction: number) => void} [onProgress] */
 export async function hashBlob(blob, chunkSize = 64 * 1024, onProgress) {
   const hash = new Sha256();
   for (let start = 0; start < blob.size; start += chunkSize) {
@@ -135,6 +138,7 @@ export async function hashBlob(blob, chunkSize = 64 * 1024, onProgress) {
 }
 
 // Hash an ordered array of chunk buffers, as held by a receiver mid-transfer.
+/** @param {Iterable<Uint8Array>} chunks */
 export function hashChunks(chunks) {
   const hash = new Sha256();
   for (const chunk of chunks) hash.update(chunk);

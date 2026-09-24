@@ -59,15 +59,23 @@ const pickTargetHint = $('#pickTargetHint');
 const themeBtn = $('#themeBtn');
 const themeIcon = $('#themeIcon');
 
+/** @typedef {import('./types.js').Link} Link
+ * @typedef {import('./types.js').SecureLink} SecureLink
+ * @typedef {import('./types.js').Conversation} Conversation
+ * @typedef {import('./types.js').FileRecord} FileRecord
+ * @typedef {import('./types.js').FileMeta} FileMeta
+ * @typedef {import('./types.js').Message} Message
+ * @typedef {import('./types.js').Device} Device
+ * @typedef {import('./types.js').Room} Room */
 const state = {
   ws: /** @type {WebSocket | null} */ (null),
   wsBackoff: 500,
   self: /** @type {{id: string, name: string, code: string} | null} */ (null),
   identity: /** @type {Awaited<ReturnType<typeof loadIdentity>> | null} */ (null),            // long-lived device keypair + fingerprint
-  peers: new Map(),          // deviceId -> online peer record from the server
-  links: new Map(),          // deviceId -> pairwise transport + crypto
-  conversations: new Map(),  // convId -> in-memory chat/file state
-  rooms: new Map(),          // roomId -> server room record
+  peers: new Map(/** @type {[string, Device][]} */ ([])),          // deviceId -> online peer record from the server
+  links: new Map(/** @type {[string, Link][]} */ ([])),          // deviceId -> pairwise transport + crypto
+  conversations: new Map(/** @type {[string, Conversation][]} */ ([])),  // convId -> in-memory chat/file state
+  rooms: new Map(/** @type {[string, Room][]} */ ([])),          // roomId -> server room record
   joinedRoomIds: new Set(),  // rooms this browser is a member of
   activeConvId: /** @type {string | null} */ (null),
   activeSends: new Map(),    // transferId -> { cancelled, fileId, name }
@@ -87,7 +95,7 @@ const state = {
   // Last known record for every device we know of, online or not: presence,
   // room away lists, and server lookups all feed it. Offline devices seen in the
   // last 24h can still be sent to through the relay.
-  deviceRecords: new Map(),    // deviceId -> { ...record, online, lastSeen }
+  deviceRecords: new Map(/** @type {[string, Device][]} */ ([])),    // deviceId -> { ...record, online, lastSeen }
   pendingRequests: new Map(),  // requestId / blobId -> { resolve, reject, timer }
   relayInbound: new Set(),     // blob ids already being fetched, so a repeat notice is ignored
   sealKeyCache: new Map()      // advertised identity -> verified seal key bytes (or null)
@@ -108,6 +116,7 @@ const MAX_RELAY_FRAME_CHARS = 250 * 1024;
 // no longer be sent to, because anything left for it would age out first.
 const RECENT_WINDOW_MS = 24 * 60 * 60 * 1000;
 
+/** @param {Device} record @param {boolean} online */
 function recordDevice(record, online) {
   if (!record?.id || record.id === state.self?.id) return;
   const previous = state.deviceRecords.get(record.id);
@@ -119,15 +128,17 @@ function recordDevice(record, online) {
   });
 }
 
-/** A device that is offline but was seen recently enough to still be sent to. */
+/** A device that is offline but was seen recently enough to still be sent to.
+ * @param {string} deviceId */
 function isRecentlySeen(deviceId) {
   const record = state.deviceRecords.get(deviceId);
-  return Boolean(record) && !state.peers.has(deviceId) && record.lastSeen >= Date.now() - RECENT_WINDOW_MS;
+  return record !== undefined && !state.peers.has(deviceId) && (record.lastSeen || 0) >= Date.now() - RECENT_WINDOW_MS;
 }
 
 // Asks the server for the signed records of devices we know about. The records
 // are verified client-side before anything is sealed to them, exactly as a
 // live one would be, so the server cannot substitute a key.
+/** @param {string[]} deviceIds */
 function lookupDevices(deviceIds) {
   const ids = [...new Set(deviceIds)].filter(id => id && id !== state.self?.id).slice(0, 200);
   if (!ids.length || !relayEnabled()) return Promise.resolve([]);
@@ -141,8 +152,9 @@ function lookupDevices(deviceIds) {
     .catch(() => []);
 }
 
+/** @param {number | undefined} timestamp */
 function formatAgo(timestamp) {
-  const seconds = Math.max(0, Math.round((Date.now() - timestamp) / 1000));
+  const seconds = Math.max(0, Math.round((Date.now() - (timestamp || 0)) / 1000));
   if (seconds < 60) return 'just now';
   const minutes = Math.round(seconds / 60);
   if (minutes < 60) return `${minutes}m ago`;
@@ -208,10 +220,12 @@ function detectBrowser() {
   return 'Browser';
 }
 
+/** @param {object} payload */
 function wsSend(payload) {
   if (state.ws?.readyState === WebSocket.OPEN) state.ws.send(JSON.stringify(payload));
 }
 
+/** @param {string} to @param {object} data */
 function signal(to, data) {
   wsSend({ type: 'signal', to, data });
 }
@@ -270,8 +284,9 @@ function connectWebSocket() {
       for (const peer of state.peers.values()) recordDevice(peer, true);
       // Anyone who just dropped off stays addressable through the relay.
       for (const id of previousOnline) {
-        if (!state.peers.has(id) && state.deviceRecords.has(id)) {
-          recordDevice({ ...state.deviceRecords.get(id), lastSeen: Date.now() }, false);
+        const previous = state.deviceRecords.get(id);
+        if (!state.peers.has(id) && previous) {
+          recordDevice({ ...previous, lastSeen: Date.now() }, false);
         }
       }
       renderPeers();
@@ -409,17 +424,18 @@ function rejoinRooms() {
 
 /* ---------- conversations ---------- */
 
-const directConvId = (peerId) => `d:${peerId}`;
-const roomConvId = (roomId) => `r:${roomId}`;
+const directConvId = (/** @type {string} */ peerId) => `d:${peerId}`;
+const roomConvId = (/** @type {string} */ roomId) => `r:${roomId}`;
 
+/** @param {string} convId
+ * @param {"direct" | "room"} kind @param {string} ref */
 function ensureConversation(convId, kind, ref) {
   const existing = state.conversations.get(convId);
   if (existing) return existing;
+  /** @type {Conversation} */
   const conv = {
     id: convId,
-    kind,
-    peerId: kind === 'direct' ? ref : null,
-    roomId: kind === 'room' ? ref : null,
+    ...(kind === 'direct' ? { kind, peerId: ref, roomId: null } : { kind, peerId: null, roomId: ref }),
     lastKnownName: null,
     lastKnownCode: null,
     messages: new Map(),
@@ -429,6 +445,7 @@ function ensureConversation(convId, kind, ref) {
   return conv;
 }
 
+/** @param {string} convId */
 function forgetConversation(convId) {
   state.conversations.delete(convId);
   if (state.activeConvId === convId) closeSessionPanel();
@@ -437,10 +454,13 @@ function forgetConversation(convId) {
 
 // Wire-level scope. "direct" is resolved relative to the sender, so each side
 // maps it onto its own conversation id for the other device.
+/** @param {Conversation} conv */
 function convScope(conv) {
   return conv.kind === 'room' ? `room:${conv.roomId}` : 'direct';
 }
 
+/** @param {string} fromPeerId
+ * @param {string | undefined} scope */
 function resolveScope(scope, fromPeerId) {
   if (!scope || scope === 'direct') return ensureConversation(directConvId(fromPeerId), 'direct', fromPeerId);
   if (!scope.startsWith('room:')) return null;
@@ -452,6 +472,7 @@ function resolveScope(scope, fromPeerId) {
 
 // Everyone party to a conversation, including room members who are away: they
 // keep their seat and are still sent to, through the relay.
+/** @param {Conversation} conv */
 function conversationMembers(conv) {
   if (conv.kind === 'direct') return [conv.peerId];
   const room = state.rooms.get(conv.roomId);
@@ -459,16 +480,19 @@ function conversationMembers(conv) {
   return [...room.members, ...(room.away || [])].map(m => m.id).filter(id => id !== state.self?.id);
 }
 
+/** @param {Conversation} conv */
 function onlineMembers(conv) {
   return conversationMembers(conv).filter(id => state.peers.has(id));
 }
 
-/** Members who are offline but recent enough that a relayed item can wait for them. */
+/** Members who are offline but recent enough that a relayed item can wait for them.
+ * @param {Conversation} conv */
 function relayOnlyMembers(conv) {
   if (!relayEnabled()) return [];
   return conversationMembers(conv).filter(isRecentlySeen);
 }
 
+/** @param {Conversation} conv */
 function conversationTitle(conv) {
   if (conv.kind === 'room') return state.rooms.get(conv.roomId)?.name || conv.lastKnownName || 'Room';
   return getPeer(conv.peerId).name;
@@ -476,7 +500,9 @@ function conversationTitle(conv) {
 
 // Falls back to the name remembered for a known device, so a relayed message
 // from a device that has since gone offline still shows who sent it.
+/** @param {string | null | undefined} deviceId */
 function displayName(deviceId) {
+  if (!deviceId) return 'Unknown device';
   if (state.self && deviceId === state.self.id) return state.self.name;
   return state.peers.get(deviceId)?.name
     || state.deviceRecords.get(deviceId)?.name
@@ -486,9 +512,11 @@ function displayName(deviceId) {
 
 /* ---------- links ---------- */
 
+/** @param {string} peerId */
 function createLink(peerId) {
   const existing = state.links.get(peerId);
   if (existing) return existing;
+  /** @type {Link} */
   const link = {
     peerId,
     pc: null,
@@ -518,6 +546,7 @@ function createLink(peerId) {
 
 // A derived key is not enough: the peer must also have proved ownership of the
 // device key its ID is derived from, or the link stays unusable.
+/** @param {Link | null | undefined} link @returns {link is SecureLink} */
 function isSecure(link) {
   return Boolean(link?.crypto.key && link.crypto.identityVerified && link.dc?.readyState === 'open');
 }
@@ -536,6 +565,7 @@ function neededPeerIds() {
 
 // Rooms past the mesh size are relay-only: the server says which when it lists
 // the room, so every member makes the same choice.
+/** @param {Conversation} conv */
 function isRelayRoom(conv) {
   return conv.kind === 'room' && state.rooms.get(conv.roomId)?.transport === 'relay';
 }
@@ -544,14 +574,15 @@ function releaseIdleLinks() {
   const needed = neededPeerIds();
   for (const [peerId, link] of state.links) {
     if (needed.has(peerId)) continue;
-    clearTimeout(link.reconnectTimer);
-    clearTimeout(link.queueTimer);
+    clearTimeout(link.reconnectTimer ?? undefined);
+    clearTimeout(link.queueTimer ?? undefined);
     try { link.dc?.close(); } catch {}
     try { link.pc?.close(); } catch {}
     state.links.delete(peerId);
   }
 }
 
+/** @param {Set<string>} previousOnline */
 function reconcileLinks(previousOnline) {
   for (const peerId of neededPeerIds()) {
     const link = state.links.get(peerId);
@@ -566,14 +597,17 @@ function reconcileLinks(previousOnline) {
   releaseIdleLinks();
 }
 
+/** @param {Conversation} conv */
 function ensureConversationLinks(conv) {
   if (isRelayRoom(conv)) return;
   for (const peerId of onlineMembers(conv)) ensureLink(peerId);
 }
 
+/** @param {Link} link */
 function attachPeerConnection(link) {
   const peerId = link.peerId;
   const pc = link.pc;
+  if (!pc) return;
   pc.onicecandidate = (event) => {
     if (event.candidate) signal(peerId, { type: 'ice', candidate: event.candidate });
   };
@@ -603,7 +637,9 @@ function negotiatingCount() {
   return count;
 }
 
+/** @param {string} peerId */
 async function ensureLink(peerId, force = false) {
+  if (typeof RTCPeerConnection === 'undefined') return;
   if (!state.self || !state.peers.has(peerId)) return;
   const link = createLink(peerId);
   if (!force && (link.incompatible || link.gaveUp)) return;
@@ -648,6 +684,7 @@ async function ensureLink(peerId, force = false) {
 
 // Bounded retry: exponential backoff with jitter, then stop and offer a manual
 // retry instead of reconnecting forever against a peer that will not answer.
+/** @param {string} peerId */
 function scheduleReconnect(peerId) {
   const link = state.links.get(peerId);
   if (!link || link.reconnectTimer || link.incompatible || link.gaveUp) return;
@@ -667,9 +704,10 @@ function scheduleReconnect(peerId) {
   }, delay);
 }
 
+/** @param {string} peerId */
 function retryLink(peerId) {
   const link = createLink(peerId);
-  clearTimeout(link.reconnectTimer);
+  clearTimeout(link.reconnectTimer ?? undefined);
   link.reconnectTimer = null;
   link.reconnectAttempts = 0;
   link.gaveUp = false;
@@ -677,7 +715,9 @@ function retryLink(peerId) {
   ensureLink(peerId, true);
 }
 
+/** @param {string} peerId */
 async function handleSignal(peerId, data) {
+  if (typeof RTCPeerConnection === 'undefined') return;
   if (!data || typeof data !== 'object') return;
   const known = state.links.get(peerId);
   if (known?.incompatible) return;
@@ -718,6 +758,7 @@ async function handleSignal(peerId, data) {
 
 /* ---------- per-link crypto ---------- */
 
+/** @param {Link} link */
 function resetCrypto(link) {
   link.crypto = {
     keyPair: null,
@@ -734,6 +775,8 @@ function resetCrypto(link) {
   link.trust = null;
 }
 
+/** @param {Link} link
+ * @param {RTCDataChannel} dc */
 function setupDataChannel(link, dc) {
   link.dc = dc;
   dc.binaryType = 'arraybuffer';
@@ -748,7 +791,9 @@ function setupDataChannel(link, dc) {
   dc.onmessage = (event) => handleDataMessage(link, event.data);
 }
 
+/** @param {Link} link */
 async function startCryptoHandshake(link) {
+  if (!link.dc) return;
   const identity = state.identity;
   if (!identity) throw new Error('Device identity is not ready. Reload and try again.');
   if (link.incompatible || link.crypto.helloSent) return;
@@ -771,6 +816,8 @@ async function startCryptoHandshake(link) {
   renderSession();
 }
 
+/** @param {Link} link
+ * @param {string} message */
 function abortLink(link, message) {
   link.incompatible = true;
   link.status = 'untrusted';
@@ -784,6 +831,7 @@ function abortLink(link, message) {
 
 // Refuse a peer whose supported range does not overlap ours, and say so, rather
 // than deriving a key and failing later on a frame we cannot parse.
+/** @param {Link} link */
 function negotiateProtocol(link, hello) {
   const theirMin = Number.isInteger(hello.min) ? hello.min : Number(hello.protocol) || 0;
   const theirMax = Number.isInteger(hello.max) ? hello.max : Number(hello.protocol) || 0;
@@ -807,6 +855,7 @@ function negotiateProtocol(link, hello) {
   return true;
 }
 
+/** @param {Link} link */
 async function handleCryptoHello(link, hello) {
   const identity = state.identity;
   if (!identity) throw new Error('Device identity is not ready. Reload and try again.');
@@ -827,6 +876,7 @@ async function handleCryptoHello(link, hello) {
   }
 
   if (!link.crypto.keyPair) await startCryptoHandshake(link);
+  if (!link.crypto.keyPair) return;
 
   const remoteKey = await crypto.subtle.importKey(
     'raw', base64ToBytes(hello.publicKey), { name: 'ECDH', namedCurve: 'P-256' }, false, []
@@ -848,7 +898,10 @@ async function handleCryptoHello(link, hello) {
   renderSession();
 }
 
+/** @param {Link} link */
 async function sendProof(link) {
+  if (!link.dc) return;
+  if (!link.crypto.ownPublic || !link.crypto.remotePublic || !link.crypto.ownNonce) return;
   const identity = state.identity;
   if (!identity) throw new Error('Device identity is not ready. Reload and try again.');
   if (link.crypto.proofSent || !link.crypto.remoteNonce) return;
@@ -862,7 +915,9 @@ async function sendProof(link) {
   link.dc.send(JSON.stringify({ kind: 'crypto-proof', signature }));
 }
 
+/** @param {Link} link */
 async function handleCryptoProof(link, message) {
+  if (!link.crypto.ownPublic || !link.crypto.remotePublic || !link.crypto.ownNonce || !link.crypto.remoteNonce) return;
   if (link.incompatible || link.crypto.identityVerified) return;
   if (!link.crypto.key || !link.crypto.remoteIdentity) return;
   if (typeof message.signature !== 'string' || message.signature.length > 256) return;
@@ -896,6 +951,7 @@ async function handleCryptoProof(link, message) {
 
 /* ---------- framing ---------- */
 
+/** @param {RTCDataChannel} dc */
 async function waitForWritable(dc) {
   if (dc.readyState !== 'open') throw new Error('Data channel is not open');
   if (dc.bufferedAmount <= HIGH_WATER) return;
@@ -911,6 +967,8 @@ async function waitForWritable(dc) {
   });
 }
 
+/** @param {Link} link
+ * @param {Uint8Array<ArrayBuffer>} plain */
 async function encryptAndSend(link, plain) {
   if (!isSecure(link)) throw new Error('Secure channel is not ready');
   await waitForWritable(link.dc);
@@ -922,6 +980,8 @@ async function encryptAndSend(link, plain) {
   link.dc.send(packet.buffer);
 }
 
+/** @param {Link} link
+ * @param {object} obj */
 async function sendControl(link, obj) {
   const json = encoder.encode(JSON.stringify(obj));
   const frame = new Uint8Array(1 + json.length);
@@ -930,6 +990,8 @@ async function sendControl(link, obj) {
   await encryptAndSend(link, frame);
 }
 
+/** @param {Link} link @param {Conversation} conv
+ * @param {string} id @param {string} transferId @param {number} seq @param {number} total @param {Uint8Array} bytes */
 async function sendFileChunk(link, conv, id, transferId, seq, total, bytes) {
   const headerBytes = encoder.encode(JSON.stringify({ conv: convScope(conv), id, t: transferId, seq, total }));
   const frame = new Uint8Array(1 + 4 + headerBytes.length + bytes.length);
@@ -940,6 +1002,8 @@ async function sendFileChunk(link, conv, id, transferId, seq, total, bytes) {
   await encryptAndSend(link, frame);
 }
 
+/** @param {Link} link
+ * @param {string | Blob | ArrayBuffer} data */
 async function handleDataMessage(link, data) {
   if (typeof data === 'string') {
     let msg;
@@ -965,6 +1029,8 @@ async function handleDataMessage(link, data) {
   }
 }
 
+/** @param {Link} link
+ * @param {Uint8Array<ArrayBuffer>} frame */
 async function handlePlainFrame(link, frame) {
   const parsed = parseFrame(frame, CAPS);
   if (!parsed) return;
@@ -975,6 +1041,7 @@ async function handlePlainFrame(link, frame) {
   else receiveFileChunk(link, conv, parsed.header, parsed.bytes);
 }
 
+/** @param {Link} link @param {Conversation} conv */
 async function handleControl(link, conv, msg) {
   if (msg.type === 'chat' && msg.message) {
     // A live chat frame must be authored by the peer that sent it. Without this
@@ -1099,6 +1166,7 @@ async function handleControl(link, conv, msg) {
   }
 
   if (msg.type === 'file-request') {
+    if (!isSecure(link)) return;
     const file = conv.files.get(msg.id);
     // Rejoining peers pull bytes on demand; nothing is retransmitted automatically.
     if (!file?.blob) return;
@@ -1123,7 +1191,8 @@ const INCOMING_POLICIES = ['auto', 'new', 'always'];
  * accepted. "New" means first contact: a device this browser had never
  * completed a handshake with before this session, or, for a relayed file from
  * a device never met directly, one with no remembered identity at all.
- */
+
+ * @param {string} deviceId @param {Link | undefined} [link] */
 function needsConsent(deviceId, link) {
   if (state.incomingPolicy === 'auto') return false;
   // "Always ask" means every file, even from a device accepted a moment ago.
@@ -1151,11 +1220,12 @@ function validFileMeta(meta) {
   return true;
 }
 
-const countReceived = (chunks) => chunks.reduce((n, chunk) => n + (chunk ? 1 : 0), 0);
-const countReceivedBytes = (chunks) => chunks.reduce((n, chunk) => n + (chunk?.byteLength || 0), 0);
+const countReceived = (/** @type {(Uint8Array | undefined)[]} */ chunks) => chunks.reduce((n, chunk) => n + (chunk ? 1 : 0), 0);
+const countReceivedBytes = (/** @type {(Uint8Array | undefined)[]} */ chunks) => chunks.reduce((n, chunk) => n + (chunk?.byteLength || 0), 0);
 
 // Compact the chunk indices we already hold into [start, end] runs, so a resume
 // request stays small even for a file with a million chunks.
+/** @param {(Uint8Array | undefined)[]} chunks */
 function heldRanges(chunks) {
   const ranges = [];
   let start = -1;
@@ -1170,8 +1240,9 @@ function heldRanges(chunks) {
   return ranges;
 }
 
-const inRanges = (ranges, seq) => ranges.some(([start, end]) => seq >= start && seq <= end);
+const inRanges = (/** @type {number[][]} */ ranges, /** @type {number} */ seq) => ranges.some(([start, end]) => seq >= start && seq <= end);
 
+/** @param {...unknown} sources @returns {string[]} */
 function mergeHolders(...sources) {
   const out = new Set();
   for (const source of sources) {
@@ -1183,7 +1254,11 @@ function mergeHolders(...sources) {
 
 /* ---------- conversation state (merge by immutable id) ---------- */
 
-function mergeMessage(conv, message, { verifiedAuthor = true, relayedBy = null } = {}) {
+/** @param {Conversation} conv
+ * @param {{verifiedAuthor?: boolean, relayedBy?: string | null}} [options]
+ * @param {Message} message */
+function mergeMessage(conv, message, options = {}) {
+  const { verifiedAuthor = true, relayedBy = null } = options;
   if (!message?.id || typeof message.id !== 'string' || message.id.length > 64) return;
   if (typeof message.from !== 'string' || message.from.length > 128) return;
   if (typeof message.text !== 'string' || message.text.length > CAPS.messageChars) return;
@@ -1200,6 +1275,8 @@ function mergeMessage(conv, message, { verifiedAuthor = true, relayedBy = null }
   });
 }
 
+/** @param {Conversation} conv
+ * @param {FileMeta} meta */
 function mergeFileMeta(conv, meta) {
   if (!validFileMeta(meta)) return;
   const existing = conv.files.get(meta.id);
@@ -1225,6 +1302,7 @@ function mergeFileMeta(conv, meta) {
   });
 }
 
+/** @param {Conversation} conv */
 function fileManifest(conv) {
   return [...conv.files.values()].map(file => ({
     id: file.id,
@@ -1243,6 +1321,7 @@ function fileManifest(conv) {
 // Everyone syncs the full manifest with every peer they link to, so a gap one
 // peer missed is healed by another. Merging by immutable id makes it idempotent,
 // which is why no surviving peer has to be elected as the authority.
+/** @param {Link} link */
 async function syncEverythingWith(link) {
   for (const conv of state.conversations.values()) {
     if (!conversationMembers(conv).includes(link.peerId)) continue;
@@ -1250,6 +1329,7 @@ async function syncEverythingWith(link) {
   }
 }
 
+/** @param {Link} link @param {Conversation} conv */
 function syncConversationWith(link, conv) {
   const messages = [...conv.messages.values()].sort((a, b) => a.at - b.at);
   return sendControl(link, {
@@ -1265,6 +1345,7 @@ function syncConversationWith(link, conv) {
 // history then — before the rejoin lands, when it is discarded as belonging to
 // a room this device is not in. So on joining, ask each connected member for
 // the room's history instead of relying on which side got there first.
+/** @param {string} roomId */
 function requestRoomHistory(roomId) {
   const conv = state.conversations.get(roomConvId(roomId));
   if (!conv) return;
@@ -1276,17 +1357,23 @@ function requestRoomHistory(roomId) {
 
 /* ---------- sending ---------- */
 
+/** @param {string} peerId */
 async function waitForSecure(peerId, timeoutMs = 12000) {
-  if (isSecure(state.links.get(peerId))) return state.links.get(peerId);
+  if (typeof RTCPeerConnection === 'undefined') throw new Error('Direct connections are unavailable in this browser.');
+  const link = state.links.get(peerId);
+  if (isSecure(link)) return link;
   await ensureLink(peerId);
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
-    if (isSecure(state.links.get(peerId))) return state.links.get(peerId);
+    const current = state.links.get(peerId);
+    if (isSecure(current)) return current;
     await new Promise(r => setTimeout(r, 80));
   }
   throw new Error(`Secure connection to ${displayName(peerId)} timed out`);
 }
 
+/** @param {Conversation} conv
+ * @param {string} text */
 async function sendChat(conv, text) {
   const self = state.self;
   if (!self) throw new Error('Waiting for device registration. Try again shortly.');
@@ -1359,8 +1446,12 @@ async function sendChat(conv, text) {
   }
 }
 
-/** Seals a chat message to each recipient and leaves it with the server. */
+/** Seals a chat message to each recipient and leaves it with the server.
+ * @param {Conversation} conv
+ * @param {Message} message @param {string[]} recipientIds */
 async function sendMessageViaRelay(conv, message, recipientIds) {
+  const identity = state.identity;
+  if (!identity) throw new Error('Device identity is not ready.');
   const targets = [];
   for (const id of recipientIds) {
     const sealRaw = await verifiedSealKey(id);
@@ -1374,7 +1465,7 @@ async function sendMessageViaRelay(conv, message, recipientIds) {
   const envelopes = new Map();
   for (const target of targets) {
     envelopes.set(target.id, await buildMessageEnvelope({
-      identity: state.identity,
+      identity,
       recipientId: target.id,
       recipientSealRaw: target.sealRaw,
       conv: convScope(conv),
@@ -1434,7 +1525,8 @@ const relayEnabled = () => Boolean(state.config.relay?.enabled);
  * Recipients who are offline but can still be reached by leaving the item on
  * the server. For a direct conversation with a device we have no record of yet
  * (say, after a reload), ask the server for it first.
- */
+
+ * @param {Conversation} conv */
 async function offlineTargetsFor(conv) {
   if (!relayEnabled()) return [];
   if (conv.kind === 'direct' && !state.peers.has(conv.peerId) && !isRecentlySeen(conv.peerId)) {
@@ -1443,6 +1535,7 @@ async function offlineTargetsFor(conv) {
   return relayOnlyMembers(conv);
 }
 
+/** @param {Conversation} conv */
 function unreachableError(conv) {
   if (conv.kind === 'room') return new Error('Nobody else in this room is online or reachable through the server.');
   return new Error(relayEnabled()
@@ -1453,6 +1546,8 @@ function unreachableError(conv) {
 // Direct first; the relay takes whichever recipients a direct link could not
 // reach, either because ICE never connected or because the link died part-way.
 // A recipient therefore gets each file exactly once, by one path or the other.
+/** @param {Conversation} conv
+ * @param {FileList | File[]} fileList */
 async function sendFiles(conv, fileList) {
   const self = state.self;
   if (!self) throw new Error('Waiting for device registration. Try again shortly.');
@@ -1552,6 +1647,8 @@ async function sendFiles(conv, fileList) {
 //
 // `alreadyHeld` carries the chunk ranges a resuming receiver still has, so an
 // interrupted transfer picks up where it stopped instead of restarting.
+/** @param {Conversation} conv
+ * @param {SecureLink[]} links @param {Blob} blob @param {FileMeta} meta @param {number[][]} [alreadyHeld] */
 async function sendBlobTo(links, conv, blob, meta, alreadyHeld = []) {
   const totalChunks = Math.ceil(blob.size / CHUNK_SIZE);
   const transferId = crypto.randomUUID();
@@ -1611,7 +1708,7 @@ async function sendBlobTo(links, conv, blob, meta, alreadyHeld = []) {
       for (const [index, result] of settled.entries()) {
         if (!result) failed.push(alive[index].peerId);
       }
-      alive = settled.filter(Boolean);
+      alive = settled.filter(link => link !== null);
       if (!alive.length) return { sent, failed, cancelled: false };
       sent++;
       if (trackProgress) {
@@ -1664,12 +1761,13 @@ function settleRequest(key, value, error) {
  * the advertised identity key must hash to that id and must have signed the
  * seal key. Presence comes from the server, so this is what stops a hostile
  * server from substituting its own key and reading the file.
- */
+
+ * @param {string} peerId */
 async function verifiedSealKey(peerId) {
   // A live presence record, or the last one we have for a device now offline.
   // Either way it is checked below; where it came from does not matter.
   const peer = state.peers.get(peerId) || state.deviceRecords.get(peerId);
-  if (!peer?.sealKey) return null;
+  if (!peer?.sealKey || !peer.identityKey || !peer.sealKeySignature) return null;
   const cacheKey = [peerId, peer.identityKey, peer.sealKey, peer.sealKeySignature].join('|');
   if (state.sealKeyCache.has(cacheKey)) return state.sealKeyCache.get(cacheKey);
   const verified = await verifyAdvertisedIdentity({
@@ -1683,6 +1781,7 @@ async function verifiedSealKey(peerId) {
   return result;
 }
 
+/** @param {string} blobId @param {string} token @param {Blob} body @param {(fraction: number) => void} onProgress */
 function uploadBlob(blobId, token, body, onProgress) {
   // XHR rather than fetch: fetch still has no upload progress.
   return new Promise((resolve, reject) => {
@@ -1699,7 +1798,11 @@ function uploadBlob(blobId, token, body, onProgress) {
   });
 }
 
+/** @param {Conversation} conv
+ * @param {Blob} blob @param {FileMeta} meta @param {FileRecord} record @param {string[]} recipientIds */
 async function sendViaRelay(conv, blob, meta, record, recipientIds) {
+  const identity = state.identity;
+  if (!identity) throw new Error('Device identity is not ready.');
   const chunkSize = state.config.relay.chunkSize;
   const { totalChunks, bytes } = cipherLayout(blob.size, chunkSize);
 
@@ -1721,7 +1824,7 @@ async function sendViaRelay(conv, blob, meta, record, recipientIds) {
   const envelopes = new Map();
   for (const target of targets) {
     envelopes.set(target.id, await buildEnvelope({
-      identity: state.identity,
+      identity,
       recipientId: target.id,
       recipientSealRaw: target.sealRaw,
       meta: { ...meta, chunkSize, totalChunks },
@@ -1762,6 +1865,7 @@ async function sendViaRelay(conv, blob, meta, record, recipientIds) {
   toast(`${meta.name} is on the server for ${targets.length} device${targets.length === 1 ? '' : 's'}.`);
 }
 
+/** @param {string} blobId */
 function findRelayedFile(blobId) {
   for (const conv of state.conversations.values()) {
     for (const file of conv.files.values()) {
@@ -1831,22 +1935,22 @@ async function handleBlobAvailable(notice) {
     return;
   }
 
-  const record = existing || {};
-  Object.assign(record, {
+  /** @type {FileRecord} */
+  const record = Object.assign(existing || {}, {
     ...candidate,
     type: meta.type || 'application/octet-stream',
     addedAt: Number(meta.addedAt) || Date.now(),
     from: notice.from,
     fromName: typeof meta.fromName === 'string' ? meta.fromName.slice(0, 64) : '',
-    holders: mergeHolders(record.holders),
+    holders: mergeHolders(existing?.holders),
     blob: null,
     chunks: null,
     progress: 0,
     complete: false,
     corrupt: false,
-    direction: 'received',
-    via: 'relay',
-    relayStage: 'downloading',
+    direction: /** @type {const} */ ('received'),
+    via: /** @type {const} */ ('relay'),
+    relayStage: /** @type {const} */ ('downloading'),
     relayBlobId: notice.blobId,
     relayMeta: meta,
     relayKey: contentKey,
@@ -1913,6 +2017,7 @@ async function handleRelayedMessage(notice) {
 // A message for a conversation that is not open gets a notice with a way into
 // it. That matters most for relayed messages, whose sender may already be
 // offline and so have no row in the device table to click.
+/** @param {Conversation} conv */
 function notifyIncoming(conv, message) {
   if (state.activeConvId === conv.id) return;
   const who = message.fromName || displayName(message.from);
@@ -1923,7 +2028,10 @@ function notifyIncoming(conv, message) {
   });
 }
 
+/** @param {Conversation} conv
+ * @param {FileRecord} record */
 async function downloadRelayed(conv, record) {
+  if (!record.relayBlobId || !record.relayKey || !record.relayMeta) throw new Error('This relayed file is no longer available.');
   record.relayStage = 'downloading';
   record.progress = 0;
   renderSession();
@@ -1979,6 +2087,8 @@ async function downloadRelayed(conv, record) {
   }
 }
 
+/** @param {Conversation} conv
+ * @param {FileRecord} file */
 function cancelTransfer(conv, file) {
   // Either side can stop a transfer: cancel our own upload, or tell the sender
   // to stop pushing to us. Partial chunks are kept for a later resume.
@@ -1997,6 +2107,7 @@ function cancelTransfer(conv, file) {
 
 /* ---------- receiving files ---------- */
 
+/** @param {Link} link @param {Conversation} conv */
 function receiveFileChunk(link, conv, header, bytes) {
   const file = conv.files.get(header.id);
   if (!file) return;
@@ -2026,11 +2137,13 @@ function receiveFileChunk(link, conv, header, bytes) {
   updateFileProgress(conv, file);
 }
 
+/** @param {Conversation} conv
+ * @param {string} fileId @param {string | null | undefined} declaredHash */
 async function finalizeIncomingFile(conv, fileId, declaredHash) {
   const file = conv.files.get(fileId);
   // A tiny file's completion can arrive before the sender saw our "wait".
   if (file?.offer === 'pending' || file?.offer === 'declined') return;
-  if (!file?.chunks || file.chunks.some(chunk => !chunk)) {
+  if (!file?.chunks || countReceived(file.chunks) !== file.chunks.length) {
     toast(`Transfer incomplete: ${file?.name || 'file'}`);
     return;
   }
@@ -2039,7 +2152,7 @@ async function finalizeIncomingFile(conv, fileId, declaredHash) {
   if (expected && /^[0-9a-f]{64}$/.test(expected)) {
     file.verifying = true;
     renderSession();
-    const actual = hashChunks(file.chunks);
+    const actual = hashChunks(file.chunks.filter(chunk => chunk !== undefined));
     file.verifying = false;
     if (actual !== expected) {
       // Refuse the bytes rather than hand the user a silently corrupt file.
@@ -2056,7 +2169,7 @@ async function finalizeIncomingFile(conv, fileId, declaredHash) {
     file.verified = true;
   }
 
-  file.blob = new Blob(file.chunks, { type: file.type || 'application/octet-stream' });
+  file.blob = new Blob(file.chunks.filter(chunk => chunk !== undefined), { type: file.type || 'application/octet-stream' });
   file.chunks = null;
   file.progress = 1;
   file.complete = true;
@@ -2068,6 +2181,8 @@ async function finalizeIncomingFile(conv, fileId, declaredHash) {
   toast(file.verified ? `Received ${file.name} · SHA-256 verified` : `Received ${file.name}`);
 }
 
+/** @param {Conversation} conv
+ * @param {FileRecord} file */
 async function requestFile(conv, file) {
   const holder = mergeHolders(file.holders)
     .filter(id => id !== state.self?.id && state.peers.has(id))
@@ -2091,6 +2206,8 @@ async function requestFile(conv, file) {
 
 /* ---------- accepting and declining incoming files ---------- */
 
+/** @param {Conversation} conv
+ * @param {FileRecord} file */
 async function acceptOffer(conv, file) {
   // Saying yes once trusts that device for the rest of the session, so a burst
   // of files from it does not become a burst of prompts.
@@ -2105,6 +2222,8 @@ async function acceptOffer(conv, file) {
   }
 }
 
+/** @param {Conversation} conv
+ * @param {FileRecord} file */
 function declineOffer(conv, file) {
   file.offer = 'declined';
   file.chunks = null;
@@ -2115,7 +2234,7 @@ function declineOffer(conv, file) {
     file.relayStage = 'declined';
     file.relayKey = null;
   } else {
-    const link = state.links.get(file.sourceId || file.from);
+    const link = state.links.get(file.sourceId || file.from || '');
     if (isSecure(link)) {
       sendControl(link, { conv: convScope(conv), type: 'transfer-cancel', id: file.id, transferId: null, reason: 'declined' })
         .catch(() => {});
@@ -2124,6 +2243,8 @@ function declineOffer(conv, file) {
   renderSession();
 }
 
+/** @param {Conversation} conv
+ * @param {FileRecord} file */
 function notifyOffer(conv, file) {
   const who = file.fromName || displayName(file.from);
   const text = `${who} wants to send you ${file.name} (${formatBytes(file.size)})`;
@@ -2137,6 +2258,7 @@ function notifyOffer(conv, file) {
   });
 }
 
+/** @param {FileRecord} file */
 function downloadFile(file) {
   if (!file.blob) return;
   const url = URL.createObjectURL(file.blob);
@@ -2151,6 +2273,7 @@ function downloadFile(file) {
 
 /* ---------- session panel ---------- */
 
+/** @param {string} peerId */
 function getPeer(peerId) {
   const known = state.deviceRecords.get(peerId);
   return state.peers.get(peerId) || {
@@ -2162,7 +2285,9 @@ function getPeer(peerId) {
   };
 }
 
-function openConversation(convId, kind, ref, focus) {
+/** @param {string} convId
+ * @param {"direct" | "room"} kind @param {string} ref */
+function openConversation(convId, kind, ref, focus = 'chat') {
   const conv = ensureConversation(convId, kind, ref);
   const wasClosed = state.activeConvId !== convId;
   if (wasClosed) {
@@ -2212,6 +2337,7 @@ function activeConversation() {
   return state.activeConvId ? state.conversations.get(state.activeConvId) : null;
 }
 
+/** @param {string} roomId */
 function leaveRoom(roomId) {
   wsSend({ type: 'leave-room', roomId });
   state.joinedRoomIds.delete(roomId);
@@ -2258,6 +2384,7 @@ function formatStatus(status) {
   return map[status] || status;
 }
 
+/** @param {Link | undefined} link */
 function trustLabel(link) {
   if (!isSecure(link)) return null;
   if (!link.trust) return 'Verified';
@@ -2291,7 +2418,7 @@ function renderPeersNow() {
     nameWrap.append(pip, name);
     // Trust state belongs next to the name, not buried in a tooltip.
     const trust = trustLabel(link);
-    if (trust) {
+    if (trust && link) {
       const badge = document.createElement('span');
       badge.className = link.trust?.known === false ? 'trust-badge new' : 'trust-badge';
       badge.textContent = link.trust?.known === false ? 'new' : 'known';
@@ -2379,9 +2506,10 @@ function offlineDevicesToList() {
   return [...state.deviceRecords.values()]
     .filter(record => isRecentlySeen(record.id))
     .filter(record => deviceTrust(record.id) || state.conversations.has(directConvId(record.id)))
-    .sort((a, b) => b.lastSeen - a.lastSeen);
+    .sort((a, b) => (b.lastSeen || 0) - (a.lastSeen || 0));
 }
 
+/** @param {Device} record */
 function renderOfflineRow(record) {
   const tr = document.createElement('tr');
   tr.className = 'offline';
@@ -2554,6 +2682,8 @@ function renderSession() {
 }
 
 // Progress ticks touch only the bar, leaving the surrounding controls in place.
+/** @param {Conversation} conv
+ * @param {FileRecord} file */
 function updateFileProgress(conv, file) {
   if (state.activeConvId !== conv.id) return;
   const bar = timeline.querySelector(`.file-item[data-file-id="${CSS.escape(file.id)}"] .file-progress`);
@@ -2596,6 +2726,9 @@ function renderSessionNow() {
     } else if (link?.status === 'untrusted') {
       secureState.textContent = 'Identity refused';
       secureState.classList.remove('ready');
+    } else if (typeof RTCPeerConnection === 'undefined' && relayEnabled()) {
+      secureState.textContent = 'Via server · direct connections unavailable';
+      secureState.classList.remove('ready');
     } else if (!state.peers.has(conv.peerId)) {
       // Nothing to connect to; say what will actually happen to a message.
       secureState.textContent = isRecentlySeen(conv.peerId)
@@ -2622,6 +2755,7 @@ function renderSessionNow() {
   }
 
   timeline.textContent = '';
+  /** @type {({kind: 'message', at: number, value: Message} | {kind: 'file', at: number, value: FileRecord})[]} */
   const items = [];
   for (const message of conv.messages.values()) items.push({ kind: 'message', at: message.at, value: message });
   for (const file of conv.files.values()) items.push({ kind: 'file', at: file.addedAt || 0, value: file });
@@ -2641,6 +2775,7 @@ function renderSessionNow() {
   timeline.scrollTop = timeline.scrollHeight;
 }
 
+/** @param {Conversation} conv */
 function renderMembers(conv) {
   sessionMembers.textContent = '';
   if (conv.kind !== 'room') {
@@ -2685,6 +2820,8 @@ function renderMembers(conv) {
   }
 }
 
+/** @param {Conversation} conv
+ * @param {Message} message */
 function renderMessage(conv, message) {
   const node = $('#messageTemplate').content.firstElementChild.cloneNode(true);
   const mine = message.from === state.self?.id;
@@ -2709,6 +2846,7 @@ function renderMessage(conv, message) {
   timeline.append(node);
 }
 
+/** @param {Element} container @param {string} text */
 function appendLinkifiedText(container, text) {
   const regex = /https?:\/\/[^\s]+/gi;
   let last = 0;
@@ -2726,6 +2864,8 @@ function appendLinkifiedText(container, text) {
   if (last < text.length) container.append(document.createTextNode(text.slice(last)));
 }
 
+/** @param {Conversation} conv
+ * @param {FileRecord} file */
 function renderFile(conv, file) {
   const node = $('#fileTemplate').content.firstElementChild.cloneNode(true);
   node.dataset.fileId = file.id;
@@ -2739,11 +2879,11 @@ function renderFile(conv, file) {
   if (file.direction === 'received' && file.offer === 'pending') details.push('wants to send you this');
   if (file.direction === 'received' && file.offer === 'declined') details.push('declined');
   const waitingOn = file.direction === 'sent' ? (file.awaitingConsent || []).length : 0;
-  if (waitingOn) details.push(`waiting for ${waitingOn === 1 ? displayName(file.awaitingConsent[0]) : `${waitingOn} devices`} to accept`);
+  if (waitingOn) details.push(`waiting for ${waitingOn === 1 ? displayName(file.awaitingConsent?.[0]) : `${waitingOn} devices`} to accept`);
   if (file.hashing) details.push('hashing…');
   else if (file.verifying) details.push('verifying…');
   else if (file.corrupt) details.push('SHA-256 mismatch');
-  else if (file.verified) details.push(`SHA-256 ✓ ${file.sha256.slice(0, 12)}`);
+  else if (file.verified && file.sha256) details.push(`SHA-256 ✓ ${file.sha256.slice(0, 12)}`);
   else if (file.sha256) details.push(`SHA-256 ${file.sha256.slice(0, 12)}`);
   const metaLine = node.querySelector('.file-meta');
   metaLine.textContent = details.join(' · ');
@@ -2757,7 +2897,7 @@ function renderFile(conv, file) {
   const btn = node.querySelector('.file-download');
   const holders = mergeHolders(file.holders).filter(id => id !== state.self?.id && state.peers.has(id));
   const partial = Array.isArray(file.chunks) && countReceived(file.chunks) > 0;
-  const relayBusy = ['encrypting', 'uploading', 'downloading'].includes(file.relayStage);
+  const relayBusy = ['encrypting', 'uploading', 'downloading'].includes(file.relayStage || '');
   const inFlight = Boolean(file.transferId) || file.hashing || file.verifying || relayBusy;
 
   // An offer waiting on the user comes first: nothing has been received yet.
@@ -2803,7 +2943,7 @@ function renderFile(conv, file) {
     btn.addEventListener('click', () => downloadRelayed(conv, file));
   } else if (holders.length) {
     btn.textContent = file.corrupt ? 'Retry' : partial ? 'Resume' : 'Request';
-    btn.title = partial && !file.corrupt
+    btn.title = partial && file.chunks && !file.corrupt
       ? `${countReceived(file.chunks)} of ${file.chunks.length} chunks already held`
       : '';
     btn.addEventListener('click', () => requestFile(conv, file).catch(err => toast(err.message)));
@@ -2815,6 +2955,7 @@ function renderFile(conv, file) {
   timeline.append(node);
 }
 
+/** @param {number | undefined} value */
 function formatBytes(value) {
   const bytes = Number(value) || 0;
   if (bytes < 1024) return `${bytes} B`;
@@ -2909,6 +3050,7 @@ async function refreshStats() {
   renderRooms();
 }
 
+/** @param {Link | undefined} link */
 function formatRate(link) {
   if (!link) return '—';
   const up = link.sendRate || 0;
@@ -2921,6 +3063,7 @@ function formatRate(link) {
   return parts.join(' / ');
 }
 
+/** @param {string} code */
 function resolveCode(code) {
   const requestId = crypto.randomUUID();
   return new Promise((resolve) => {
@@ -3270,6 +3413,8 @@ function pickTarget({ title, hint }) {
 
 /* ---------- drag and drop, paste ---------- */
 
+/** @param {Conversation | null | undefined} conv
+ * @param {FileList | File[]} files */
 async function sendFilesTo(conv, files) {
   if (!conv || !files.length) return;
   openConversation(conv.id, conv.kind, conv.kind === 'room' ? conv.roomId : conv.peerId);
@@ -3426,7 +3571,7 @@ async function updateWakeLock() {
   if (!busy) {
     for (const conv of state.conversations.values()) {
       for (const file of conv.files.values()) {
-        if (file.transferId || file.hashing || ['encrypting', 'uploading', 'downloading'].includes(file.relayStage)) {
+        if (file.transferId || file.hashing || ['encrypting', 'uploading', 'downloading'].includes(file.relayStage || '')) {
           busy = true;
           break;
         }
@@ -3520,7 +3665,8 @@ async function setupServiceWorker() {
 
 // Another app's share sheet POSTs to /share. The service worker keeps the files
 // in memory and redirects here with ?shared=<id>; this collects them.
-/** @returns {Promise<{title: string, text: string, url: string, files: File[]} | null>} */
+/** @returns {Promise<{title: string, text: string, url: string, files: File[]} | null>}
+ * @param {string} id */
 async function takeSharedBundle(id) {
   if (!('serviceWorker' in navigator)) return null;
   const ready = navigator.serviceWorker.ready.then(registration =>
@@ -3590,6 +3736,15 @@ async function consumeShareTarget() {
 
   if (id === 'failed') {
     toast('That share did not reach aria-drop. Open the app once, then share again.');
+    return;
+  }
+  if (id === 'too-large' || id === 'queue-full' || id === 'too-many-files') {
+    const message = id === 'too-large'
+      ? 'That share exceeds the 16 MiB share-sheet limit, including text and packaging. Open a session and use Send file for larger files.'
+      : id === 'too-many-files'
+        ? 'Share at most 32 files at once. Please select fewer files and share again.'
+        : 'The share queue is full (8 shares or 32 MiB). Collect waiting shares or wait up to ten minutes, then share again.';
+    toast(message);
     return;
   }
   if (id) {

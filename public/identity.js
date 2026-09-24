@@ -22,6 +22,7 @@ const SEAL_INFO = 'aria-drop/seal/1';
 
 const encoder = new TextEncoder();
 
+/** @returns {Promise<IDBDatabase>} */
 function openDb() {
   return new Promise((resolve, reject) => {
     const request = indexedDB.open(DB_NAME, DB_VERSION);
@@ -33,6 +34,7 @@ function openDb() {
   });
 }
 
+/** @template T @param {IDBDatabase} db @param {IDBTransactionMode} mode @param {(store: IDBObjectStore) => IDBRequest<T>} run @returns {Promise<T>} */
 function withStore(db, mode, run) {
   return new Promise((resolve, reject) => {
     const tx = db.transaction(STORE, mode);
@@ -42,6 +44,7 @@ function withStore(db, mode, run) {
   });
 }
 
+/** @param {Uint8Array} bytes */
 export function bytesToBase64(bytes) {
   let binary = '';
   const step = 0x8000;
@@ -49,6 +52,7 @@ export function bytesToBase64(bytes) {
   return btoa(binary);
 }
 
+/** @param {string} value */
 export function base64ToBytes(value) {
   const binary = atob(value);
   const out = new Uint8Array(binary.length);
@@ -56,15 +60,17 @@ export function base64ToBytes(value) {
   return out;
 }
 
-const toBase64Url = (bytes) => bytesToBase64(bytes).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+const toBase64Url = (/** @type {Uint8Array} */ bytes) => bytesToBase64(bytes).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 
 // The device ID other browsers see: a base64url SHA-256 of the raw public key.
 // It satisfies the server's [A-Za-z0-9_-]{8,128} device-id rule as-is.
+/** @param {BufferSource} rawPublicKey */
 export async function fingerprintOf(rawPublicKey) {
   const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', rawPublicKey));
   return toBase64Url(digest);
 }
 
+/** @returns {Promise<import('./types.js').Identity>} */
 export async function loadIdentity() {
   const db = await openDb();
   let record = await withStore(db, 'readonly', store => store.get(RECORD));
@@ -116,7 +122,8 @@ export async function loadIdentity() {
  * routed us to, and that its seal key was signed by that identity. Everything
  * here comes from the signaling server, so none of it is trusted until both
  * checks pass.
- */
+
+ * @param {{deviceId: string, identityKey: string, sealKey: string, sealKeySignature: string}} record */
 export async function verifyAdvertisedIdentity({ deviceId, identityKey, sealKey, sealKeySignature }) {
   if (typeof identityKey !== 'string' || typeof sealKey !== 'string' || typeof sealKeySignature !== 'string') return null;
   let identityRaw;
@@ -134,6 +141,7 @@ export async function verifyAdvertisedIdentity({ deviceId, identityKey, sealKey,
 
 /* ---------- sealed boxes (ECIES over P-256 + HKDF + AES-GCM) ---------- */
 
+/** @param {BufferSource} sharedBits @param {BufferSource} salt @param {string} info */
 async function sealKeyFrom(sharedBits, salt, info) {
   const base = await crypto.subtle.importKey('raw', sharedBits, 'HKDF', false, ['deriveKey']);
   return crypto.subtle.deriveKey(
@@ -149,7 +157,8 @@ async function sealKeyFrom(sharedBits, salt, info) {
  * Encrypts to a recipient's long-lived seal key. Unlike the DataChannel's
  * ephemeral exchange this needs no live peer, which is what makes a server-held
  * blob possible without the server being able to read it.
- */
+
+ * @param {BufferSource} recipientSealRaw @param {BufferSource} plaintext */
 export async function seal(recipientSealRaw, plaintext, info = SEAL_INFO) {
   const ephemeral = await crypto.subtle.generateKey({ name: 'ECDH', namedCurve: 'P-256' }, true, ['deriveBits']);
   const recipient = await crypto.subtle.importKey('raw', recipientSealRaw, { name: 'ECDH', namedCurve: 'P-256' }, false, []);
@@ -167,6 +176,7 @@ export async function seal(recipientSealRaw, plaintext, info = SEAL_INFO) {
   };
 }
 
+/** @param {CryptoKey} sealPrivateKey @param {import('./types.js').SealedBox} box */
 export async function unseal(sealPrivateKey, box, info = SEAL_INFO) {
   if (!box || box.v !== 1) throw new Error('Unsupported sealed box');
   const ephemeralRaw = base64ToBytes(box.ephemeral);
@@ -187,16 +197,19 @@ export async function generateContentKey() {
   return { raw, key: await importContentKey(raw) };
 }
 
+/** @param {BufferSource} raw */
 export function importContentKey(raw) {
   return crypto.subtle.importKey('raw', raw, { name: 'AES-GCM' }, false, ['encrypt', 'decrypt']);
 }
 
 // Direction-specific so a signature can never be replayed back at its signer,
 // and nonce-bound so it cannot be replayed into a later session.
+/** @param {{signerEcdh: string, peerEcdh: string, signerNonce: string, peerNonce: string}} parts */
 export function transcriptFor({ signerEcdh, peerEcdh, signerNonce, peerNonce }) {
   return [TRANSCRIPT_PREFIX, signerEcdh, peerEcdh, signerNonce, peerNonce].join('|');
 }
 
+/** @param {CryptoKey} privateKey @param {string} transcript */
 export async function signTranscript(privateKey, transcript) {
   const signature = await crypto.subtle.sign(
     { name: 'ECDSA', hash: 'SHA-256' },
@@ -206,6 +219,7 @@ export async function signTranscript(privateKey, transcript) {
   return bytesToBase64(new Uint8Array(signature));
 }
 
+/** @param {BufferSource} rawPublicKey @param {string} signatureBase64 @param {string} transcript */
 export async function verifyTranscript(rawPublicKey, signatureBase64, transcript) {
   try {
     const key = await crypto.subtle.importKey(
@@ -228,6 +242,7 @@ export async function verifyTranscript(rawPublicKey, signatureBase64, transcript
 
 // Derived from the two long-lived fingerprints, so unlike an ephemeral-key code
 // this stays the same for the life of both devices and is worth comparing once.
+/** @param {string} fingerprintA @param {string} fingerprintB */
 export async function safetyCode(fingerprintA, fingerprintB) {
   const joined = [fingerprintA, fingerprintB].sort().join('|');
   const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', encoder.encode(joined)));
@@ -264,6 +279,7 @@ export function knownDevices() {
   return [...loadKnownDevices()];
 }
 
+/** @param {string} fingerprint */
 export function deviceTrust(fingerprint) {
   return loadKnownDevices().get(fingerprint) || null;
 }
@@ -271,6 +287,7 @@ export function deviceTrust(fingerprint) {
 // First sighting is recorded; later sightings only refresh the name and time.
 // Because the ID *is* the key fingerprint, a re-keyed device shows up as a new
 // device rather than silently taking over an existing entry.
+/** @param {string} fingerprint @param {string} name */
 export function rememberDevice(fingerprint, name) {
   const devices = loadKnownDevices();
   const now = Date.now();
@@ -285,6 +302,7 @@ export function rememberDevice(fingerprint, name) {
   return record;
 }
 
+/** @param {string} fingerprint */
 export function forgetDevice(fingerprint) {
   const devices = loadKnownDevices();
   devices.delete(fingerprint);
