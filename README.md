@@ -223,6 +223,8 @@ average.
 ```bash
 npm install
 npm run check     # lint + typecheck + tests
+npx playwright install chromium  # once, for browser tests
+npm run test:e2e  # isolated Chromium peers and server; no running app needed
 npm run dev
 ```
 
@@ -234,14 +236,22 @@ TypeScript is a dev-only dependency that type-checks the JavaScript in place, so
 the browser loads exactly the files in `public/`. The strictness settings in
 `tsconfig.json` are a deliberate ratchet; see `TODO.md` for the next step.
 
+`strictNullChecks` is enabled. The browser suite in `e2e/` covers discovery,
+bidirectional chat, direct and forced-relay file transfers, accept/decline,
+zero-byte files, reload recovery of history and file bytes, and the offline app
+shell. Each test owns its server, temporary relay directory, and browser
+contexts. Chromium runs in CI before container publishing; failure traces are
+kept in `test-results/` and uploaded as CI artifacts. Inspect one with
+`npx playwright show-trace <path-to-trace.zip>`.
+
 ## Known gaps
 
 `TODO.md` tracks what is missing, why, and what it would cost. The short version:
 history recovered from another peer during a sync is not signed (it is marked as
 unverified rather than trusted — messages that came through the server relay are
 signed), no per-device authorisation, large files still live in RAM
-on the receiving side, and the browser-level test suites are not in the repo
-because they need Playwright.
+on the receiving side, and browser coverage still needs room/away-member,
+identity-rejection, cancel/resume, and real-device Safari/Android scenarios.
 
 ## License
 

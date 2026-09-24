@@ -98,7 +98,9 @@ test('a device not seen within the window can no longer be sent to', async t => 
   b.close();
   await settle();
 
-  app.recentDevices.get('device_bob_0000003').lastSeen = Date.now() - (24 * 60 * 60 * 1000 + 1000);
+  const bob = app.recentDevices.get('device_bob_0000003');
+  assert.ok(bob);
+  bob.lastSeen = Date.now() - (24 * 60 * 60 * 1000 + 1000);
   assert.deepEqual(await lookup(a, ['device_bob_0000003']), [], 'stale record is not served');
   assert.equal((await sendMessage(a, 'device_bob_0000003')).type, 'error');
 

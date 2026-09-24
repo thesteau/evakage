@@ -14,13 +14,14 @@
 // DOM lib does not know about.
 const worker = /** @type {ServiceWorkerGlobalScope} */ (/** @type {unknown} */ (self));
 
-const CACHE = 'aria-drop-v5';
+const CACHE = 'aria-drop-v6';
 
 const SHELL = [
   '/',
   '/index.html',
   '/styles.css',
   '/app.js',
+  '/frames.js',
   '/sha256.js',
   '/identity.js',
   '/relay.js',

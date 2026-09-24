@@ -1,5 +1,11 @@
 # Codex handoff: build context, tests, and improvements
 
+> Current update (2026-09-24): this handoff includes historical claims that
+> predate relay and away-seat support. Reproducible Chromium tests now live in
+> `e2e/` (`npm run test:e2e`) and run in CI. The frame parser is independently
+> tested in `tests/frames.test.js`, and `strictNullChecks` is enabled. See
+> `TODO.md` for current verification and remaining work.
+
 ## Product intent
 
 Build a browser-first homelab tool that feels as immediate as a local drop utility but handles the whole small-transfer workflow:

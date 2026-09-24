@@ -541,7 +541,7 @@ export function createAriaDropServer({
 
   const server = http.createServer((req, res) => {
     try {
-      const reqUrl = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
+      const reqUrl = new URL(req.url || '/', `http://${req.headers.host || 'localhost'}`);
 
       // Kept open so the container HEALTHCHECK works without the token; it only
       // ever discloses counts.
@@ -736,7 +736,7 @@ export function createAriaDropServer({
   function isRecent(deviceId) {
     if (clients.has(deviceId)) return true;
     const seen = recentDevices.get(deviceId);
-    return Boolean(seen) && seen.lastSeen >= Date.now() - recentWindowMs;
+    return seen !== undefined && seen.lastSeen >= Date.now() - recentWindowMs;
   }
 
   /** Public record for a device, live if connected, otherwise last seen. */
@@ -892,7 +892,7 @@ export function createAriaDropServer({
 
   server.on('upgrade', (req, socket, head) => {
     let pathname = null;
-    try { pathname = new URL(req.url, `http://${req.headers.host || 'localhost'}`).pathname; } catch {}
+    try { pathname = new URL(req.url || '/', `http://${req.headers.host || 'localhost'}`).pathname; } catch {}
     if (pathname !== '/') return refuseUpgrade(socket, 404, 'Not Found');
     if (!originAllowed(req)) return refuseUpgrade(socket, 403, 'Forbidden');
     if (!isAuthorized(req)) return refuseUpgrade(socket, 401, 'Unauthorized');
@@ -913,9 +913,9 @@ export function createAriaDropServer({
     const messageBucket = new TokenBucket(limits.messagesPerSecond, limits.messageBurst);
     const signalBucket = new TokenBucket(limits.signalsPerSecond, limits.signalBurst);
 
-    function disconnect(code, reason) {
+    const disconnect = (code, reason) => {
       try { ws.close(code, reason); } catch { ws.terminate(); }
-    }
+    };
 
     function strike(reason) {
       if (++invalidMessages >= limits.maxInvalidMessages) disconnect(1008, reason);
@@ -1116,7 +1116,7 @@ export function createAriaDropServer({
           totalChunks: msg.totalChunks,
           envelopes: msg.envelopes
         }).then(result => {
-          if (result.error) {
+          if (!result.blob) {
             json(ws, { type: 'error', context: 'blob-offer', requestId: msg.requestId, message: result.error });
             return;
           }
@@ -1290,7 +1290,7 @@ export function createAriaDropServer({
         if (settled) return;
         settled = true;
         clearTimeout(grace);
-        resolve();
+        resolve(undefined);
       };
       // An upgraded socket whose peer never completes the closing handshake would
       // otherwise hold server.close() open indefinitely — and hang SIGTERM until

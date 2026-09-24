@@ -13,7 +13,7 @@ async function register(wsBase, deviceId) {
     const timer = setTimeout(() => reject(new Error('register timed out')), 3000);
     ws.addEventListener('message', event => {
       const msg = JSON.parse(String(event.data));
-      if (msg.type === 'registered') { clearTimeout(timer); resolve(); }
+      if (msg.type === 'registered') { clearTimeout(timer); resolve(undefined); }
     });
     ws.send(JSON.stringify({ type: 'register', deviceId, name: 'Fuzz', platform: 'Linux', browser: 'Firefox' }));
   });

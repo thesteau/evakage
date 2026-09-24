@@ -5,7 +5,7 @@ import globals from 'globals';
 // drives WebSocket and fetch).
 export default [
   {
-    ignores: ['node_modules/**', 'public/icons/**']
+    ignores: ['node_modules/**', 'public/icons/**', 'test-results/**', 'playwright-report/**']
   },
   {
     files: ['**/*.js'],
@@ -83,9 +83,9 @@ export default [
   },
   {
     // Tests run in Node but exercise the browser-shaped globals Node now ships.
-    files: ['tests/**/*.js'],
+    files: ['tests/**/*.js', 'e2e/**/*.js'],
     languageOptions: {
-      globals: { ...globals.node, WebSocket: 'readonly', fetch: 'readonly' }
+      globals: { ...globals.node, ...globals.browser }
     },
     rules: {
       'no-empty': ['error', { allowEmptyCatch: true }]

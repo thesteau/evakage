@@ -153,6 +153,7 @@ test('AUTH_TOKEN gates the page and the upgrade, and the token can be traded for
   const exchanged = await status(`${base}/?token=s3cret-token`, { redirect: 'manual' });
   assert.equal(exchanged.status, 302);
   const setCookie = exchanged.headers.get('set-cookie');
+  assert.ok(setCookie);
   assert.match(setCookie, /^aria_drop_auth=/);
   assert.match(setCookie, /HttpOnly/);
   assert.match(setCookie, /SameSite=Strict/);

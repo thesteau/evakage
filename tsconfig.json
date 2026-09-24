@@ -14,13 +14,13 @@
     "noEmit": true,
 
     // Ratchet, not a destination. Everything below is enforced and green today.
-    // Next steps, in order: `strictNullChecks` (52 findings, where the real bugs
-    // are) then `noImplicitAny` (388, mostly mechanical JSDoc on parameters).
+    // strictNullChecks is enabled. Next step: noImplicitAny.
+    // Counts change as the code evolves; remeasure before each pass.
     // Tracked in TODO.md. Raise one flag at a time and fix, rather than turning
     // on `strict` and suppressing what falls out.
     "strict": false,
     "noImplicitAny": false,
-    "strictNullChecks": false,
+    "strictNullChecks": true,
     "noImplicitThis": true,
     "noImplicitOverride": true,
     "noFallthroughCasesInSwitch": true,
@@ -32,6 +32,6 @@
     "resolveJsonModule": true,
     "verbatimModuleSyntax": false
   },
-  "include": ["server.js", "blobstore.js", "public/**/*.js", "tests/**/*.js", "eslint.config.js"],
+  "include": ["server.js", "blobstore.js", "public/**/*.js", "tests/**/*.js", "e2e/**/*.js", "playwright.config.js", "eslint.config.js"],
   "exclude": ["node_modules"]
 }

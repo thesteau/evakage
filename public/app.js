@@ -1,3 +1,4 @@
+import { parseFrame, CONTROL_KIND, FILE_CHUNK_KIND } from './frames.js';
 import { hashBlob, hashChunks } from './sha256.js';
 import {
   loadIdentity,
@@ -59,24 +60,24 @@ const themeBtn = $('#themeBtn');
 const themeIcon = $('#themeIcon');
 
 const state = {
-  ws: null,
+  ws: /** @type {WebSocket | null} */ (null),
   wsBackoff: 500,
-  self: null,
-  identity: null,            // long-lived device keypair + fingerprint
+  self: /** @type {{id: string, name: string, code: string} | null} */ (null),
+  identity: /** @type {Awaited<ReturnType<typeof loadIdentity>> | null} */ (null),            // long-lived device keypair + fingerprint
   peers: new Map(),          // deviceId -> online peer record from the server
   links: new Map(),          // deviceId -> pairwise transport + crypto
   conversations: new Map(),  // convId -> in-memory chat/file state
   rooms: new Map(),          // roomId -> server room record
   joinedRoomIds: new Set(),  // rooms this browser is a member of
-  activeConvId: null,
+  activeConvId: /** @type {string | null} */ (null),
   activeSends: new Map(),    // transferId -> { cancelled, fileId, name }
   config: { iceServers: [], maxFileBytes: 512 * 1024 * 1024, maxRoomMembers: 20, roomMeshMax: 6 },
   pendingCodeRequests: new Map(),
-  statsTimer: null,
-  wakeLockTimer: null,
+  statsTimer: /** @type {ReturnType<typeof setInterval> | null} */ (null),
+  wakeLockTimer: /** @type {ReturnType<typeof setInterval> | null} */ (null),
   theme: 'system',
-  panelReturnFocus: null,
-  panelReturnKey: null,
+  panelReturnFocus: /** @type {Element | null} */ (null),
+  panelReturnKey: /** @type {string | null} */ (null),
   forceRelay: false,
   // Whether an incoming file needs a yes first: 'auto', 'new' (first contact
   // with a device), or 'always'. Accepting once trusts that device for the
@@ -149,9 +150,6 @@ function formatAgo(timestamp) {
 }
 
 const encoder = new TextEncoder();
-const decoder = new TextDecoder();
-const CONTROL_KIND = 1;
-const FILE_CHUNK_KIND = 2;
 const CHUNK_SIZE = 64 * 1024;
 const HIGH_WATER = 8 * 1024 * 1024;
 const LOW_WATER = 3 * 1024 * 1024;
@@ -219,6 +217,8 @@ function signal(to, data) {
 }
 
 function connectWebSocket() {
+  const identity = state.identity;
+  if (!identity) throw new Error('Device identity is not ready. Reload and try again.');
   const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
   const ws = new WebSocket(`${protocol}//${location.host}`);
   state.ws = ws;
@@ -229,15 +229,15 @@ function connectWebSocket() {
     state.wsBackoff = 500;
     wsSend({
       type: 'register',
-      deviceId: state.identity.deviceId,
+      deviceId: identity.deviceId,
       name: deviceName(),
       platform: detectPlatform(),
       browser: detectBrowser(),
       // Published so others can seal a relayed file to this device. The server
       // passes these through untouched; receivers verify them, not the server.
-      identityKey: state.identity.identityKey,
-      sealKey: state.identity.sealKey,
-      sealKeySignature: state.identity.sealKeySignature
+      identityKey: identity.identityKey,
+      sealKey: identity.sealKey,
+      sealKeySignature: identity.sealKeySignature
     });
     serverState.textContent = 'Signaling connected';
     serverState.classList.add('online');
@@ -477,7 +477,7 @@ function conversationTitle(conv) {
 // Falls back to the name remembered for a known device, so a relayed message
 // from a device that has since gone offline still shows who sent it.
 function displayName(deviceId) {
-  if (deviceId === state.self?.id) return state.self.name;
+  if (state.self && deviceId === state.self.id) return state.self.name;
   return state.peers.get(deviceId)?.name
     || state.deviceRecords.get(deviceId)?.name
     || deviceTrust(deviceId)?.name
@@ -749,6 +749,8 @@ function setupDataChannel(link, dc) {
 }
 
 async function startCryptoHandshake(link) {
+  const identity = state.identity;
+  if (!identity) throw new Error('Device identity is not ready. Reload and try again.');
   if (link.incompatible || link.crypto.helloSent) return;
   if (!link.crypto.keyPair) {
     link.crypto.keyPair = await crypto.subtle.generateKey({ name: 'ECDH', namedCurve: 'P-256' }, true, ['deriveKey']);
@@ -760,7 +762,7 @@ async function startCryptoHandshake(link) {
   link.dc.send(JSON.stringify({
     kind: 'crypto-hello',
     publicKey: link.crypto.ownPublic,
-    identityKey: state.identity.identityKey,
+    identityKey: identity.identityKey,
     nonce: link.crypto.ownNonce,
     protocol: PROTOCOL_VERSION,
     min: MIN_PROTOCOL,
@@ -806,6 +808,8 @@ function negotiateProtocol(link, hello) {
 }
 
 async function handleCryptoHello(link, hello) {
+  const identity = state.identity;
+  if (!identity) throw new Error('Device identity is not ready. Reload and try again.');
   if (link.incompatible) return;
   if (!negotiateProtocol(link, hello)) return;
   if (typeof hello.identityKey !== 'string' || hello.identityKey.length > 256) return;
@@ -838,16 +842,18 @@ async function handleCryptoHello(link, hello) {
     ['encrypt', 'decrypt']
   );
   // Derived from the long-lived fingerprints, so it is stable across sessions.
-  link.crypto.safety = await safetyCode(state.identity.fingerprint, fingerprint);
+  link.crypto.safety = await safetyCode(identity.fingerprint, fingerprint);
 
   await sendProof(link);
   renderSession();
 }
 
 async function sendProof(link) {
+  const identity = state.identity;
+  if (!identity) throw new Error('Device identity is not ready. Reload and try again.');
   if (link.crypto.proofSent || !link.crypto.remoteNonce) return;
   link.crypto.proofSent = true;
-  const signature = await signTranscript(state.identity.privateKey, transcriptFor({
+  const signature = await signTranscript(identity.privateKey, transcriptFor({
     signerEcdh: link.crypto.ownPublic,
     peerEcdh: link.crypto.remotePublic,
     signerNonce: link.crypto.ownNonce,
@@ -894,7 +900,7 @@ async function waitForWritable(dc) {
   if (dc.readyState !== 'open') throw new Error('Data channel is not open');
   if (dc.bufferedAmount <= HIGH_WATER) return;
   await new Promise((resolve, reject) => {
-    const onLow = () => { cleanup(); resolve(); };
+    const onLow = () => { cleanup(); resolve(undefined); };
     const onClose = () => { cleanup(); reject(new Error('Data channel closed')); };
     const cleanup = () => {
       dc.removeEventListener('bufferedamountlow', onLow);
@@ -960,29 +966,13 @@ async function handleDataMessage(link, data) {
 }
 
 async function handlePlainFrame(link, frame) {
-  if (!frame.length) return;
-  if (frame[0] === CONTROL_KIND) {
-    if (frame.length > CAPS.controlBytes) return;
-    let msg;
-    try { msg = JSON.parse(decoder.decode(frame.slice(1))); } catch { return; }
-    if (!msg || typeof msg !== 'object') return;
-    const conv = resolveScope(msg.conv, link.peerId);
-    if (!conv) return;
-    await handleControl(link, conv, msg);
-    return;
-  }
-  if (frame[0] === FILE_CHUNK_KIND) {
-    const view = new DataView(frame.buffer, frame.byteOffset, frame.byteLength);
-    const headerLen = view.getUint32(1);
-    if (headerLen < 2 || 5 + headerLen > frame.length) return;
-    let header;
-    try { header = JSON.parse(decoder.decode(frame.slice(5, 5 + headerLen))); } catch { return; }
-    const conv = resolveScope(header.conv, link.peerId);
-    if (!conv) return;
-    const bytes = frame.slice(5 + headerLen);
-    if (bytes.byteLength > CAPS.chunkBytes) return;
-    receiveFileChunk(link, conv, header, bytes);
-  }
+  const parsed = parseFrame(frame, CAPS);
+  if (!parsed) return;
+  const payload = parsed.kind === 'control' ? parsed.message : parsed.header;
+  const conv = resolveScope(payload.conv, link.peerId);
+  if (!conv) return;
+  if (parsed.kind === 'control') await handleControl(link, conv, parsed.message);
+  else receiveFileChunk(link, conv, parsed.header, parsed.bytes);
 }
 
 async function handleControl(link, conv, msg) {
@@ -1298,13 +1288,15 @@ async function waitForSecure(peerId, timeoutMs = 12000) {
 }
 
 async function sendChat(conv, text) {
+  const self = state.self;
+  if (!self) throw new Error('Waiting for device registration. Try again shortly.');
   const clean = text.trim();
   if (!clean) return;
   const message = {
     id: crypto.randomUUID(),
     text: clean,
-    from: state.self.id,
-    fromName: state.self.name,
+    from: self.id,
+    fromName: self.name,
     at: Date.now()
   };
   mergeMessage(conv, message);
@@ -1462,6 +1454,8 @@ function unreachableError(conv) {
 // reach, either because ICE never connected or because the link died part-way.
 // A recipient therefore gets each file exactly once, by one path or the other.
 async function sendFiles(conv, fileList) {
+  const self = state.self;
+  if (!self) throw new Error('Waiting for device registration. Try again shortly.');
   const recipients = onlineMembers(conv);
   const offline = await offlineTargetsFor(conv);
   if (!recipients.length && !offline.length) throw unreachableError(conv);
@@ -1494,15 +1488,15 @@ async function sendFiles(conv, fileList) {
       size: file.size,
       type: file.type || 'application/octet-stream',
       addedAt: Date.now(),
-      from: state.self.id,
-      fromName: state.self.name,
+      from: self.id,
+      fromName: self.name,
       totalChunks: Math.ceil(file.size / CHUNK_SIZE),
-      sha256: null
+      sha256: /** @type {string | null} */ (null)
     };
     /** @type {any} */
     const record = {
       ...meta,
-      holders: [state.self.id],
+      holders: [self.id],
       blob: file,
       chunks: null,
       progress: 0,
@@ -1778,6 +1772,8 @@ function findRelayedFile(blobId) {
 }
 
 async function handleBlobAvailable(notice) {
+  const identity = state.identity;
+  if (!identity) throw new Error('Device identity is not ready. Reload and try again.');
   if (!notice?.blobId) return;
   if (state.relayInbound.has(notice.blobId)) {
     // The server announces again whatever this device has not taken yet, each
@@ -1799,9 +1795,9 @@ async function handleBlobAvailable(notice) {
   let opened;
   try {
     opened = await openEnvelope({
-      sealPrivateKey: state.identity.sealPrivateKey,
+      sealPrivateKey: identity.sealPrivateKey,
       box: notice.envelope,
-      selfId: state.identity.deviceId,
+      selfId: identity.deviceId,
       expectedFrom: notice.from
     });
   } catch (err) {
@@ -1872,12 +1868,14 @@ async function handleBlobAvailable(notice) {
 }
 
 async function handleRelayedMessage(notice) {
+  const identity = state.identity;
+  if (!identity) throw new Error('Device identity is not ready. Reload and try again.');
   let opened;
   try {
     opened = await openMessageEnvelope({
-      sealPrivateKey: state.identity.sealPrivateKey,
+      sealPrivateKey: identity.sealPrivateKey,
       box: notice.envelope,
-      selfId: state.identity.deviceId,
+      selfId: identity.deviceId,
       expectedFrom: notice.from,
       maxChars: CAPS.messageChars
     });
@@ -3029,7 +3027,7 @@ function setupSettings() {
   const dialog = $('#settingsDialog');
   const radios = [...dialog.querySelectorAll('input[name="incomingPolicy"]')];
   try {
-    const stored = localStorage.getItem('aria-drop-incoming');
+    const stored = localStorage.getItem('aria-drop-incoming') || '';
     if (INCOMING_POLICIES.includes(stored)) state.incomingPolicy = stored;
   } catch {}
   for (const radio of radios) {
