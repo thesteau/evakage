@@ -16,7 +16,7 @@ A Docker-first, browser-first experiment for ephemeral local peer communication.
 - Keeps messages and completed file blobs **only in browser memory**.
 - Re-syncs chat/file metadata from any surviving peer when a browser reconnects with the same local device identity.
 - Allows a returned peer to request an in-memory file again from whichever peer still holds the bytes.
-- Falls back to a **server relay** for messages and files when a direct connection cannot be made — sealed so the server cannot read them, deleted once delivered, and gone within 24 hours regardless.
+- Falls back to a **server relay** for messages and files when a direct connection cannot be made — sealed so the server cannot read them, deleted once delivered, with access expiring after 24 hours by default.
 - Asks before receiving files from a device you have not met (configurable).
 - Contains no server-side database.
 - Verifies every device's long-lived identity key and shows a stable safety code.
@@ -69,9 +69,13 @@ new one.
 - If a recipient has not taken it yet, it **stays** — including after both
   devices have disconnected — so a device that comes back within the window
   still receives what was sent to it.
-- Nothing lasts past **24 hours**. A sweep every 15 minutes removes anything
-  older, and removes any directory it finds empty, so a conversation with nothing
-  left disappears as a whole.
+- At **24 hours** (configurable), items stop appearing in pending delivery and
+  cannot be claimed, uploaded, or newly downloaded, even with an earlier token.
+  Uploads that cross the deadline are rejected. A download opened before expiry
+  may finish afterward; already delivered copies cannot be recalled.
+- Disk cleanup is separate: the default 15-minute sweep removes expired
+  ciphertext and empty directories. Scheduling delays can postpone cleanup;
+  there is no exact physical-deletion deadline.
 - A server restart or a recreated container erases everything immediately. Item
   records live only in the server's memory, so a restart ends items early,
   never late.
@@ -144,7 +148,7 @@ Large files remain the weak spot on phones: received blobs are held in memory un
 | `ALLOWED_ORIGINS` | *(same host)* | Comma-separated exact origins permitted to open the WebSocket. Unset means "must match the request's own host", which is what you want behind a normal reverse proxy. |
 | `TRUST_PROXY` | `0` | Set to `1` only when a proxy you control sits in front. It makes the server believe `X-Forwarded-Host` (for origin checks) and `X-Forwarded-For` (for per-address limits). Leave it off if clients can reach the port directly, or they can spoof both. |
 | `BLOB_DIR` | `/tmp/aria-drop-blobs` in the image | Where relayed messages and files wait, one subdirectory per conversation. Keep it inside the container; do not mount a volume here. |
-| `BLOB_MAX_AGE_MS` | `86400000` (24h) | Relayed items older than this are removed by the sweep, connected or not; younger ones are left alone. |
+| `BLOB_MAX_AGE_MS` | `86400000` (24h) | Age from offer creation at which relay access expires. Disk removal follows on the sweep. |
 | `BLOB_SWEEP_MS` | `900000` (15 min) | How often the age sweep runs. It also removes any empty conversation directory. |
 | `BLOB_STORE_BYTES` | `4294967296` (4 GiB) | Total space all buffered transfers may use together. |
 | `BLOB_PER_DEVICE` | `32` | Files one device may have waiting on the server at once. |
@@ -238,8 +242,9 @@ the browser loads exactly the files in `public/`. The strictness settings in
 
 `strictNullChecks` is enabled. The browser suite in `e2e/` covers discovery,
 bidirectional chat, direct and forced-relay file transfers, accept/decline,
-zero-byte files, reload recovery of history and file bytes, and the offline app
-shell. Each test owns its server, temporary relay directory, and browser
+zero-byte files, reload recovery of history and file bytes, offline app shell,
+worker file/text sharing and expiry, forged identity/signature rejection,
+cancel/resume, and room recovery after disconnect. Each test owns its server, temporary relay directory, and browser
 contexts. Chromium runs in CI before container publishing; failure traces are
 kept in `test-results/` and uploaded as CI artifacts. Inspect one with
 `npx playwright show-trace <path-to-trace.zip>`.
@@ -250,8 +255,8 @@ kept in `test-results/` and uploaded as CI artifacts. Inspect one with
 history recovered from another peer during a sync is not signed (it is marked as
 unverified rather than trusted — messages that came through the server relay are
 signed), no per-device authorisation, large files still live in RAM
-on the receiving side, and browser coverage still needs room/away-member,
-identity-rejection, cancel/resume, and real-device Safari/Android scenarios.
+on the receiving side, and browser coverage still needs real-device Safari/Android
+and larger-room scenarios.
 
 ## License
 
@@ -259,4 +264,4 @@ MIT — see `LICENSE`.
 
 ## Threat model in one paragraph
 
-The server is designed not to be able to read chat or files. Anything that reaches it through the relay arrives as ciphertext sealed to the recipient and signed by the sender, and is gone within 24 hours. WebRTC provides DTLS-encrypted DataChannels and the app additionally encrypts payload frames using an ephemeral ECDH-derived AES-GCM key. The displayed safety code can be compared out-of-band if you want to detect active interception. This MVP has **not** undergone a security audit; see `SECURITY.md` and `CODEX_HANDOFF.md` before exposing it beyond a trusted environment.
+The server is designed not to be able to read chat or files. Anything that reaches it through the relay arrives as ciphertext sealed to the recipient and signed by the sender; access expires after 24 hours by default and disk cleanup follows on the sweep. WebRTC provides DTLS-encrypted DataChannels and the app additionally encrypts payload frames using an ephemeral ECDH-derived AES-GCM key. The displayed safety code can be compared out-of-band if you want to detect active interception. This MVP has **not** undergone a security audit; see `SECURITY.md` and `CODEX_HANDOFF.md` before exposing it beyond a trusted environment.

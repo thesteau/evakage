@@ -31,7 +31,7 @@ outlive the container.
 A relayed item is removed at the first of:
 
 1. every recipient has received it;
-2. it is older than 24 hours — the sweep leaves anything younger alone, even if
+2. the sweep finds it at or past 24 hours — the sweep leaves anything younger alone, even if
    every device in the conversation has disconnected, so a device that comes
    back within the window still gets it;
 3. the server restarts;
@@ -40,7 +40,10 @@ A relayed item is removed at the first of:
 When a conversation's directory is left empty it is removed too, so a
 conversation with nothing waiting leaves nothing behind.
 
-The age sweep runs inside the server every 15 minutes, so no cron is needed.
+Access expires at 24 hours regardless of the sweep: expired items cannot be
+listed, claimed, uploaded, or newly downloaded. Downloads opened before the
+deadline may finish afterward. Physical deletion waits for the next sweep,
+which normally runs every 15 minutes but can be delayed; no cron is needed.
 If you also want one driven from the host — say, nightly — the server has a
 one-shot mode that removes items past the maximum age, then any directory left
 empty, and exits:

@@ -1214,7 +1214,7 @@ export function createAriaDropServer({
       const client = clients.get(recipient);
       if (!client) continue;
       blobStore.describe(blob, recipient)
-        .then(item => json(client.ws, { type: 'blob-available', ...item }))
+        .then(item => { if (item) json(client.ws, { type: 'blob-available', ...item }); })
         .catch(() => {});
     }
   };

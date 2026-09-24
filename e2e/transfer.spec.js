@@ -3,10 +3,10 @@ import fs from 'node:fs/promises';
 import { startServer } from '../tests/helpers.js';
 
 /** @typedef {import('@playwright/test').Page} Page */
-const test = base.extend(/** @type {import('@playwright/test').Fixtures<{devices: {alice: Page, bob: Page}}, {}, import('@playwright/test').PlaywrightTestArgs, import('@playwright/test').PlaywrightWorkerArgs>} */ ({
+const test = base.extend(/** @type {import('@playwright/test').Fixtures<{devices: {alice: Page, bob: Page, disconnect: (name: string) => void}}, {}, import('@playwright/test').PlaywrightTestArgs, import('@playwright/test').PlaywrightWorkerArgs>} */ ({
   devices: async ({ browser }, use) => {
     const cleanup = [];
-    const { base: url } = await startServer({ after: fn => cleanup.push(fn) });
+    const { base: url, app } = await startServer({ after: fn => cleanup.push(fn) });
     const contexts = [];
     const pageErrors = [];
     try {
@@ -26,7 +26,9 @@ const test = base.extend(/** @type {import('@playwright/test').Fixtures<{devices
         await page.getByRole('button', { name: 'Done', exact: true }).click();
         pages.push(page);
       }
-      await use({ alice: pages[0], bob: pages[1] });
+      await use({ alice: pages[0], bob: pages[1], disconnect: name => {
+        for (const client of app.clients.values()) if (client.name === name) client.ws.close();
+      } });
       expect(pageErrors).toEqual([]);
     } finally {
       for (const context of contexts) await context.close();
@@ -117,4 +119,139 @@ test('installed worker serves the app shell offline without caching config', asy
   await alice.reload();
   await expect(alice.getByRole('heading', { name: 'aria-drop', exact: true })).toBeVisible();
   expect(await alice.evaluate(async () => Boolean(await caches.match('/config.json')))).toBe(false);
+});
+
+test('shared text and files pass through the worker once and reach the chosen peer', async ({ devices }) => {
+  const { alice, bob } = devices;
+  await alice.evaluate(async () => {
+    await navigator.serviceWorker.ready;
+    if (!navigator.serviceWorker.controller) {
+      await new Promise(resolve => navigator.serviceWorker.addEventListener('controllerchange', resolve, { once: true }));
+    }
+  });
+  // Fetch follows the share redirect without loading the app, leaving the
+  // bundle queued until navigation below consumes it through MessageChannel.
+  const destination = await alice.evaluate(async () => {
+    const form = new FormData();
+    form.set('text', 'Text from the share sheet');
+    form.set('files', new File(['Shared file bytes'], 'shared.txt', { type: 'text/plain' }));
+    return (await fetch('/share', { method: 'POST', body: form })).url;
+  });
+  expect(destination).toMatch(/shared=[a-f0-9-]+/);
+  await alice.goto(destination);
+  await expect(alice.locator('#shareBanner')).toBeVisible();
+  await expect(alice.locator('#messageInput')).toHaveValue('Text from the share sheet');
+  await openPeer(alice, 'Bob');
+  await openPeer(bob, 'Alice');
+  await alice.locator('#shareSendBtn').click();
+  await alice.locator('#pickTargetList').getByRole('button').filter({ hasText: 'Bob' }).click();
+  await bob.getByRole('button', { name: 'Accept shared.txt', exact: true }).click();
+  const row = bob.locator('.file-item').filter({ hasText: 'shared.txt' });
+  await expect(row).toContainText('SHA-256 ✓');
+  const downloading = bob.waitForEvent('download');
+  await row.getByRole('button', { name: 'Save', exact: true }).click();
+  expect(await fs.readFile(await (await downloading).path(), 'utf8')).toBe('Shared file bytes');
+  await alice.goto(destination);
+  await expect(alice.locator('#toastRegion')).toContainText('That share expired');
+  await expect(alice.locator('#shareBanner')).toBeHidden();
+});
+
+for (const attack of ['identity', 'signature']) {
+  test(`direct handshake rejects a forged ${attack}`, async ({ devices }) => {
+    const { alice, bob } = devices;
+    // Alter one peer's outgoing handshake, leaving the receiving app untouched.
+    await alice.evaluate(attack => {
+      const send = RTCDataChannel.prototype.send;
+      RTCDataChannel.prototype.send = function(data) {
+        if (typeof data === 'string') {
+          const message = JSON.parse(data);
+          if (attack === 'identity' && message.kind === 'crypto-hello') message.identityKey = message.publicKey;
+          if (attack === 'signature' && message.kind === 'crypto-proof') message.signature = btoa('\0'.repeat(64));
+          data = JSON.stringify(message);
+        }
+        return send.call(this, data);
+      };
+    }, attack);
+    await bob.getByRole('button', { name: 'Chat with Alice', exact: true }).click();
+    await expect(bob.locator('#toastRegion')).toContainText(attack === 'identity' ? 'does not match its device ID' : 'failed to prove ownership');
+    await expect(bob.locator('#secureState')).not.toContainText('Encrypted');
+  });
+}
+
+test('a share past its worker deadline is refused by the app', async ({ devices }) => {
+  const { alice } = devices;
+  await alice.evaluate(async () => {
+    await navigator.serviceWorker.ready;
+    if (!navigator.serviceWorker.controller) {
+      await new Promise(resolve => navigator.serviceWorker.addEventListener('controllerchange', resolve, { once: true }));
+    }
+  });
+  const destination = await alice.evaluate(async () => {
+    const form = new FormData();
+    form.set('text', 'Expired text');
+    form.set('files', new File(['Expired bytes'], 'expired.txt'));
+    return (await fetch('/share', { method: 'POST', body: form })).url;
+  });
+  expect(destination).toMatch(/shared=[a-f0-9-]+/);
+  const worker = alice.context().serviceWorkers()[0];
+  // Advance only the worker's wall clock; leave its cleanup timer pending.
+  await worker.evaluate(() => {
+    const now = Date.now;
+    Date.now = () => now() + 10 * 60 * 1000;
+  });
+  await alice.goto(destination);
+  await expect(alice.locator('#toastRegion')).toContainText('That share expired');
+  await expect(alice.locator('#shareBanner')).toBeHidden();
+  await expect(alice.locator('#messageInput')).toHaveValue('');
+});
+
+test('a cancelled direct transfer resumes retained chunks and verifies the file', async ({ devices }) => {
+  const { alice, bob } = devices;
+  await openPeer(alice, 'Bob');
+  await openPeer(bob, 'Alice');
+  await alice.evaluate(() => {
+    const read = Blob.prototype.arrayBuffer;
+    Blob.prototype.arrayBuffer = async function() {
+      await new Promise(resolve => setTimeout(resolve, 15));
+      return read.call(this);
+    };
+  });
+  const bytes = Buffer.alloc(4 * 1024 * 1024, 123);
+  await alice.locator('#fileInput').setInputFiles({ name: 'resume.bin', mimeType: 'application/octet-stream', buffer: bytes });
+  await bob.getByRole('button', { name: 'Accept resume.bin', exact: true }).click();
+  const row = bob.locator('.file-item').filter({ hasText: 'resume.bin' });
+  await expect.poll(() => row.locator('progress').evaluate(node => Number(node.getAttribute('value')))).toBeGreaterThan(0);
+  await row.getByRole('button', { name: 'Cancel', exact: true }).click();
+  await expect(row.getByRole('button', { name: 'Resume', exact: true })).toBeVisible();
+  const retained = await row.locator('progress').evaluate(node => Number(node.getAttribute('value')));
+  expect(retained).toBeGreaterThan(0);
+  expect(retained).toBeLessThan(1);
+  await row.getByRole('button', { name: 'Resume', exact: true }).click();
+  await expect(row).toContainText('SHA-256 ✓');
+  await expect(row).not.toContainText('via server');
+  const downloading = bob.waitForEvent('download');
+  await row.getByRole('button', { name: 'Save', exact: true }).click();
+  expect(await fs.readFile(await (await downloading).path())).toEqual(bytes);
+});
+
+test('room history catches up after an away member reconnects', async ({ devices }) => {
+  const { alice, bob } = devices;
+  await alice.locator('#roomNameInput').fill('Catch-up room');
+  await alice.locator('#createRoomForm').getByRole('button', { name: 'Create' }).click();
+  await bob.getByRole('button', { name: 'Join room Catch-up room', exact: true }).click();
+  await alice.getByRole('button', { name: 'Open room Catch-up room', exact: true }).click();
+  await bob.getByRole('button', { name: 'Open room Catch-up room', exact: true }).click();
+  await expect(bob.locator('#sessionTitle')).toHaveText('Catch-up room');
+  await chat(alice, bob, 'Before going away');
+  // Disconnect signaling while retaining the page's RAM state. Prevent the
+  // reconnect timer from succeeding until the test restores the network.
+  await bob.context().setOffline(true);
+  devices.disconnect('Bob');
+  await expect(alice.locator('#sessionMembers')).toContainText('away');
+  await alice.locator('#messageInput').fill('While you were away');
+  await alice.locator('#messageForm').getByRole('button', { name: 'Send', exact: true }).click();
+  await bob.context().setOffline(false);
+  await bob.evaluate(() => window.dispatchEvent(new Event('online')));
+  await expect(bob.locator('#timeline').getByText('While you were away', { exact: true })).toHaveCount(1);
+  await expect(alice.locator('#sessionMembers')).not.toContainText('away');
 });

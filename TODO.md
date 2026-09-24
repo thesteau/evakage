@@ -5,11 +5,13 @@ This is a prioritized plan, not an instruction to implement every deferred idea.
 
 ## Check results and completed changes
 
-- `npm run check`: lint, strict-null type checking, and all 56 tests pass.
-- `npm run test:e2e`: all four Chromium scenarios pass with isolated servers
+- `npm run check`: lint, strict-null type checking, and all 61 tests pass.
+- `npm run test:e2e`: all ten Chromium scenarios pass with isolated servers
   and browser profiles. Coverage includes discovery, chat both ways, direct and
   forced-relay file transfers, accept/decline, zero-byte and multi-chunk files,
-  byte-for-byte downloads, reload/history/file recovery, and offline app shell.
+  byte-for-byte downloads, reload/history/file recovery, offline app shell,
+  worker share handoff/expiry, forged identity/signature rejection, cancel/resume,
+  and room recovery after disconnect.
 - Playwright is development-only. CI runs Chromium before container publishing
   and retains failure traces. `README.md` documents local setup.
 - `public/frames.js` now owns pure decrypted-frame parsing; regression and seeded
@@ -24,34 +26,28 @@ This is a prioritized plan, not an instruction to implement every deferred idea.
 - Docker and remote CI/PR status were not checked. Browser checks ran locally
   in Chromium on Windows; hosted Linux CI still needs its first run.
 
+- PWA shares are handed over once and refused at the ten-minute boundary even
+  if cleanup timers were suspended. A timer provides best-effort memory cleanup;
+  worker termination can lose shares earlier. Unit and browser tests cover this.
+- Relay access expires independently of disk cleanup: pending listings, claims,
+  uploads, and new downloads refuse expired items, including earlier tokens.
+  Uploads crossing the boundary fail. Downloads started before expiry may finish
+  later; the periodic sweep removes ciphertext afterward. Boundary tests and
+  README/SECURITY/deployment documentation describe this distinction.
+
 ## Next set of changes, in order
 
-1. **PWA share expiry and tests.** Fix the lifecycle issue below; cover expiration,
-   one-time handoff, and file/text sharing through the worker in browser tests.
-2. **Extend browser coverage.** Add room/away-member recovery, identity rejection,
-   and cancel/resume cases. Real Safari and Android share-sheet checks remain
-   manual; Chromium emulation does not validate those platforms.
-3. **Clarify relay retention.** Separate logical expiry from physical sweep
-   timing, update the lifetime claims, and add boundary tests for the chosen
-   behavior before promising a strict deadline.
-4. **Continue the type ratchet separately.** Define shared Link, Conversation,
-   and file-record shapes, then enable noImplicitAny. The earlier measurement
-   was 608 findings, not 388; remeasure after adding shared types. Do not enable
-   strict wholesale or suppress findings to make the check green.
+1. **Continue the type ratchet separately.** Define shared Link, Conversation,
+   and file-record shapes, then enable noImplicitAny. Remeasure findings after
+   adding shared types; do not enable strict wholesale or suppress findings.
+2. **Broaden platform/network validation.** Exercise real Safari and Android
+   share sheets, routed LAN/VPN/TURN, and larger rooms crossing the mesh limit.
+   Current automated browser coverage is Chromium on loopback.
+3. **Bound shared-file queue memory.** Measure practical file sizes and choose
+   admission limits for total queued bytes and entries, with clear rejection UX.
+   Expiry prevents stale retrieval but does not limit simultaneous shares.
 
 ## Reliability follow-ups
-
-- **PWA shared-file lifetime:** `pendingShares` is pruned only when another share
-  arrives, and take-share does not check age. Enforce expiry at retrieval and
-  arrange best-effort cleanup; test expiration and one-time handoff. Worker
-  termination can lose pending shares sooner, so ten minutes is not a delivery
-  guarantee. Consider a bound on queued bytes as well.
-- **Relay retention wording/behavior:** deletion is periodic, not a hard 24-hour
-  deadline. With defaults, cleanup normally occurs on the first 15-minute sweep
-  after 24 hours, possibly later if execution is delayed. Decide whether strict
-  expiry at lookup/claim/download is required; document physical cleanup
-  separately. Do not promise a precise deletion deadline the implementation
-  does not enforce.
 - **Large files:** measure peak browser memory first. Both relay and direct
   receive assemble a whole file; relay upload constructs a complete encrypted
   Blob. Investigate incremental disk receive where supported, with the existing

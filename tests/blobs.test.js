@@ -10,6 +10,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { PassThrough } from 'node:stream';
 import { startServer, waitFor, register } from './helpers.js';
 
 const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
@@ -58,6 +59,51 @@ const upload = (base, blobId, token, body) =>
   fetch(`${base}/blob/${blobId}?token=${encodeURIComponent(token)}`, { method: 'PUT', body });
 
 const settle = (ms = 200) => new Promise(r => setTimeout(r, ms));
+
+test('relay access expires at the deadline before the physical sweep', async t => {
+  let now = 1000;
+  const { app, base, wsBase, dir } = await startServer(t, { blobs: { now: () => now, maxAgeMs: 1000 } });
+  const a = await register(wsBase, 'device_exp_sender', 'A');
+  const b = await register(wsBase, 'device_exp_recver', 'B');
+  const { reply, bytes } = await offer(a, 'device_exp_recver', 100);
+  assert.equal((await upload(base, reply.blobId, reply.uploadToken, Buffer.alloc(bytes))).status, 204);
+  const message = await offer(a, 'device_exp_recver', 0, { kind: 'message' });
+  const incomplete = await offer(a, 'device_exp_recver', 100);
+  now = 1999;
+  const claim = await app.blobStore.claim(reply.blobId, 'device_exp_recver');
+  assert.ok(claim.downloadToken);
+  assert.equal((await app.blobStore.pendingFor('device_exp_recver')).length, 2);
+  assert.equal(app.blobStore.openForDownload(reply.blobId, claim.downloadToken).status, 200);
+  now = 2000;
+  assert.deepEqual(await app.blobStore.pendingFor('device_exp_recver'), []);
+  assert.ok((await app.blobStore.claim(reply.blobId, 'device_exp_recver')).error);
+  assert.ok((await app.blobStore.claim(message.reply.blobId, 'device_exp_recver')).error);
+  assert.equal((await fetch(`${base}/blob/${reply.blobId}?token=${claim.downloadToken}`)).status, 404);
+  assert.equal((await upload(base, incomplete.reply.blobId, incomplete.reply.uploadToken, Buffer.alloc(incomplete.bytes))).status, 404);
+  assert.ok((await onDisk(dir)).files.length, 'disk cleanup is separate from access expiry');
+  assert.equal((await app.blobStore.sweepAged()).length, 3);
+  assert.deepEqual(await onDisk(dir), { directories: [], files: [] });
+  a.close();
+  b.close();
+});
+
+test('an upload crossing the expiry deadline is not published', async t => {
+  let now = 1000;
+  const { app } = await startServer(t, { blobs: { now: () => now, maxAgeMs: 1000 } });
+  const result = await app.blobStore.offer({ senderId: 'sender', conv: 'direct',
+    bytes: 128, chunkSize: 100, totalChunks: 1, envelopes: { recipient: BOX } });
+  assert.ok(result.blob);
+  let published = false;
+  app.blobStore.onAvailable = () => { published = true; };
+  const request = new PassThrough();
+  const receiving = app.blobStore.receive(result.blob.id, result.blob.uploadToken, request);
+  request.write(Buffer.alloc(64));
+  now = 2000;
+  request.end(Buffer.alloc(64));
+  assert.equal((await receiving).status, 410);
+  assert.equal(published, false);
+  assert.equal(app.blobStore.blobs.has(result.blob.id), false);
+});
 
 test('offer, upload, notify, claim, download, release — and the directory goes with it', async t => {
   const { base, wsBase, dir } = await startServer(t);

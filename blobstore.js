@@ -48,8 +48,7 @@ export const BLOB_DEFAULTS = {
   // Maximum age. Anything younger survives a sweep; anything older is removed
   // whether or not its recipients ever came back.
   maxAgeMs: Number(process.env.BLOB_MAX_AGE_MS || DAY_MS),
-  // How often the age sweep runs. Short, so nothing overshoots its maximum age
-  // by much — the age is the guarantee, not the interval.
+  // Physical cleanup interval. Access expires independently of this sweep.
   sweepEveryMs: Number(process.env.BLOB_SWEEP_MS || 15 * 60 * 1000)
 };
 
@@ -81,6 +80,8 @@ async function removeIfEmpty(dir) {
 
 export function createBlobStore(options = {}) {
   const config = { ...BLOB_DEFAULTS, ...options };
+  const now = options.now || Date.now;
+  const expired = blob => now() - blob.createdAt >= config.maxAgeMs;
   /** @type {Map<string, any>} */
   const blobs = new Map();
   let storeBytes = 0;
@@ -191,7 +192,7 @@ export function createBlobStore(options = {}) {
       envelopeBytes,
       written: 0,
       complete: isMessage,
-      createdAt: Date.now()
+      createdAt: now()
     };
 
     // A release elsewhere in this conversation can remove the directory the
@@ -215,7 +216,7 @@ export function createBlobStore(options = {}) {
   function receive(id, presentedToken, request) {
     return new Promise((resolve) => {
       const blob = blobs.get(id);
-      if (!blob || blob.kind !== 'file') return resolve({ status: 404, message: 'No such transfer.' });
+      if (!blob || expired(blob) || blob.kind !== 'file') return resolve({ status: 404, message: 'No such transfer.' });
       if (blob.complete) return resolve({ status: 409, message: 'That transfer is already uploaded.' });
       if (presentedToken !== blob.uploadToken) return resolve({ status: 403, message: 'Bad upload token.' });
 
@@ -227,12 +228,16 @@ export function createBlobStore(options = {}) {
         if (failed) return;
         failed = true;
         request.unpipe?.(out);
+        // Wait for the file handle to close before unlinking, including when
+        // expiry happens while createWriteStream is still opening the file.
+        out.once('close', () => {
+          remove(id).then(() => resolve({ status, message }));
+        });
         out.destroy();
-        remove(id);
-        resolve({ status, message });
       };
 
       request.on('data', chunk => {
+        if (expired(blob)) return abort(410, 'That transfer has expired.');
         written += chunk.length;
         // Never write past what was reserved, whatever the Content-Length said.
         if (written > blob.bytes) abort(413, 'Upload exceeded the declared length.');
@@ -242,6 +247,7 @@ export function createBlobStore(options = {}) {
 
       out.on('finish', () => {
         if (failed) return;
+        if (expired(blob)) return abort(410, 'That transfer has expired.');
         if (written !== blob.bytes) {
           abort(400, 'Upload length did not match the declared length.');
           return;
@@ -260,17 +266,19 @@ export function createBlobStore(options = {}) {
   /** Issues a one-item download token to a participant. */
   async function claim(id, deviceId) {
     const blob = blobs.get(id);
-    if (!blob) return { error: 'That transfer is no longer available.' };
+    if (!blob || expired(blob)) return { error: 'That transfer is no longer available.' };
     if (!blob.participants.has(deviceId)) return { error: 'That transfer is not addressed to this device.' };
     if (!blob.complete) return { error: 'That transfer is still uploading.' };
+    const envelope = await readEnvelope(blob, deviceId);
+    if (expired(blob) || !blobs.has(id)) return { error: 'That transfer is no longer available.' };
     const issued = token();
     blob.downloadTokens.set(issued, deviceId);
-    return { blob, downloadToken: issued, envelope: await readEnvelope(blob, deviceId) };
+    return { blob, downloadToken: issued, envelope };
   }
 
   function openForDownload(id, presentedToken) {
     const blob = blobs.get(id);
-    if (!blob || !blob.complete || blob.kind !== 'file') return { status: 404, message: 'No such transfer.' };
+    if (!blob || expired(blob) || !blob.complete || blob.kind !== 'file') return { status: 404, message: 'No such transfer.' };
     if (!blob.downloadTokens.has(presentedToken)) return { status: 403, message: 'Bad download token.' };
     return { status: 200, blob };
   }
@@ -288,12 +296,16 @@ export function createBlobStore(options = {}) {
   /** Items addressed to a device that it has not yet taken, oldest first. */
   async function pendingFor(deviceId) {
     const ready = [...blobs.values()]
-      .filter(blob => blob.complete && blob.recipients.has(deviceId) && !blob.released.has(deviceId))
+      .filter(blob => !expired(blob) && blob.complete && blob.recipients.has(deviceId) && !blob.released.has(deviceId))
       .sort((a, b) => a.createdAt - b.createdAt);
-    return Promise.all(ready.map(blob => describe(blob, deviceId)));
+    return (await Promise.all(ready.map(blob => describe(blob, deviceId))))
+      .filter(item => item !== null && now() - item.createdAt < config.maxAgeMs);
   }
 
   async function describe(blob, deviceId) {
+    if (expired(blob) || !blobs.has(blob.id)) return null;
+    const envelope = await readEnvelope(blob, deviceId);
+    if (expired(blob) || !blobs.has(blob.id)) return null;
     return {
       blobId: blob.id,
       kind: blob.kind,
@@ -302,7 +314,7 @@ export function createBlobStore(options = {}) {
       bytes: blob.bytes,
       chunkSize: blob.chunkSize,
       totalChunks: blob.totalChunks,
-      envelope: await readEnvelope(blob, deviceId),
+      envelope,
       createdAt: blob.createdAt
     };
   }
@@ -312,10 +324,10 @@ export function createBlobStore(options = {}) {
    * whatever emptied it. Younger items are left alone.
    */
   async function sweepAged(maxAgeMs = config.maxAgeMs) {
-    const cutoff = Date.now() - maxAgeMs;
+    const cutoff = now() - maxAgeMs;
     const purged = [];
     for (const blob of [...blobs.values()]) {
-      if (blob.createdAt < cutoff) {
+      if (blob.createdAt <= cutoff) {
         await remove(blob.id);
         purged.push(blob.id);
       }

@@ -14,7 +14,7 @@
 // DOM lib does not know about.
 const worker = /** @type {ServiceWorkerGlobalScope} */ (/** @type {unknown} */ (self));
 
-const CACHE = 'aria-drop-v6';
+const CACHE = 'aria-drop-v7';
 
 const SHELL = [
   '/',
@@ -60,8 +60,14 @@ worker.addEventListener('activate', event => {
 // worker's memory — not Cache Storage, so nothing is written to disk — until the
 // page it redirects to collects them, which happens as soon as that page loads.
 const SHARE_TTL_MS = 10 * 60 * 1000;
-/** @type {Map<string, {title: string, text: string, url: string, files: File[], at: number}>} */
+/** @type {Map<string, {title: string, text: string, url: string, files: File[], at: number, timer: ReturnType<typeof setTimeout>}>} */
 const pendingShares = new Map();
+
+function forgetShare(id) {
+  const share = pendingShares.get(id);
+  if (share) clearTimeout(share.timer);
+  pendingShares.delete(id);
+}
 
 /** @param {Request} request */
 async function receiveShare(request) {
@@ -79,10 +85,13 @@ async function receiveShare(request) {
 
   const now = Date.now();
   for (const [id, share] of pendingShares) {
-    if (now - share.at > SHARE_TTL_MS) pendingShares.delete(id);
+    if (now - share.at >= SHARE_TTL_MS) forgetShare(id);
   }
   const id = crypto.randomUUID();
-  pendingShares.set(id, { title: field('title'), text: field('text'), url: field('url'), files, at: now });
+  // Best effort memory cleanup: workers can be suspended or terminated. The
+  // retrieval check below is authoritative even if this timer never runs.
+  const timer = setTimeout(() => forgetShare(id), SHARE_TTL_MS);
+  pendingShares.set(id, { title: field('title'), text: field('text'), url: field('url'), files, at: now, timer });
   return Response.redirect(`/?shared=${id}`, 303);
 }
 
@@ -98,9 +107,12 @@ worker.addEventListener('message', event => {
   }
   // Handed over once, then forgotten.
   if (event.data?.type === 'take-share' && event.ports[0]) {
-    const share = pendingShares.get(event.data.id) || null;
-    pendingShares.delete(event.data.id);
-    event.ports[0].postMessage(share);
+    const share = pendingShares.get(event.data.id);
+    forgetShare(event.data.id);
+    const bundle = share && Date.now() - share.at < SHARE_TTL_MS
+      ? { title: share.title, text: share.text, url: share.url, files: share.files }
+      : null;
+    event.ports[0].postMessage(bundle);
   }
 });
 
