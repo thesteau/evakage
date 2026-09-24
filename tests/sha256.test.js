@@ -3,8 +3,8 @@ import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import { Sha256, hashChunks } from '../public/sha256.js';
 
-const reference = (bytes) => crypto.createHash('sha256').update(Buffer.from(bytes)).digest('hex');
-const hashOnce = (bytes) => new Sha256().update(bytes).hex();
+const reference = (/** @type {Uint8Array} */ bytes) => crypto.createHash('sha256').update(Buffer.from(bytes)).digest('hex');
+const hashOnce = (/** @type {Uint8Array} */ bytes) => new Sha256().update(bytes).hex();
 
 test('matches node:crypto across sizes that straddle the block boundary', () => {
   // 0 and 64 are the empty/exact-block cases; 55/56/57 and 119/120/121 straddle

@@ -3,11 +3,18 @@ import fs from 'node:fs/promises';
 import { startServer } from '../tests/helpers.js';
 
 /** @typedef {import('@playwright/test').Page} Page */
-export const test = base.extend(/** @type {import('@playwright/test').Fixtures<{devices: {alice: Page, bob: Page, disconnect: (name: string) => void}}, {}, import('@playwright/test').PlaywrightTestArgs, import('@playwright/test').PlaywrightWorkerArgs>} */ ({
-  devices: async ({ browser }, use) => {
+/** @typedef {{device: string, patch: (source: string) => string} | null} AppPatch */
+
+export const test = base.extend(/** @type {import('@playwright/test').Fixtures<{devices: {alice: Page, bob: Page, disconnect: (name: string) => void}, appPatch: AppPatch}, {}, import('@playwright/test').PlaywrightTestArgs, import('@playwright/test').PlaywrightWorkerArgs>} */ ({
+  // Serves one device a rewritten app.js, so a test can play a peer that
+  // misbehaves in a way the honest client never would. Set with
+  // test.use({ appPatch: { device: 'Bob', patch: source => ... } }).
+  appPatch: [null, { option: true }],
+
+  devices: async ({ browser, appPatch }, use) => {
     /** @type {(() => Promise<void>)[]} */
     const cleanup = [];
-    const { base: url, app } = await startServer({ after: fn => cleanup.push(fn) });
+    const { base: url, app } = await startServer({ after: (/** @type {() => Promise<void>} */ fn) => cleanup.push(fn) });
     const contexts = [];
     /** @type {string[]} */
     const pageErrors = [];
@@ -16,6 +23,21 @@ export const test = base.extend(/** @type {import('@playwright/test').Fixtures<{
       for (const name of ['Alice', 'Bob']) {
         const context = await browser.newContext();
         contexts.push(context);
+        if (appPatch?.device === name) {
+          await context.route('**/app.js', async route => {
+            const response = await route.fetch();
+            // Normalise line endings: patches anchor on multi-line snippets and
+            // a Windows checkout with autocrlf serves CRLF.
+            const source = (await response.text()).replace(/\r\n/g, '\n');
+            const patched = appPatch.patch(source);
+            if (patched === source) throw new Error(`appPatch for ${name} matched nothing; the anchor moved`);
+            await route.fulfill({
+              status: 200,
+              headers: { 'content-type': 'text/javascript; charset=utf-8', 'cache-control': 'no-store' },
+              body: patched
+            });
+          });
+        }
         const page = await context.newPage();
         page.on('pageerror', error => pageErrors.push(error.message));
         await page.goto(url);

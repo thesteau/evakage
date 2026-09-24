@@ -40,8 +40,8 @@ This is a prioritized plan, not an instruction to implement every deferred idea.
 
 - **Shared data shapes.** `public/types.d.ts` defines `Link`, `SecureLink`,
   `Conversation`, `FileRecord`, `FileMeta`, `Message`, `Device` and `Room`, used
-  from `public/app.js`. This cut the `noImplicitAny` baseline from 580 to 309;
-  the flag itself is still off.
+  from `public/app.js`. This cut the `noImplicitAny` baseline from 580 to 309
+  before the rest of the pass closed it.
 - **Sparse-chunk completion fix.** Completion used
   `chunks.some(chunk => !chunk)`, and `.some()` skips holes in a sparse array,
   so a file missing chunks could pass as complete and then be hashed and
@@ -56,41 +56,76 @@ This is a prioritized plan, not an instruction to implement every deferred idea.
   `e2e/platform.spec.js` plus `playwright.platform.config.js` run an engine
   smoke test on Chromium, Firefox and WebKit.
 
-## Next set of changes, in order
+- **Sparse-chunk regression test.** `e2e/transfer.spec.js` plays a peer that
+  drops a chunk and declares no hash; the receiver must refuse the file as
+  incomplete. Verified to fail against the old `.some()` check, which accepted
+  the truncated bytes. The fixture in `e2e/helpers.js` gained an `appPatch`
+  option for serving one device a rewritten `app.js`.
+- **`noImplicitAny` is on.** 309 findings annotated to zero and the flag enabled
+  in `tsconfig.json`: record typedefs for the blob store, client and room; shared
+  `Inbound` for validated wire messages; contextually typed test helpers (typing
+  `waitFor`'s predicate alone cleared 64). Two latent issues surfaced and were
+  fixed rather than suppressed: `openForDownload`/`claim` returned unions the
+  callers dereferenced without narrowing, and the upgrade handler used a socket
+  that could be null in hoisted handlers.
 
-1. **Cover the sparse-chunk regression.** The completion fix above has no test.
-   It lives in `public/app.js`, which the unit tests do not import, and no
-   browser test constructs a gap, so a regression would go unnoticed. A browser
-   test that drops one chunk on the receiver is the smallest way to pin it.
-2. **Finish the type ratchet.** `noImplicitAny` reports 309 findings: 91 in
-   `server.js`, 56 in `public/app.js`, 34 in `blobstore.js` and 128 across
-   `tests/`. 266 are TS7006 (untyped parameters), the rest mostly
-   TS7053/TS7005/TS7031. Annotate per file, then enable the flag in
-   `tsconfig.json`; do not enable strict wholesale or suppress findings.
-3. **Document the share limits.** Add the 16 MiB / 32 MiB / eight-entry budget
-   and its rejection messages to `README.md`, and the memory-bound rationale to
-   `SECURITY.md`. `npm run test:e2e:platform` is also missing from the README's
-   local-development section. No browser test yet asserts that a rejected share
-   reaches the user as a message.
-4. **Validate on real devices and networks.** Cross-engine desktop coverage now
-   exists, but WebKit on loopback is not Safari on iOS. Still unvalidated, and
-   not reachable from this environment: real Safari, the Android share sheet,
-   and routed LAN, VPN and TURN paths. Large rooms crossing the mesh limit are
-   covered by unit tests but never by a browser test.
+## Hardening, in order
 
-## Reliability follow-ups
-- **Large files:** measure peak browser memory first. Both relay and direct
-  receive assemble a whole file; relay upload constructs a complete encrypted
-  Blob. Investigate incremental disk receive where supported, with the existing
-  browser fallback. Do not promise universal mobile large-file support.
-- **Relay resume:** interrupted downloads retry from the start; incomplete
-  uploads require the sender. Range requests alone are insufficient: define
-  authenticated chunk boundaries, retry state, and integrity behavior first.
-- **Room transport churn:** measure switching around six/seven occupied seats
-  before adding hysteresis. Away members hold seats too.
-- **Negotiation/acknowledgements:** keep designated-offerer negotiation and
-  receiver-driven resume unless real-network tests demonstrate a need to change
-  them. Test routed LAN, VPN, and TURN paths before redesigning the protocol.
+The features work. What is left is making them hold up: under memory pressure,
+on interrupted transfers, and on networks that are not loopback. Each item says
+what to measure first, because none of them should be redesigned on a guess.
+
+1. **Large files.** Measure peak browser memory first. Both relay and direct
+   receive assemble a whole file in RAM; relay upload builds a complete
+   encrypted Blob before sending, so the sender pays roughly twice the file.
+   This is the most likely way the app fails on a phone today. Investigate
+   incremental disk receive (File System Access) where supported, keeping the
+   current path as the fallback. Do not promise universal mobile large-file
+   support.
+2. **Use it on a phone over real wifi.** One afternoon of actually sending
+   things between a phone and a desktop across the LAN finds more than any
+   amount of loopback testing. It is also the only way to learn whether item 1
+   is a real failure or a theoretical one, and whether iOS backgrounding, the
+   wake lock and the Android share sheet behave. Cross-engine desktop coverage
+   exists now, but WebKit on loopback is not Safari on iOS, and loopback ICE
+   proves nothing about routed paths. Everything below is easier to judge after
+   this, so it is deliberately ahead of the code items.
+3. **Relay resume.** The same story as item 1: it only bites on a big file over
+   a flaky link. An interrupted download restarts from the beginning, and an
+   upload interrupted before it completes cannot be recovered by the server at
+   all, because the bytes only ever existed on the sender. Range requests alone
+   are not enough — define authenticated chunk boundaries, retry state and
+   integrity behaviour first, or resume becomes a way to assemble a file from
+   pieces nothing vouches for.
+4. **Give the DOM handles real types.** `public/app.js` gets every element
+   through `$`, which is now explicitly `(sel: string) => any` — a deliberate
+   `any`, and the largest remaining hole in the type story. This is above the
+   remaining transport items because it is the one task here that finds existing
+   bugs rather than guarding against hypothetical ones: typing each handle
+   concretely surfaces every place `.value` or `.checked` is read off something
+   that does not have it. Do it before raising another compiler flag;
+   `strictFunctionTypes` is next after that.
+5. **Room transport churn.** The mesh/relay switch at six/seven occupied seats
+   has no hysteresis, so a room at the boundary re-opens or drops its direct
+   links whenever someone joins or leaves. Away members hold seats too. Measure
+   how bad it actually is before adding state to smooth it — and note that a
+   room that size is unlikely in the use this was built for, which is why it is
+   last.
+
+## Standing decisions — not work
+
+- **Negotiation and acknowledgements stay as they are.** Designated-offerer
+  negotiation and receiver-driven resume hold because each link is exactly two
+  devices and is torn down rather than renegotiated. They have only been
+  exercised on loopback and a LAN, but that is a reason to test (item 2), not to
+  redesign. Revisit only if a real path demonstrates a failure.
+- **Documentation is not a priority while this is a private tool.** The share
+  limits and `npm run test:e2e:platform` are undocumented in `README.md`, and
+  `SECURITY.md` does not carry the memory-bound rationale. None of that changes
+  behaviour or catches a bug, and the code says it plainly enough. Worth a few
+  minutes only when publishing the repo, or when editing those files anyway.
+  The one gap with real value is a browser test asserting that a rejected share
+  reaches the user as a message — that is a test, not a document.
 
 ## Security work requiring a design
 

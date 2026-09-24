@@ -39,8 +39,37 @@ const PROTOCOL_VERSION = 2;
 // Plaintext bytes per sealed body chunk. Published so both sides agree.
 const BLOB_CHUNK_SIZE = 256 * 1024;
 
-const truthy = (value) => /^(1|true|yes|on)$/i.test(String(value || ''));
-const splitList = (value) => String(value || '').split(',').map(entry => entry.trim()).filter(Boolean);
+/** A message from a client. Checked against VALIDATORS before a handler sees
+ * it, so handlers read known fields off an otherwise arbitrary object.
+ * @typedef {Record<string, any>} Inbound */
+
+/** A registered device's connection state.
+ * @typedef {object} Client
+ * @property {TinyWebSocket} ws
+ * @property {string} deviceId
+ * @property {string} code
+ * @property {string} name
+ * @property {string} platform
+ * @property {string} browser
+ * @property {number} connectedAt
+ * @property {string | null} identityKey opaque to the server; clients verify it
+ * @property {string | null} sealKey
+ * @property {string | null} sealKeySignature
+ * @property {string} ip
+ */
+
+/** @typedef {object} Room
+ * @property {string} id
+ * @property {string} code
+ * @property {string} name
+ * @property {number} createdAt
+ * @property {Set<string>} members connected now
+ * @property {Map<string, number>} away device id -> when it dropped off
+ * @property {string} [createdBy]
+ */
+
+const truthy = (/** @type {unknown} */ value) => /^(1|true|yes|on)$/i.test(String(value || ''));
+const splitList = (/** @type {unknown} */ value) => String(value || '').split(',').map(entry => entry.trim()).filter(Boolean);
 
 // Defensive budgets. A cooperating browser stays far below all of them; they
 // exist so one misbehaving or hostile client cannot exhaust the server.
@@ -59,6 +88,7 @@ const DEFAULT_LIMITS = {
 
 // Simple token bucket: `capacity` burst, refilled at `perSecond`.
 class TokenBucket {
+  /** @param {number} perSecond @param {number} capacity */
   constructor(perSecond, capacity) {
     this.perSecond = perSecond;
     this.capacity = capacity;
@@ -76,6 +106,7 @@ class TokenBucket {
   }
 }
 
+/** @param {unknown} a @param {unknown} b */
 function timingSafeEqualString(a, b) {
   // Hash first so differing lengths cannot throw or leak through the comparison.
   const left = crypto.createHash('sha256').update(String(a)).digest();
@@ -83,6 +114,7 @@ function timingSafeEqualString(a, b) {
   return crypto.timingSafeEqual(left, right);
 }
 
+/** @param {string | undefined} header */
 function parseCookies(header) {
   /** @type {Map<string, string>} */
   const out = new Map();
@@ -108,6 +140,7 @@ const SECURITY_HEADERS = {
   'cross-origin-resource-policy': 'same-origin'
 };
 
+/** @type {Record<string, string>} */
 const MIME_TYPES = {
   '.html': 'text/html; charset=utf-8',
   '.js': 'text/javascript; charset=utf-8',
@@ -120,6 +153,7 @@ const MIME_TYPES = {
 };
 
 class TinyWebSocket extends EventEmitter {
+  /** @param {import('node:stream').Duplex} socket @param {number} maxPayload */
   constructor(socket, maxPayload = MAX_SIGNAL_BYTES) {
     super();
     this.socket = socket;
@@ -127,16 +161,19 @@ class TinyWebSocket extends EventEmitter {
     this.readyState = WS_OPEN;
     this.isAlive = true;
     this.buffer = Buffer.alloc(0);
+    /** @type {number | null} */
     this.fragmentOpcode = null;
+    /** @type {Buffer[]} */
     this.fragments = [];
     this.fragmentBytes = 0;
 
-    socket.on('data', chunk => this.#ingest(chunk));
+    socket.on('data', (/** @type {Buffer} */ chunk) => this.#ingest(chunk));
     socket.on('close', () => this.#closed());
     socket.on('end', () => this.#closed());
-    socket.on('error', err => this.emit('error', err));
+    socket.on('error', (/** @type {Error} */ err) => this.emit('error', err));
   }
 
+  /** @param {string | Buffer} data */
   send(data) {
     if (this.readyState !== WS_OPEN) return;
     const payload = Buffer.isBuffer(data) ? data : Buffer.from(String(data));
@@ -177,6 +214,7 @@ class TinyWebSocket extends EventEmitter {
     try { this.close(1009, 'Message too large'); } catch { this.terminate(); }
   }
 
+  /** @param {Buffer} chunk */
   #ingest(chunk) {
     this.buffer = Buffer.concat([this.buffer, chunk]);
     while (this.buffer.length >= 2) {
@@ -257,6 +295,7 @@ class TinyWebSocket extends EventEmitter {
     }
   }
 
+  /** @param {number} opcode @param {Buffer} payload */
   #writeFrame(opcode, payload) {
     if (!this.socket.writable) return;
     const length = payload.length;
@@ -278,6 +317,7 @@ class TinyWebSocket extends EventEmitter {
   }
 }
 
+/** @param {import('node:http').IncomingMessage} req @param {import('node:stream').Duplex} socket */
 function acceptWebSocket(req, socket) {
   const key = req.headers['sec-websocket-key'];
   const version = req.headers['sec-websocket-version'];
@@ -298,16 +338,19 @@ function acceptWebSocket(req, socket) {
   return new TinyWebSocket(socket);
 }
 
+/** @param {TinyWebSocket} ws @param {unknown} payload */
 function json(ws, payload) {
   if (ws.readyState === WS_OPEN) ws.send(JSON.stringify(payload));
 }
 
+/** @param {unknown} value */
 function cleanName(value) {
   if (typeof value !== 'string') return 'Unnamed device';
   const out = value.replace(/[\u0000-\u001f\u007f]/g, '').trim().slice(0, 64);
   return out || 'Unnamed device';
 }
 
+/** @param {string} deviceId @param {Map<string, string>} takenCodes */
 function codeForDevice(deviceId, takenCodes) {
   const digest = crypto.createHash('sha256').update(deviceId).digest('base64url').toUpperCase();
   for (let size = 8; size <= 14; size += 2) {
@@ -319,6 +362,7 @@ function codeForDevice(deviceId, takenCodes) {
   return crypto.randomBytes(6).toString('hex').toUpperCase();
 }
 
+/** @param {Client} client */
 function peerPublic(client) {
   return {
     id: client.deviceId,
@@ -337,6 +381,7 @@ function peerPublic(client) {
 
 const ROOM_CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 
+/** @param {Set<string>} taken */
 function makeRoomCode(taken) {
   for (let attempt = 0; attempt < 40; attempt++) {
     let raw = '';
@@ -352,6 +397,7 @@ const BLOB_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-
 // message itself, so it may be much larger.
 const SEALED_BOX_MAX_CHARS = { file: 4096, message: 64 * 1024 };
 
+/** @param {any} box @param {number} maxChars */
 function validSealedBox(box, maxChars) {
   if (!isPlainObject(box)) return false;
   if (box.v !== 1) return false;
@@ -363,6 +409,7 @@ function validSealedBox(box, maxChars) {
 
 // The server never reads the envelopes; it only checks they are the right shape
 // and addressed to plausible device ids.
+/** @param {any} envelopes @param {'file' | 'message'} kind */
 function validEnvelopes(envelopes, kind) {
   if (!isPlainObject(envelopes)) return false;
   const recipients = Object.keys(envelopes);
@@ -375,15 +422,16 @@ const DEVICE_ID_PATTERN = /^[A-Za-z0-9_-]{8,128}$/;
 const ROOM_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const ROOM_CODE_PATTERN = /^[A-Z0-9]{4}-[A-Z0-9]{4}$/;
 
-const isPlainObject = (value) => typeof value === 'object' && value !== null && !Array.isArray(value);
-const optionalString = (value, max) => value == null || (typeof value === 'string' && value.length <= max);
-const requiredString = (value, max) => typeof value === 'string' && value.length > 0 && value.length <= max;
+const isPlainObject = (/** @type {unknown} */ value) => typeof value === 'object' && value !== null && !Array.isArray(value);
+const optionalString = (/** @type {unknown} */ value, /** @type {number} */ max) => value == null || (typeof value === 'string' && value.length <= max);
+const requiredString = (/** @type {unknown} */ value, /** @type {number} */ max) => typeof value === 'string' && value.length > 0 && value.length <= max;
 
 // RegExp.test() stringifies its argument, and "undefined" happens to satisfy
 // the device-id character class — so every pattern check must confirm the type
 // first rather than relying on the pattern to reject a non-string.
-const matches = (pattern, value) => typeof value === 'string' && pattern.test(value);
+const matches = (/** @type {RegExp} */ pattern, /** @type {unknown} */ value) => typeof value === 'string' && pattern.test(value);
 
+/** @param {Inbound} data */
 function validSdp(data) {
   if (!isPlainObject(data.sdp)) return false;
   // The description's own type has to match the envelope, so an "answer" cannot
@@ -393,6 +441,7 @@ function validSdp(data) {
   return typeof sdp === 'string' && sdp.length > 0 && Buffer.byteLength(sdp) <= DEFAULT_LIMITS.maxSdpBytes;
 }
 
+/** @param {any} candidate */
 function validCandidate(candidate) {
   if (!isPlainObject(candidate)) return false;
   if (typeof candidate.candidate !== 'string' || candidate.candidate.length > DEFAULT_LIMITS.maxCandidateChars) return false;
@@ -403,6 +452,7 @@ function validCandidate(candidate) {
   return true;
 }
 
+/** @param {any} data */
 function validSignalData(data) {
   if (!isPlainObject(data)) return false;
   if (data.type === 'knock') return true;
@@ -417,7 +467,8 @@ function validSignalData(data) {
 // Null-prototype and looked up with hasOwn, because a plain object literal would
 // resolve msg.type === 'constructor' to Object (callable, returns truthy, so the
 // message passes) and msg.type === '__proto__' to a non-function that throws.
-const VALIDATORS = Object.assign(Object.create(null), {
+/** @type {Record<string, (m: Inbound) => boolean>} */
+const VALIDATOR_TABLE = {
   register: m =>
     matches(DEVICE_ID_PATTERN, m.deviceId) &&
     optionalString(m.name, 512) &&
@@ -457,9 +508,12 @@ const VALIDATORS = Object.assign(Object.create(null), {
   'lookup-devices': m =>
     optionalString(m.requestId, 64) &&
     Array.isArray(m.deviceIds) && m.deviceIds.length > 0 && m.deviceIds.length <= 200 &&
-    m.deviceIds.every(id => matches(DEVICE_ID_PATTERN, id))
-});
+    m.deviceIds.every((/** @type {unknown} */ id) => matches(DEVICE_ID_PATTERN, id))
+};
 
+const VALIDATORS = Object.assign(Object.create(null), VALIDATOR_TABLE);
+
+/** @param {unknown} type */
 function validatorFor(type) {
   if (typeof type !== 'string' || !Object.hasOwn(VALIDATORS, type)) return null;
   const validate = VALIDATORS[type];
@@ -496,12 +550,14 @@ export function createAriaDropServer({
     return crypto.createHmac('sha256', authToken).update('aria-drop-session-v1').digest('base64url');
   }
 
+  /** @param {import('node:http').IncomingMessage} req */
   function isAuthorized(req) {
     if (!authToken) return true;
     const presented = parseCookies(req.headers.cookie).get(AUTH_COOKIE);
     return timingSafeEqualString(presented ?? '', authCookieValue());
   }
 
+  /** @param {import('node:http').IncomingMessage} req */
   function effectiveHost(req) {
     if (trustProxy) {
       const forwarded = String(req.headers['x-forwarded-host'] || '').split(',')[0].trim();
@@ -510,6 +566,7 @@ export function createAriaDropServer({
     return String(req.headers.host || '').toLowerCase();
   }
 
+  /** @param {import('node:http').IncomingMessage} req */
   function clientIp(req) {
     if (trustProxy) {
       const forwarded = String(req.headers['x-forwarded-for'] || '').split(',')[0].trim();
@@ -521,6 +578,7 @@ export function createAriaDropServer({
   // Browsers always send Origin on a WebSocket handshake, so a mismatch means
   // the upgrade came from a page this server did not hand out. Non-browser
   // clients send none at all.
+  /** @param {import('node:http').IncomingMessage} req */
   function originAllowed(req) {
     const origin = req.headers.origin;
     if (!origin) return true;
@@ -691,6 +749,7 @@ export function createAriaDropServer({
           return;
         }
         const ext = path.extname(filePath).toLowerCase();
+        /** @type {Record<string, string>} */
         const headers = {
           ...SECURITY_HEADERS,
           'content-type': MIME_TYPES[ext] || 'application/octet-stream',
@@ -721,6 +780,7 @@ export function createAriaDropServer({
   /** @type {Map<string, { record: any, lastSeen: number }>} */
   const recentDevices = new Map();
 
+  /** @param {string} deviceId */
   function noteSeen(deviceId) {
     const client = clients.get(deviceId);
     if (!client) return;
@@ -733,6 +793,7 @@ export function createAriaDropServer({
     }
   }
 
+  /** @param {string} deviceId */
   function isRecent(deviceId) {
     if (clients.has(deviceId)) return true;
     const seen = recentDevices.get(deviceId);
@@ -740,6 +801,7 @@ export function createAriaDropServer({
   }
 
   /** Public record for a device, live if connected, otherwise last seen. */
+  /** @param {string} deviceId */
   function deviceRecord(deviceId) {
     const client = clients.get(deviceId);
     if (client) return { ...peerPublic(client), online: true, lastSeen: Date.now() };
@@ -748,6 +810,7 @@ export function createAriaDropServer({
     return { ...seen.record, online: false, lastSeen: seen.lastSeen };
   }
 
+  /** @param {Room} room */
   function roomPublic(room) {
     return {
       id: room.id,
@@ -772,6 +835,7 @@ export function createAriaDropServer({
     };
   }
 
+  /** @param {Room} room */
   function roomSeatsTaken(room) {
     return room.members.size + room.away.size;
   }
@@ -792,6 +856,7 @@ export function createAriaDropServer({
   // seat as "away", so members keep sending to it and it catches up when it
   // rejoins. Only an explicit leave, a reload (see rejoinGraceMs), or the window
   // running out actually removes it. A room lasts while anyone holds a seat.
+  /** @param {string} deviceId */
   function markAway(deviceId) {
     let changed = false;
     for (const room of rooms.values()) {
@@ -802,6 +867,7 @@ export function createAriaDropServer({
     return changed;
   }
 
+  /** @param {Room} room @param {string} deviceId */
   function dropSeat(room, deviceId) {
     const wasMember = room.members.delete(deviceId);
     const wasAway = room.away.delete(deviceId);
@@ -831,6 +897,7 @@ export function createAriaDropServer({
     return changed;
   }
 
+  /** @param {Inbound} msg */
   function restoreRoom(msg) {
     const id = String(msg.roomId || '');
     if (!ROOM_ID_PATTERN.test(id) || rooms.size >= MAX_ROOMS) return null;
@@ -852,6 +919,7 @@ export function createAriaDropServer({
   // A device may buffer a blob only for peers it could already talk to: the
   // other side of a direct session, or the members of a room it has joined.
   // Without this, any client could address a blob at any other device.
+  /** @param {string} senderId @param {string} conv @param {string[]} recipients */
   function recipientsAllowed(senderId, conv, recipients) {
     if (!recipients.length) return false;
     if (recipients.includes(senderId)) return false;
@@ -862,9 +930,10 @@ export function createAriaDropServer({
     }
     const room = rooms.get(conv.slice(5));
     if (!room || !room.members.has(senderId)) return false;
-    return recipients.every(id => room.members.has(id) || room.away.has(id));
+    return recipients.every((/** @type {string} */ id) => room.members.has(id) || room.away.has(id));
   }
 
+  /** @param {string} deviceId @param {TinyWebSocket} ws */
   function removeClient(deviceId, ws) {
     const existing = clients.get(deviceId);
     if (!existing || existing.ws !== ws) return;
@@ -879,12 +948,14 @@ export function createAriaDropServer({
     // is what removes anything left behind.
   }
 
+  /** @param {TinyWebSocket} ws @param {string} deviceId */
   function deliverPending(ws, deviceId) {
     blobStore.pendingFor(deviceId).then(items => {
       for (const item of items) json(ws, { type: 'blob-available', ...item });
     }).catch(err => console.error('Could not list relayed items:', err?.message || err));
   }
 
+  /** @param {import('node:stream').Duplex} socket @param {number} status @param {string} reason */
   function refuseUpgrade(socket, status, reason) {
     socket.write(`HTTP/1.1 ${status} ${reason}\r\nConnection: close\r\n\r\n`);
     socket.destroy();
@@ -901,22 +972,27 @@ export function createAriaDropServer({
     const openForIp = connectionsByIp.get(ip) || 0;
     if (openForIp >= limits.connectionsPerIp) return refuseUpgrade(socket, 429, 'Too Many Requests');
 
-    const ws = acceptWebSocket(req, socket);
-    if (!ws) return;
+    const accepted = acceptWebSocket(req, socket);
+    if (!accepted) return;
+    // Bound after the check so the handlers below, which are hoisted, see a
+    // socket that cannot be null.
+    const ws = accepted;
     connectionsByIp.set(ip, openForIp + 1);
     sockets.add(ws);
     if (head?.length) socket.unshift(head);
 
+    /** @type {string | null} */
     let registeredId = null;
     let released = false;
     let invalidMessages = 0;
     const messageBucket = new TokenBucket(limits.messagesPerSecond, limits.messageBurst);
     const signalBucket = new TokenBucket(limits.signalsPerSecond, limits.signalBurst);
 
-    const disconnect = (code, reason) => {
+    const disconnect = (/** @type {number} */ code, /** @type {string} */ reason) => {
       try { ws.close(code, reason); } catch { ws.terminate(); }
     };
 
+    /** @param {string} reason */
     function strike(reason) {
       if (++invalidMessages >= limits.maxInvalidMessages) disconnect(1008, reason);
     }
@@ -924,7 +1000,7 @@ export function createAriaDropServer({
     // Defence in depth: whatever a peer sends, a bug in one message handler must
     // cost that connection at most, never the process. Throwing out of the socket
     // 'data' event would otherwise be an unauthenticated remote crash.
-    ws.on('message', (raw, isBinary) => {
+    ws.on('message', (/** @type {Buffer} */ raw, /** @type {boolean} */ isBinary) => {
       try {
         handleMessage(raw, isBinary);
       } catch (err) {
@@ -933,6 +1009,7 @@ export function createAriaDropServer({
       }
     });
 
+    /** @param {Buffer} raw @param {boolean} isBinary */
     function handleMessage(raw, isBinary) {
       if (isBinary || raw.length > MAX_SIGNAL_BYTES) return strike('Malformed message');
       if (!messageBucket.take()) return disconnect(1008, 'Rate limit exceeded');
@@ -1136,8 +1213,8 @@ export function createAriaDropServer({
 
       if (msg.type === 'blob-claim') {
         blobStore.claim(msg.blobId, registeredId).then(claimed => {
-          if (claimed.error) {
-            json(ws, { type: 'error', context: 'blob-claim', message: claimed.error, blobId: msg.blobId });
+          if (!claimed.blob) {
+            json(ws, { type: 'error', context: 'blob-claim', message: claimed.error || 'That transfer could not be opened.', blobId: msg.blobId });
             return;
           }
           json(ws, {

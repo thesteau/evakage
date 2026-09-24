@@ -4,7 +4,7 @@ export const FILE_CHUNK_KIND = 2;
 const decoder = new TextDecoder();
 
 /**
- * @param {Uint8Array} frame
+ * @param {Uint8Array<ArrayBuffer>} frame
  * @param {{controlBytes: number, chunkBytes: number, fileChunks: number}} limits
  */
 export function parseFrame(frame, limits) {

@@ -10,29 +10,33 @@ const BOX = { v: 1, ephemeral: 'e', iv: 'i', ciphertext: 'c' };
 const KEYS = { identityKey: 'identity-key-b64', sealKey: 'seal-key-b64', sealKeySignature: 'sig-b64' };
 const settle = (ms = 200) => new Promise(r => setTimeout(r, ms));
 
+/** @param {WebSocket} ws @param {string} [name] */
 async function createRoom(ws, name = 'Room') {
   const created = waitFor(ws, m => m.type === 'room-joined');
   ws.send(JSON.stringify({ type: 'create-room', name }));
   return (await created).room;
 }
 
+/** @param {WebSocket} ws @param {string} roomId */
 async function joinRoom(ws, roomId) {
   const joined = waitFor(ws, m => m.type === 'room-joined');
   ws.send(JSON.stringify({ type: 'join-room', roomId }));
   return (await joined).room;
 }
 
+/** @param {WebSocket} ws @param {string | string[]} to @param {string} [conv] */
 async function sendMessage(ws, to, conv = 'direct') {
   const requestId = crypto.randomUUID();
   const reply = waitFor(ws, m => m.requestId === requestId);
   ws.send(JSON.stringify({
     type: 'blob-offer', requestId, kind: 'message', conv,
     bytes: 0, chunkSize: 1, totalChunks: 0,
-    envelopes: Object.fromEntries([].concat(to).map(id => [id, BOX]))
+    envelopes: Object.fromEntries([to].flat().map(id => [id, BOX]))
   }));
   return reply;
 }
 
+/** @param {WebSocket} ws @param {string[]} deviceIds */
 async function lookup(ws, deviceIds) {
   const requestId = crypto.randomUUID();
   const reply = waitFor(ws, m => m.type === 'devices-found' && m.requestId === requestId);
@@ -122,7 +126,7 @@ test('a member who drops off keeps its seat as away, and the room survives', asy
   const aSeesAway = waitFor(a, m => m.type === 'rooms' && m.rooms[0]?.away.length === 1);
   b.close();
   const update = (await aSeesAway).rooms[0];
-  assert.deepEqual(update.members.map(m => m.id), ['device_alice_00004']);
+  assert.deepEqual(update.members.map((/** @type {any} */ m) => m.id), ['device_alice_00004']);
   assert.equal(update.away[0].id, 'device_bob_0000004');
   assert.equal(update.away[0].sealKey, KEYS.sealKey, 'away members carry their key record, so senders can seal to them');
   assert.ok(update.away[0].awaySince > 0);
@@ -154,7 +158,7 @@ test('a room message can be addressed to an away member, who gets it on rejoinin
 
   // Rejoining turns the away seat back into membership.
   const rejoined = await joinRoom(back, room.id);
-  assert.deepEqual(rejoined.members.map(m => m.id).sort(), ['device_alice_00005', 'device_bob_0000005']);
+  assert.deepEqual(rejoined.members.map((/** @type {any} */ m) => m.id).sort(), ['device_alice_00005', 'device_bob_0000005']);
   assert.equal(rejoined.away.length, 0);
 
   a.close();
@@ -275,7 +279,7 @@ test('a dormant room is kept for its away members but hidden from everyone else'
   const back = await register(wsBase, 'device_alice_00010', 'Alice');
   const rejoined = await joinRoom(back, room.id);
   assert.equal(rejoined.id, room.id);
-  const relisted = waitFor(outsider, m => m.type === 'rooms' && m.rooms.some(r => r.id === room.id));
+  const relisted = waitFor(outsider, m => m.type === 'rooms' && m.rooms.some((/** @type {any} */ r) => r.id === room.id));
   back.send(JSON.stringify({ type: 'rooms-request' }));
   outsider.send(JSON.stringify({ type: 'rooms-request' }));
   await relisted;

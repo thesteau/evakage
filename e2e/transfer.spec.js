@@ -98,7 +98,7 @@ for (const attack of ['identity', 'signature']) {
     // Alter one peer's outgoing handshake, leaving the receiving app untouched.
     await alice.evaluate(attack => {
       const send = RTCDataChannel.prototype.send;
-      RTCDataChannel.prototype.send = function(data) {
+      RTCDataChannel.prototype.send = function(/** @type {any} */ data) {
         if (typeof data === 'string') {
           const message = JSON.parse(data);
           if (attack === 'identity' && message.kind === 'crypto-hello') message.identityKey = message.publicKey;
@@ -168,6 +168,56 @@ test('a cancelled direct transfer resumes retained chunks and verifies the file'
   const downloading = bob.waitForEvent('download');
   await row.getByRole('button', { name: 'Save', exact: true }).click();
   expect(await fs.readFile(await (await downloading).path())).toEqual(bytes);
+});
+
+// Regression: `file.chunks` is allocated with `new Array(total)`, so a missing
+// chunk leaves a hole, and Array.prototype.some skips holes. A completeness
+// check written as `chunks.some(chunk => !chunk)` therefore reported a truncated
+// file as complete. A declared hash would still catch it, so the case that
+// reached the user was a peer that declared none: the bytes that did arrive were
+// concatenated and offered as the whole file.
+test.describe('a transfer with a gap in the chunks', () => {
+  /** @param {string} source @param {string} from @param {string} to */
+  const must = (source, from, to) => {
+    if (!source.includes(from)) throw new Error(`patch anchor moved: ${from.slice(0, 48)}…`);
+    return source.replace(from, to);
+  };
+
+  test.use({
+    appPatch: {
+      device: 'Bob',
+      patch: source => {
+        // Drop one chunk in the middle, as a lossy peer would.
+        const patched = must(
+          source,
+          'function receiveFileChunk(link, conv, header, bytes) {\n  const file = conv.files.get(header.id);',
+          'function receiveFileChunk(link, conv, header, bytes) {\n  if (header.seq === 1) return;\n  const file = conv.files.get(header.id);'
+        );
+        // And declare no hash anywhere, so only the completeness check stands
+        // between the user and a silently truncated file.
+        return must(
+          patched,
+          "const expected = typeof declaredHash === 'string' ? declaredHash : file.sha256;",
+          'const expected = null;'
+        );
+      }
+    }
+  });
+
+  test('is refused as incomplete rather than saved truncated', async ({ devices }) => {
+    const { alice, bob } = devices;
+    await openPeer(alice, 'Bob');
+    await openPeer(bob, 'Alice');
+
+    const bytes = Buffer.alloc(4 * 64 * 1024, 7); // four chunks; the second is dropped
+    await alice.locator('#fileInput').setInputFiles({ name: 'gap.bin', mimeType: 'application/octet-stream', buffer: bytes });
+    await bob.getByRole('button', { name: 'Accept gap.bin', exact: true }).click();
+
+    await expect(bob.locator('#toastRegion')).toContainText('Transfer incomplete: gap.bin');
+    const row = bob.locator('.file-item').filter({ hasText: 'gap.bin' });
+    await expect(row.getByRole('button', { name: 'Save', exact: true })).toHaveCount(0);
+    await expect(row).not.toContainText('SHA-256 ✓');
+  });
 });
 
 test('room history catches up after an away member reconnects', async ({ devices }) => {

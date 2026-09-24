@@ -26,6 +26,10 @@ import {
   cipherLayout
 } from './relay.js';
 
+// Explicitly `any`: the handles below are used as their concrete element types
+// (value, checked, files). Giving each one a real type is the next type pass;
+// until then this is a deliberate any rather than an inferred one.
+/** @type {(sel: string) => any} */
 const $ = (sel) => document.querySelector(sel);
 const peerRows = $('#peerRows');
 const emptyPeers = $('#emptyPeers');
@@ -79,6 +83,9 @@ const state = {
   joinedRoomIds: new Set(),  // rooms this browser is a member of
   activeConvId: /** @type {string | null} */ (null),
   activeSends: new Map(),    // transferId -> { cancelled, fileId, name }
+  /** Defaults until /config.json answers. @type {{iceServers: RTCIceServer[], maxFileBytes: number,
+   * maxRoomMembers: number, roomMeshMax: number, protocol?: number,
+   * relay?: {enabled: boolean, chunkSize: number, maxAgeMs: number}}} */
   config: { iceServers: [], maxFileBytes: 512 * 1024 * 1024, maxRoomMembers: 20, roomMeshMax: 6 },
   pendingCodeRequests: new Map(),
   statsTimer: /** @type {ReturnType<typeof setInterval> | null} */ (null),
@@ -163,6 +170,8 @@ function formatAgo(timestamp) {
 
 const encoder = new TextEncoder();
 const CHUNK_SIZE = 64 * 1024;
+// Used only if /config.json did not answer; the server publishes the real value.
+const RELAY_CHUNK_FALLBACK = 256 * 1024;
 const HIGH_WATER = 8 * 1024 * 1024;
 const LOW_WATER = 3 * 1024 * 1024;
 
@@ -280,7 +289,7 @@ function connectWebSocket() {
 
     if (msg.type === 'presence') {
       const previousOnline = new Set(state.peers.keys());
-      state.peers = new Map(msg.peers.filter(p => p.id !== state.self?.id).map(p => [p.id, p]));
+      state.peers = new Map(msg.peers.filter((/** @type {Device} */ p) => p.id !== state.self?.id).map((/** @type {Device} */ p) => [p.id, p]));
       for (const peer of state.peers.values()) recordDevice(peer, true);
       // Anyone who just dropped off stays addressable through the relay.
       for (const id of previousOnline) {
@@ -297,7 +306,7 @@ function connectWebSocket() {
     }
 
     if (msg.type === 'rooms') {
-      state.rooms = new Map(msg.rooms.map(room => [room.id, room]));
+      state.rooms = new Map(msg.rooms.map((/** @type {Room} */ room) => [room.id, room]));
       for (const room of state.rooms.values()) {
         for (const member of room.away || []) {
           if (!state.peers.has(member.id)) recordDevice(member, false);
@@ -716,6 +725,7 @@ function retryLink(peerId) {
 }
 
 /** @param {string} peerId */
+/** @param {string} peerId @param {any} data */
 async function handleSignal(peerId, data) {
   if (typeof RTCPeerConnection === 'undefined') return;
   if (!data || typeof data !== 'object') return;
@@ -832,6 +842,7 @@ function abortLink(link, message) {
 // Refuse a peer whose supported range does not overlap ours, and say so, rather
 // than deriving a key and failing later on a frame we cannot parse.
 /** @param {Link} link */
+/** @param {Link} link @param {any} hello */
 function negotiateProtocol(link, hello) {
   const theirMin = Number.isInteger(hello.min) ? hello.min : Number(hello.protocol) || 0;
   const theirMax = Number.isInteger(hello.max) ? hello.max : Number(hello.protocol) || 0;
@@ -856,6 +867,7 @@ function negotiateProtocol(link, hello) {
 }
 
 /** @param {Link} link */
+/** @param {Link} link @param {any} hello */
 async function handleCryptoHello(link, hello) {
   const identity = state.identity;
   if (!identity) throw new Error('Device identity is not ready. Reload and try again.');
@@ -916,6 +928,7 @@ async function sendProof(link) {
 }
 
 /** @param {Link} link */
+/** @param {Link} link @param {any} message */
 async function handleCryptoProof(link, message) {
   if (!link.crypto.ownPublic || !link.crypto.remotePublic || !link.crypto.ownNonce || !link.crypto.remoteNonce) return;
   if (link.incompatible || link.crypto.identityVerified) return;
@@ -1038,10 +1051,11 @@ async function handlePlainFrame(link, frame) {
   const conv = resolveScope(payload.conv, link.peerId);
   if (!conv) return;
   if (parsed.kind === 'control') await handleControl(link, conv, parsed.message);
-  else receiveFileChunk(link, conv, parsed.header, parsed.bytes);
+  else if (parsed.bytes) receiveFileChunk(link, conv, parsed.header, parsed.bytes);
 }
 
 /** @param {Link} link @param {Conversation} conv */
+/** @param {Link} link @param {Conversation} conv @param {any} msg */
 async function handleControl(link, conv, msg) {
   if (msg.type === 'chat' && msg.message) {
     // A live chat frame must be authored by the peer that sent it. Without this
@@ -1202,6 +1216,7 @@ function needsConsent(deviceId, link) {
   return !deviceTrust(deviceId);
 }
 
+/** @param {any} meta */
 function validFileMeta(meta) {
   if (!meta || typeof meta !== 'object') return false;
   if (typeof meta.id !== 'string' || meta.id.length > 64) return false;
@@ -1476,7 +1491,7 @@ async function sendMessageViaRelay(conv, message, recipientIds) {
   // One sealed copy per recipient, so a long message to a large room can exceed
   // what the server accepts in one frame. Pack recipients into as few frames as
   // fit; each frame becomes its own item on the server.
-  const makeFrame = (subset) => ({
+  const makeFrame = (/** @type {Array<[string, any]>} */ subset) => ({
     type: 'blob-offer',
     requestId: crypto.randomUUID(),
     kind: 'message',
@@ -1736,6 +1751,7 @@ async function sendBlobTo(links, conv, blob, meta, alreadyHeld = []) {
 
 // WebSocket request/response pairing for the relay: the server echoes a
 // request id (offers) or the blob id (claims) back on the reply.
+/** @param {string} key @param {() => void} send @param {number} timeoutMs */
 function awaitReply(key, send, timeoutMs = 20000) {
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => {
@@ -1747,6 +1763,7 @@ function awaitReply(key, send, timeoutMs = 20000) {
   });
 }
 
+/** @param {string} key @param {any} value @param {Error} [error] */
 function settleRequest(key, value, error) {
   const pending = key && state.pendingRequests.get(key);
   if (!pending) return;
@@ -1803,7 +1820,7 @@ function uploadBlob(blobId, token, body, onProgress) {
 async function sendViaRelay(conv, blob, meta, record, recipientIds) {
   const identity = state.identity;
   if (!identity) throw new Error('Device identity is not ready.');
-  const chunkSize = state.config.relay.chunkSize;
+  const chunkSize = state.config.relay?.chunkSize ?? RELAY_CHUNK_FALLBACK;
   const { totalChunks, bytes } = cipherLayout(blob.size, chunkSize);
 
   const targets = [];
@@ -1875,6 +1892,7 @@ function findRelayedFile(blobId) {
   return null;
 }
 
+/** @param {any} notice */
 async function handleBlobAvailable(notice) {
   const identity = state.identity;
   if (!identity) throw new Error('Device identity is not ready. Reload and try again.');
@@ -1971,6 +1989,7 @@ async function handleBlobAvailable(notice) {
   await downloadRelayed(conv, record);
 }
 
+/** @param {any} notice */
 async function handleRelayedMessage(notice) {
   const identity = state.identity;
   if (!identity) throw new Error('Device identity is not ready. Reload and try again.');
@@ -2018,6 +2037,7 @@ async function handleRelayedMessage(notice) {
 // it. That matters most for relayed messages, whose sender may already be
 // offline and so have no row in the device table to click.
 /** @param {Conversation} conv */
+/** @param {Conversation} conv @param {Message} message */
 function notifyIncoming(conv, message) {
   if (state.activeConvId === conv.id) return;
   const who = message.fromName || displayName(message.from);
@@ -2108,6 +2128,8 @@ function cancelTransfer(conv, file) {
 /* ---------- receiving files ---------- */
 
 /** @param {Link} link @param {Conversation} conv */
+/** @param {Link} link @param {Conversation} conv @param {any} header
+ * @param {Uint8Array<ArrayBuffer>} bytes */
 function receiveFileChunk(link, conv, header, bytes) {
   const file = conv.files.get(header.id);
   if (!file) return;
@@ -2311,8 +2333,8 @@ function openConversation(convId, kind, ref, focus = 'chat') {
   else if (wasClosed) setTimeout(() => $('#closeSession').focus(), 80);
 }
 
-const openSession = (peerId, focus = 'chat') => openConversation(directConvId(peerId), 'direct', peerId, focus);
-const openRoom = (roomId, focus = 'chat') => openConversation(roomConvId(roomId), 'room', roomId, focus);
+const openSession = (/** @type {string} */ peerId, focus = 'chat') => openConversation(directConvId(peerId), 'direct', peerId, focus);
+const openRoom = (/** @type {string} */ roomId, focus = 'chat') => openConversation(roomConvId(roomId), 'room', roomId, focus);
 
 function closeSessionPanel() {
   if (!state.activeConvId) return;
@@ -2350,16 +2372,19 @@ function leaveRoom(roomId) {
 // The tables are rebuilt wholesale on every presence update and every stats
 // tick, which detaches whatever the user had focused. Keyed controls let focus
 // be put back on the logically-same button afterwards.
+/** @param {Element | null} element */
 function focusKeyOf(element) {
   return element instanceof HTMLElement && element.dataset.focusKey ? element.dataset.focusKey : null;
 }
 
+/** @param {string | null} key */
 function findByFocusKey(key) {
   if (!key) return null;
   const match = document.querySelector(`[data-focus-key="${CSS.escape(key)}"]`);
   return match instanceof HTMLElement ? match : null;
 }
 
+/** @param {() => void} render */
 function withPreservedFocus(render) {
   const key = focusKeyOf(document.activeElement);
   render();
@@ -2367,7 +2392,9 @@ function withPreservedFocus(render) {
   findByFocusKey(key)?.focus();
 }
 
+/** @param {string} status */
 function formatStatus(status) {
+  /** @type {Record<string, string>} */
   const map = {
     idle: 'Available',
     new: 'Connecting',
@@ -2517,7 +2544,7 @@ function renderOfflineRow(record) {
   tr.dataset.dropKind = 'direct';
   tr.title = 'Offline. Anything you send waits on the server for up to 24 hours.';
 
-  const cell = (label, text) => {
+  const cell = (/** @type {string} */ label, /** @type {string} */ text) => {
     const td = document.createElement('td');
     td.dataset.label = label;
     td.textContent = text;
@@ -2994,6 +3021,7 @@ function toast(message, action) {
 
 // srflx/prflx both mean a NAT-reflexive address; relay means TURN is carrying
 // the traffic, which is the case worth surfacing loudly.
+/** @type {Record<string, string>} */
 const CANDIDATE_LABEL = { host: 'host', srflx: 'srflx', prflx: 'prflx', relay: 'relay' };
 
 async function refreshStats() {
@@ -3024,8 +3052,8 @@ async function refreshStats() {
       if (pair) {
         const local = byId.get(pair.localCandidateId);
         const remote = byId.get(pair.remoteCandidateId);
-        const localType = CANDIDATE_LABEL[local?.candidateType] || '?';
-        const remoteType = CANDIDATE_LABEL[remote?.candidateType] || '?';
+        const localType = CANDIDATE_LABEL[String(local?.candidateType)] || '?';
+        const remoteType = CANDIDATE_LABEL[String(remote?.candidateType)] || '?';
         link.path = localType === 'relay' || remoteType === 'relay' ? 'relay' : `${localType}↔${remoteType}`;
         link.pathDetail = `local ${localType} (${local?.protocol || '?'}) ↔ remote ${remoteType} (${remote?.protocol || '?'})`;
       }
@@ -3071,7 +3099,7 @@ function resolveCode(code) {
       state.pendingCodeRequests.delete(requestId);
       resolve(null);
     }, 4000);
-    state.pendingCodeRequests.set(requestId, peer => {
+    state.pendingCodeRequests.set(requestId, (/** @type {Device | null} */ peer) => {
       clearTimeout(timer);
       resolve(peer);
     });
@@ -3081,7 +3109,7 @@ function resolveCode(code) {
 
 /* ---------- events ---------- */
 
-$('#codeForm').addEventListener('submit', async (event) => {
+$('#codeForm').addEventListener('submit', async (/** @type {Event} */ event) => {
   event.preventDefault();
   const code = $('#codeInput').value.trim().toUpperCase();
   if (!code) return;
@@ -3097,7 +3125,7 @@ $('#codeForm').addEventListener('submit', async (event) => {
   openSession(peer.id);
 });
 
-$('#createRoomForm').addEventListener('submit', (event) => {
+$('#createRoomForm').addEventListener('submit', (/** @type {Event} */ event) => {
   event.preventDefault();
   const input = $('#roomNameInput');
   const name = input.value.trim() || `${state.self?.name || 'New'} room`;
@@ -3106,7 +3134,7 @@ $('#createRoomForm').addEventListener('submit', (event) => {
   input.value = '';
 });
 
-$('#joinRoomForm').addEventListener('submit', (event) => {
+$('#joinRoomForm').addEventListener('submit', (/** @type {Event} */ event) => {
   event.preventDefault();
   const input = $('#roomCodeInput');
   const code = input.value.trim().toUpperCase();
@@ -3116,7 +3144,7 @@ $('#joinRoomForm').addEventListener('submit', (event) => {
   input.value = '';
 });
 
-messageForm.addEventListener('submit', async (event) => {
+messageForm.addEventListener('submit', async (/** @type {Event} */ event) => {
   event.preventDefault();
   const conv = activeConversation();
   const text = messageInput.value;
@@ -3126,7 +3154,7 @@ messageForm.addEventListener('submit', async (event) => {
   catch (err) { toast(err.message || 'Could not send message'); }
 });
 
-messageInput.addEventListener('keydown', (event) => {
+messageInput.addEventListener('keydown', (/** @type {KeyboardEvent} */ event) => {
   if (event.key === 'Enter' && !event.shiftKey) {
     event.preventDefault();
     messageForm.requestSubmit();
@@ -3229,13 +3257,16 @@ window.addEventListener('beforeunload', () => {
 /* ---------- theme ---------- */
 
 const THEMES = ['system', 'light', 'dark'];
+/** @type {Record<string, string>} */
 const THEME_GLYPH = { system: '◐', light: '☀', dark: '☾' };
+/** @type {Record<string, string>} */
 const THEME_LABEL = {
   system: 'Theme: follow system',
   light: 'Theme: light',
   dark: 'Theme: dark'
 };
 
+/** @param {string} theme */
 function applyTheme(theme) {
   const chosen = THEMES.includes(theme) ? theme : 'system';
   if (chosen === 'system') document.documentElement.removeAttribute('data-theme');
@@ -3260,6 +3291,7 @@ function setupTheme() {
 
 // <dialog> gives a real modal with focus trapping and Escape for free; this only
 // has to remember where focus came from and put it back.
+/** @param {HTMLDialogElement} dialog @param {Element | null} [focusTarget] */
 function openDialog(dialog, focusTarget) {
   const returnTo = document.activeElement;
   dialog.addEventListener('close', () => {
@@ -3338,6 +3370,7 @@ function renderKnownDevices() {
 
 // Used by paste-to-send and drag-and-drop when no session is open: pick a target
 // rather than guessing one.
+/** @param {{title: string, hint: string}} prompt */
 function pickTarget({ title, hint }) {
   return new Promise(resolve => {
     pickTargetTitle.textContent = title;
@@ -3430,7 +3463,7 @@ async function sendFilesTo(conv, files) {
 function setupDragAndDrop() {
   let depth = 0;
 
-  const rowFor = (target) => {
+  const rowFor = (/** @type {EventTarget | null} */ target) => {
     if (!(target instanceof Element)) return null;
     const row = target.closest('#peerRows tr, #roomRows tr');
     return row instanceof HTMLElement ? row : null;
@@ -3441,7 +3474,7 @@ function setupDragAndDrop() {
     sessionPanel.classList.remove('dragging');
   };
 
-  const carriesFiles = (event) => [...(event.dataTransfer?.types || [])].includes('Files');
+  const carriesFiles = (/** @type {DragEvent} */ event) => [...(event.dataTransfer?.types || [])].includes('Files');
 
   document.addEventListener('dragenter', event => {
     if (!carriesFiles(event)) return;
@@ -3564,6 +3597,7 @@ window.addEventListener('online', handleForeground);
 
 // A locked screen also stops transfers. Hold a screen wake lock only while
 // something is actually in flight, and release it as soon as nothing is.
+/** @type {WakeLockSentinel | null} */
 let wakeLock = null;
 async function updateWakeLock() {
   if (!('wakeLock' in navigator)) return;
@@ -3594,6 +3628,7 @@ async function updateWakeLock() {
 
 function setupInstallPrompt() {
   const installBtn = $('#installBtn');
+  /** @type {any} */
   let deferred = null;
 
   window.addEventListener('beforeinstallprompt', event => {
@@ -3642,7 +3677,7 @@ async function setupServiceWorker() {
   }
 
   const banner = $('#updateBanner');
-  const offerUpdate = (worker) => {
+  const offerUpdate = (/** @type {ServiceWorker | null} */ worker) => {
     if (!worker) return;
     banner.classList.remove('hidden');
     $('#reloadBtn').onclick = () => {

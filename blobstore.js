@@ -55,9 +55,37 @@ export const BLOB_DEFAULTS = {
 const token = () => crypto.randomBytes(32).toString('base64url');
 
 /**
+ * One buffered item. A message is complete when it is offered; a file becomes
+ * complete when its body finishes uploading.
+ * @typedef {object} BlobRecord
+ * @property {string} id
+ * @property {'file' | 'message'} kind
+ * @property {string} senderId
+ * @property {string} conv
+ * @property {number} bytes ciphertext length the sender declared
+ * @property {number} chunkSize
+ * @property {number} totalChunks
+ * @property {Set<string>} recipients devices the item is addressed to
+ * @property {Set<string>} participants recipients plus the sender
+ * @property {Set<string>} released recipients that have taken their copy
+ * @property {string} uploadToken
+ * @property {Map<string, string>} downloadTokens issued token -> device id
+ * @property {string} convDir
+ * @property {string} path body on disk
+ * @property {string} envelopePath sealed envelopes on disk
+ * @property {number} envelopeBytes
+ * @property {number} written bytes actually received
+ * @property {boolean} complete
+ * @property {number} createdAt
+ */
+
+/** @typedef {Partial<typeof BLOB_DEFAULTS> & {now?: () => number}} BlobStoreOptions */
+
+/**
  * Directory name for a conversation. A direct conversation is keyed on both
  * devices so it is the same directory whichever of them sends; hashing keeps
  * the name fixed-length and free of anything a path could misread.
+ * @param {string} conv @param {Iterable<string>} participants
  */
 export function conversationKey(conv, participants) {
   if (typeof conv === 'string' && conv.startsWith('room:')) {
@@ -67,6 +95,7 @@ export function conversationKey(conv, participants) {
   return `d-${crypto.createHash('sha256').update(pair).digest('hex').slice(0, 32)}`;
 }
 
+/** @param {string} dir */
 async function removeIfEmpty(dir) {
   // rmdir refuses a non-empty directory, which is exactly the check we want,
   // done atomically instead of list-then-delete.
@@ -78,14 +107,15 @@ async function removeIfEmpty(dir) {
   }
 }
 
+/** @param {BlobStoreOptions} options */
 export function createBlobStore(options = {}) {
   const config = { ...BLOB_DEFAULTS, ...options };
   const now = options.now || Date.now;
-  const expired = blob => now() - blob.createdAt >= config.maxAgeMs;
-  /** @type {Map<string, any>} */
+  const expired = (/** @type {BlobRecord} */ blob) => now() - blob.createdAt >= config.maxAgeMs;
+  /** @type {Map<string, BlobRecord>} */
   const blobs = new Map();
   let storeBytes = 0;
-  /** Called with an item record once it is ready to deliver. @type {(blob: any) => void} */
+  /** Called with an item record once it is ready to deliver. @type {(blob: BlobRecord) => void} */
   let onAvailable = () => {};
 
   async function ready() {
@@ -93,9 +123,11 @@ export function createBlobStore(options = {}) {
     await wipe('boot');
   }
 
-  /** Erases every conversation directory and forgets every record. */
+  /** Erases every conversation directory and forgets every record.
+   * @param {string} reason */
   async function wipe(reason) {
     let removed = 0;
+    /** @type {string[]} */
     let entries = [];
     try { entries = await fsp.readdir(config.dir); } catch { return { removed, reason }; }
     for (const entry of entries) {
@@ -109,6 +141,7 @@ export function createBlobStore(options = {}) {
     return { removed, reason };
   }
 
+  /** @param {string} id */
   async function remove(id) {
     const blob = blobs.get(id);
     if (!blob) return false;
@@ -120,6 +153,7 @@ export function createBlobStore(options = {}) {
     return true;
   }
 
+  /** @param {BlobRecord} blob @param {string} deviceId */
   async function readEnvelope(blob, deviceId) {
     try {
       const all = JSON.parse(await fsp.readFile(blob.envelopePath, 'utf8'));
@@ -133,6 +167,9 @@ export function createBlobStore(options = {}) {
    * Reserves an item. `envelopes` maps recipient device id -> sealed box; the
    * server treats each box as opaque. A message is complete on arrival; a file
    * waits for its body to be uploaded.
+   * @param {{senderId: string, conv: string, kind?: 'file' | 'message', bytes: number,
+   *   chunkSize: number, totalChunks: number, envelopes: Record<string, unknown>}} item
+   * @returns {Promise<{blob: BlobRecord, error?: undefined} | {error: string, blob?: undefined}>}
    */
   async function offer({ senderId, conv, kind = 'file', bytes, chunkSize, totalChunks, envelopes }) {
     const isMessage = kind === 'message';
@@ -212,7 +249,10 @@ export function createBlobStore(options = {}) {
     return { blob };
   }
 
-  /** Streams an upload to disk, enforcing the declared length as a hard cap. */
+  /** Streams an upload to disk, enforcing the declared length as a hard cap.
+   * @param {string} id @param {string} presentedToken
+   * @param {import('node:stream').Readable} request
+   * @returns {Promise<{status: number, message?: string, blob?: BlobRecord}>} */
   function receive(id, presentedToken, request) {
     return new Promise((resolve) => {
       const blob = blobs.get(id);
@@ -224,7 +264,7 @@ export function createBlobStore(options = {}) {
       let written = 0;
       let failed = false;
 
-      const abort = (status, message) => {
+      const abort = (/** @type {number} */ status, /** @type {string} */ message) => {
         if (failed) return;
         failed = true;
         request.unpipe?.(out);
@@ -236,7 +276,7 @@ export function createBlobStore(options = {}) {
         out.destroy();
       };
 
-      request.on('data', chunk => {
+      request.on('data', (/** @type {Buffer} */ chunk) => {
         if (expired(blob)) return abort(410, 'That transfer has expired.');
         written += chunk.length;
         // Never write past what was reserved, whatever the Content-Length said.
@@ -263,7 +303,10 @@ export function createBlobStore(options = {}) {
     });
   }
 
-  /** Issues a one-item download token to a participant. */
+  /** Issues a one-item download token to a participant.
+   * @param {string} id @param {string} deviceId
+   * @returns {Promise<{error: string, blob?: undefined, downloadToken?: undefined, envelope?: undefined}
+   *   | {error?: undefined, blob: BlobRecord, downloadToken: string, envelope: unknown}>} */
   async function claim(id, deviceId) {
     const blob = blobs.get(id);
     if (!blob || expired(blob)) return { error: 'That transfer is no longer available.' };
@@ -276,6 +319,9 @@ export function createBlobStore(options = {}) {
     return { blob, downloadToken: issued, envelope };
   }
 
+  /** @param {string} id @param {string} presentedToken
+   * @returns {{status: 404 | 403, message: string, blob?: undefined}
+   *   | {status: 200, blob: BlobRecord, message?: undefined}} */
   function openForDownload(id, presentedToken) {
     const blob = blobs.get(id);
     if (!blob || expired(blob) || !blob.complete || blob.kind !== 'file') return { status: 404, message: 'No such transfer.' };
@@ -283,7 +329,8 @@ export function createBlobStore(options = {}) {
     return { status: 200, blob };
   }
 
-  /** A recipient that has its copy; the item goes once every recipient has. */
+  /** A recipient that has its copy; the item goes once every recipient has.
+   * @param {string} id @param {string} deviceId */
   async function release(id, deviceId) {
     const blob = blobs.get(id);
     if (!blob || !blob.recipients.has(deviceId)) return false;
@@ -293,7 +340,8 @@ export function createBlobStore(options = {}) {
     return true;
   }
 
-  /** Items addressed to a device that it has not yet taken, oldest first. */
+  /** Items addressed to a device that it has not yet taken, oldest first.
+   * @param {string} deviceId */
   async function pendingFor(deviceId) {
     const ready = [...blobs.values()]
       .filter(blob => !expired(blob) && blob.complete && blob.recipients.has(deviceId) && !blob.released.has(deviceId))
@@ -302,6 +350,7 @@ export function createBlobStore(options = {}) {
       .filter(item => item !== null && now() - item.createdAt < config.maxAgeMs);
   }
 
+  /** @param {BlobRecord} blob @param {string} deviceId */
   async function describe(blob, deviceId) {
     if (expired(blob) || !blobs.has(blob.id)) return null;
     const envelope = await readEnvelope(blob, deviceId);
@@ -337,6 +386,7 @@ export function createBlobStore(options = {}) {
   }
 
   async function removeEmptyDirectories() {
+    /** @type {import('node:fs').Dirent[]} */
     let entries = [];
     try { entries = await fsp.readdir(config.dir, { withFileTypes: true }); } catch { return 0; }
     let removed = 0;
@@ -373,7 +423,7 @@ export function createBlobStore(options = {}) {
     sweepAged,
     removeEmptyDirectories,
     stats,
-    set onAvailable(handler) { onAvailable = typeof handler === 'function' ? handler : () => {}; }
+    set onAvailable(/** @type {(blob: BlobRecord) => void} */ handler) { onAvailable = typeof handler === 'function' ? handler : () => {}; }
   };
 }
 
@@ -382,12 +432,14 @@ export function createBlobStore(options = {}) {
  * It runs in a separate process with no in-memory records, so it judges age by
  * each file's mtime, then removes any directory it leaves empty.
  */
+/** @param {string} dir @param {number} maxAgeMs */
 export async function sweepDirectory(dir, maxAgeMs) {
   const cutoff = Date.now() - maxAgeMs;
   let removed = 0;
   let kept = 0;
   let directories = 0;
 
+  /** @type {import('node:fs').Dirent[]} */
   let entries = [];
   try {
     entries = await fsp.readdir(dir, { withFileTypes: true });

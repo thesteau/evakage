@@ -56,10 +56,10 @@ test('rooms advertise membership, cap size, and close when their last member lea
   assert.equal(room.name, 'Kitchen table');
   assert.match(room.code, /^[A-Z0-9]{4}-[A-Z0-9]{4}$/);
   assert.equal(room.maxMembers, 6);
-  assert.deepEqual(room.members.map(m => m.id), ['device_A_12345678']);
+  assert.deepEqual(room.members.map((/** @type {any} */ m) => m.id), ['device_A_12345678']);
 
   // Rooms are advertised to every connected client, joined or not.
-  const bSeesRoom = waitFor(b, m => m.type === 'rooms' && m.rooms.some(r => r.id === room.id));
+  const bSeesRoom = waitFor(b, m => m.type === 'rooms' && m.rooms.some((/** @type {any} */ r) => r.id === room.id));
   a.send(JSON.stringify({ type: 'rooms-request' }));
   await bSeesRoom;
 
@@ -68,7 +68,7 @@ test('rooms advertise membership, cap size, and close when their last member lea
   b.send(JSON.stringify({ type: 'join-room', code: room.code }));
   const joined = (await bJoined).room;
   await aSeesTwo;
-  assert.deepEqual(joined.members.map(m => m.name).sort(), ['Laptop', 'Phone']);
+  assert.deepEqual(joined.members.map((/** @type {any} */ m) => m.name).sort(), ['Laptop', 'Phone']);
 
   // Sixth device is the last that fits; a seventh is refused.
   const extras = [];

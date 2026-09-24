@@ -19,12 +19,14 @@ const CHUNK = 1024;
 const DAY = 24 * 60 * 60 * 1000;
 
 // Ciphertext length for a plaintext of `plain` bytes, matching relay.js.
+/** @param {number} plain */
 function layout(plain) {
   const totalChunks = Math.ceil(plain / CHUNK);
   return { totalChunks, bytes: plain + totalChunks * 28 };
 }
 
 /** Conversation directories, and every item file inside them. */
+/** @param {string} dir */
 async function onDisk(dir) {
   const directories = [];
   const files = [];
@@ -38,6 +40,8 @@ async function onDisk(dir) {
   return { directories, files };
 }
 
+/** @param {WebSocket} ws @param {string | string[]} to @param {number} plain
+ * @param {{conv?: string, kind?: 'file' | 'message'}} [options] */
 async function offer(ws, to, plain, { conv = 'direct', kind = 'file' } = {}) {
   const { totalChunks, bytes } = kind === 'message' ? { totalChunks: 0, bytes: 0 } : layout(plain);
   const requestId = crypto.randomUUID();
@@ -50,11 +54,12 @@ async function offer(ws, to, plain, { conv = 'direct', kind = 'file' } = {}) {
     bytes,
     chunkSize: CHUNK,
     totalChunks,
-    envelopes: Object.fromEntries([].concat(to).map(id => [id, BOX]))
+    envelopes: Object.fromEntries([to].flat().map(id => [id, BOX]))
   }));
   return { reply: await reply, bytes };
 }
 
+/** @param {string} base @param {string} blobId @param {string} token @param {BodyInit} body */
 const upload = (base, blobId, token, body) =>
   fetch(`${base}/blob/${blobId}?token=${encodeURIComponent(token)}`, { method: 'PUT', body });
 
@@ -166,6 +171,7 @@ test('an item outlives both devices disconnecting and is delivered when one come
   // B returns within the window: both arrive on registration, oldest first.
   const back = new WebSocket(wsBase);
   await new Promise(resolve => back.addEventListener('open', resolve, { once: true }));
+  /** @type {any[]} */
   const seen = [];
   const bothArrived = new Promise(resolve => {
     back.addEventListener('message', event => {
@@ -196,7 +202,9 @@ test('the age sweep removes items past 24h, keeps younger ones, and removes empt
   const otherOld = await offer(a, 'device_third_00003', 0, { kind: 'message' });
 
   for (const id of [old.reply.blobId, otherOld.reply.blobId]) {
-    app.blobStore.blobs.get(id).createdAt = Date.now() - (DAY + 1000);
+    const record = app.blobStore.blobs.get(id);
+    assert.ok(record);
+    record.createdAt = Date.now() - (DAY + 1000);
   }
   assert.equal((await onDisk(dir)).directories.length, 2);
 
@@ -226,7 +234,12 @@ test('the same two devices share one directory whichever sends; others get their
   const ba = await offer(b, 'device_pair_aaaa01', 0, { kind: 'message' });
   const ac = await offer(a, 'device_pair_cccc01', 0, { kind: 'message' });
 
-  const dirOf = id => app.blobStore.blobs.get(id).convDir;
+  /** @param {string} id */
+  const dirOf = id => {
+    const record = app.blobStore.blobs.get(id);
+    assert.ok(record);
+    return record.convDir;
+  };
   assert.equal(dirOf(ab.reply.blobId), dirOf(ba.reply.blobId), 'A->B and B->A are one conversation');
   assert.notEqual(dirOf(ab.reply.blobId), dirOf(ac.reply.blobId), 'A->C is a different conversation');
 

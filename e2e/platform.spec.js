@@ -5,9 +5,10 @@ import { startServer } from '../tests/helpers.js';
 test('engine smoke: identity, relay chat and verified file download', async ({ browser }) => {
   /** @type {(() => Promise<void>)[]} */
   const cleanup = [];
-  const { base } = await startServer({ after: fn => cleanup.push(fn) });
+  const { base } = await startServer({ after: (/** @type {() => Promise<void>} */ fn) => cleanup.push(fn) });
   const contexts = [];
   const pages = [];
+  /** @type {string[]} */
   const errors = [];
   try {
     for (const name of ['Alice', 'Bob']) {

@@ -3,15 +3,17 @@ import assert from 'node:assert/strict';
 import net from 'node:net';
 import { startServer, openWs, waitFor, register } from './helpers.js';
 
+/** @param {WebSocket} ws @param {number} [timeoutMs] @returns {Promise<any>} */
 function waitForClose(ws, timeoutMs = 4000) {
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error('Socket stayed open')), timeoutMs);
-    ws.addEventListener('close', event => { clearTimeout(timer); resolve(event); }, { once: true });
+    ws.addEventListener('close', (/** @type {CloseEvent} */ event) => { clearTimeout(timer); resolve(event); }, { once: true });
   });
 }
 
 // Raw handshake so we can control the Origin header, which the WebSocket client
 // does not let us set.
+/** @param {number} port @param {Record<string, string>} [headers] @returns {Promise<number>} */
 function rawUpgrade(port, headers = {}) {
   return new Promise((resolve, reject) => {
     const socket = net.connect(port, '127.0.0.1', () => {
@@ -40,6 +42,7 @@ function rawUpgrade(port, headers = {}) {
   });
 }
 
+/** @param {import('node:test').TestContext} t @param {any} [options] */
 async function withServer(t, options = {}) {
   return startServer(t, options);
 }
@@ -139,6 +142,7 @@ test('AUTH_TOKEN gates the page and the upgrade, and the token can be traded for
   const { base, port } = await withServer(t, { authToken: 's3cret-token' });
 
   // Bodies must be consumed or undici holds the pooled connection open.
+  /** @param {string} url @param {RequestInit} [init] */
   const status = async (url, init) => {
     const response = await fetch(url, init);
     await response.arrayBuffer();
@@ -170,7 +174,7 @@ test('AUTH_TOKEN gates the page and the upgrade, and the token can be traded for
 
 test('static serving refuses traversal and sends security headers everywhere', async t => {
   const { base } = await withServer(t);
-  const get = async (pathname) => {
+  const get = async (/** @type {string} */ pathname) => {
     const response = await fetch(`${base}${pathname}`, { redirect: 'manual' });
     const body = await response.text();
     return { status: response.status, headers: response.headers, body };

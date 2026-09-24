@@ -31,8 +31,12 @@ async function makeIdentity() {
   };
 }
 
-const sha256 = (bytes) => crypto.createHash('sha256').update(bytes).digest('hex');
+/** @typedef {Awaited<ReturnType<typeof makeIdentity>>} TestIdentity */
 
+const sha256 = (/** @type {Uint8Array} */ bytes) => crypto.createHash('sha256').update(bytes).digest('hex');
+
+/** @param {TestIdentity} sender @param {TestIdentity} recipient
+ * @param {Uint8Array<ArrayBuffer>} bytes @param {number} [chunkSize] */
 async function sealedFile(sender, recipient, bytes, chunkSize = 1024) {
   const { raw, key } = await generateContentKey();
   const meta = {
@@ -170,6 +174,8 @@ test('tampered, reordered, or truncated bodies fail to decrypt', async () => {
 
 /* ---------- relayed chat messages ---------- */
 
+/** @param {TestIdentity} sender @param {TestIdentity} recipient
+ * @param {string} text @param {string} [conv] */
 async function sealedMessage(sender, recipient, text, conv = 'direct') {
   return buildMessageEnvelope({
     identity: sender,

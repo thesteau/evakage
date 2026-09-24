@@ -7,6 +7,7 @@ import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import { startServer, openWs } from './helpers.js';
 
+/** @param {string} wsBase @param {string} deviceId */
 async function register(wsBase, deviceId) {
   const ws = await openWs(wsBase);
   await new Promise((resolve, reject) => {
@@ -21,6 +22,7 @@ async function register(wsBase, deviceId) {
 }
 
 // A deterministic PRNG so a failure can be reproduced from the printed seed.
+/** Deterministic PRNG so a failing seed replays. @param {number} seed */
 function rng(seed) {
   let state = seed >>> 0;
   return () => {
@@ -29,7 +31,9 @@ function rng(seed) {
   };
 }
 
+/** @param {() => number} random @param {number} [depth] @returns {any} */
 function randomValue(random, depth = 0) {
+  /** @type {Array<() => any>} */
   const choices = [
     () => null,
     () => undefined,
@@ -54,6 +58,7 @@ function randomValue(random, depth = 0) {
   return choices[Math.floor(random() * choices.length)]();
 }
 
+/** @param {() => number} random */
 function validSignal(random) {
   const shape = random();
   if (shape < 0.25) return { type: 'signal', to: 'device_victim_1234', data: { type: 'knock' } };
@@ -69,6 +74,7 @@ function validSignal(random) {
 }
 
 // Corrupt exactly one place in an otherwise valid message.
+/** @param {any} message @param {() => number} random */
 function mutate(message, random) {
   const targets = [
     () => { message.type = TYPES[Math.floor(random() * TYPES.length)]; },
@@ -114,6 +120,7 @@ test('random structured garbage is never forwarded and never takes the server do
   const random = rng(seed);
   const victim = await register(wsBase, 'device_victim_1234');
 
+  /** @type {any[]} */
   const forwarded = [];
   victim.addEventListener('message', event => {
     const msg = JSON.parse(String(event.data));
