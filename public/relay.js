@@ -211,17 +211,36 @@ export async function* encryptBodyChunks(blob, key, fileId, chunkSize, startInde
   }
 }
 
+/** @param {Uint8Array} a @param {Uint8Array | undefined} b */
+function sameBytes(a, b) {
+  if (!b || a.length !== b.length) return false;
+  let diff = 0;
+  for (let i = 0; i < a.length; i++) diff |= a[i] ^ b[i];
+  return diff === 0;
+}
+
 /**
  * Incremental decryptor: feed it ciphertext as it arrives from the network and
- * it decrypts each chunk as soon as the chunk is complete. Peak memory is the
- * plaintext plus one chunk, rather than the whole ciphertext and plaintext.
+ * it decrypts each chunk as soon as the chunk is complete.
+ *
+ * By default it keeps the plaintext, so peak memory is the file plus one chunk.
+ * Two-pass receiving uses it without `retain` instead. The verify pass records
+ * a SHA-256 per chunk and discards the plaintext; the save pass hands those
+ * digests back as `expected`, so every chunk `take()` returns is byte-identical
+ * to the copy that already passed the whole-file check.
 
- * @param {{key: CryptoKey, fileId: string, chunkSize: number, size: number}} options */
-export function createBodyDecryptor({ key, fileId, chunkSize, size }) {
+ * @param {{key: CryptoKey, fileId: string, chunkSize: number, size: number,
+ *   retain?: boolean, expected?: Uint8Array[] | null}} options */
+export function createBodyDecryptor({ key, fileId, chunkSize, size, retain = true, expected = null }) {
   const totalChunks = Math.ceil(size / chunkSize);
+  if (expected && expected.length !== totalChunks) throw new Error('Verified digests do not match the chunk count');
   const hash = new Sha256();
   /** @type {Uint8Array[]} */
   const chunks = [];
+  /** @type {Uint8Array[]} */
+  const digests = [];
+  /** @type {Uint8Array[]} plaintext decrypted since the last take(), save pass only */
+  let ready = [];
   let pending = new Uint8Array(0);
   let index = 0;
 
@@ -238,7 +257,17 @@ export function createBodyDecryptor({ key, fileId, chunkSize, size }) {
         cipher
       ));
       hash.update(plain);
-      chunks.push(plain);
+      if (retain) {
+        chunks.push(plain);
+      } else {
+        const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', plain));
+        if (expected) {
+          if (!sameBytes(digest, expected[index])) throw new Error(`Chunk ${index} does not match the verified copy`);
+          ready.push(plain);
+        } else {
+          digests.push(digest);
+        }
+      }
       pending = pending.slice(length);
       index++;
     }
@@ -254,9 +283,38 @@ export function createBodyDecryptor({ key, fileId, chunkSize, size }) {
       await drain();
       if (index >= totalChunks && pending.length) throw new Error('Trailing bytes after the last chunk');
     },
+    /** Verified plaintext produced since the last call; empty unless `expected` was given. */
+    take() {
+      const taken = ready;
+      ready = [];
+      return taken;
+    },
     finish() {
       if (index !== totalChunks || pending.length) throw new Error('Transfer ended before every chunk arrived');
-      return { chunks, sha256: hash.hex() };
+      return { chunks, digests, sha256: hash.hex() };
     }
   };
+}
+
+/**
+ * The save pass of two-pass receiving. Re-reads the body and yields plaintext
+ * only once each chunk has matched the verified pass. The last chunk is held
+ * back until the whole-file digest matches too, so a body that ends early,
+ * runs long or diverges never yields a complete file.
+ * @param {AsyncIterable<Uint8Array>} body
+ * @param {{key: CryptoKey, fileId: string, chunkSize: number, size: number,
+ *   sha256: string, digests: Uint8Array[]}} options */
+export async function* verifiedPlaintext(body, { key, fileId, chunkSize, size, sha256, digests }) {
+  const decryptor = createBodyDecryptor({ key, fileId, chunkSize, size, retain: false, expected: digests });
+  /** @type {Uint8Array | null} */
+  let held = null;
+  for await (const bytes of body) {
+    await decryptor.push(bytes);
+    for (const chunk of decryptor.take()) {
+      if (held) yield held;
+      held = chunk;
+    }
+  }
+  if (decryptor.finish().sha256 !== sha256) throw new Error('The file does not match its verified digest');
+  if (held) yield held;
 }

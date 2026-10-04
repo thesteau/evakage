@@ -12,6 +12,7 @@ import {
   generateContentKey,
   encryptBody,
   createBodyDecryptor,
+  verifiedPlaintext,
   cipherLayout
 } from '../public/relay.js';
 
@@ -247,6 +248,94 @@ test('an oversized relayed message is refused on open', async () => {
     openMessageEnvelope({ sealPrivateKey: recipient.sealPrivateKey, box, selfId: recipient.deviceId, expectedFrom: sender.deviceId, maxChars: 10 }),
     /Bad message text/
   );
+});
+
+/* ---------- two-pass receiving ---------- */
+
+/** @param {Uint8Array} body @param {number} step */
+async function* pieces(body, step) {
+  for (let offset = 0; offset < body.length; offset += step) yield body.subarray(offset, offset + step);
+}
+
+/** Collects what a save pass yields, and whether it completed.
+ * @param {AsyncIterable<Uint8Array>} stream */
+async function drainSave(stream) {
+  /** @type {Uint8Array[]} */
+  const yielded = [];
+  try {
+    for await (const chunk of stream) yielded.push(chunk);
+    return { yielded, error: null };
+  } catch (err) { return { yielded, error: /** @type {Error} */ (err) }; }
+}
+
+/** A verify pass over `body`: keeps digests, not plaintext. */
+async function verifyPass(/** @type {CryptoKey} */ key, /** @type {string} */ fileId, /** @type {Uint8Array} */ body, /** @type {number} */ size) {
+  const decryptor = createBodyDecryptor({ key, fileId, chunkSize: 1024, size, retain: false });
+  await decryptor.push(body);
+  assert.deepEqual(decryptor.take(), [], 'the verify pass hands nothing on');
+  return decryptor.finish();
+}
+
+test('two-pass: the verify pass keeps no plaintext and the save pass yields the exact file', async () => {
+  const { key } = await generateContentKey();
+  for (const size of [0, 1, 1024, 5000]) {
+    const bytes = crypto.randomBytes(size);
+    const body = new Uint8Array(await (await encryptBody(new Blob([bytes]), key, 'two-pass', 1024)).arrayBuffer());
+    const verified = await verifyPass(key, 'two-pass', body, size);
+    assert.equal(verified.sha256, sha256(bytes));
+    assert.deepEqual(verified.chunks, [], 'no plaintext is retained');
+    assert.equal(verified.digests.length, Math.ceil(size / 1024));
+    for (const step of [1, 700, 1052, body.length || 1]) {
+      const { yielded, error } = await drainSave(verifiedPlaintext(pieces(body, step),
+        { key, fileId: 'two-pass', chunkSize: 1024, size, sha256: verified.sha256, digests: verified.digests }));
+      assert.equal(error, null, `size ${size} step ${step}`);
+      assert.deepEqual(Buffer.concat(yielded.map(c => Buffer.from(c))), Buffer.from(bytes));
+      assert.ok(yielded.every(chunk => chunk.length <= 1024), 'output is chunk-sized');
+    }
+  }
+});
+
+test('two-pass: a second pass that differs from the verified one never completes', async () => {
+  const { key } = await generateContentKey();
+  const bytes = crypto.randomBytes(5000);
+  const encrypt = async (/** @type {Uint8Array} */ plain) =>
+    new Uint8Array(await (await encryptBody(new Blob([new Uint8Array(plain)]), key, 'two-pass', 1024)).arrayBuffer());
+  const body = await encrypt(bytes);
+  const verified = await verifyPass(key, 'two-pass', body, bytes.length);
+  const save = (/** @type {Uint8Array} */ second) => drainSave(verifiedPlaintext(pieces(second, 4096),
+    { key, fileId: 'two-pass', chunkSize: 1024, size: bytes.length, sha256: verified.sha256, digests: verified.digests }));
+
+  // Validly encrypted under the same key, but not the file that was verified:
+  // only a holder of the key could make this, and it is still refused.
+  const other = Buffer.from(bytes);
+  other[3000] ^= 1;
+  const substituted = await save(await encrypt(other));
+  assert.match(String(substituted.error), /Chunk 2 does not match the verified copy/);
+  assert.ok(Buffer.concat(substituted.yielded.map(c => Buffer.from(c))).length <= 2048,
+    'nothing from or after the mismatched chunk is handed on');
+
+  const flipped = body.slice();
+  flipped[100] ^= 1;
+  assert.ok((await save(flipped)).error, 'a tampered chunk fails authentication');
+
+  const truncated = await save(body.subarray(0, body.length - 10));
+  assert.match(String(truncated.error), /ended before every chunk/);
+  assert.ok(Buffer.concat(truncated.yielded.map(c => Buffer.from(c))).length < bytes.length,
+    'a truncated pass never yields the whole file');
+
+  const extended = await save(new Uint8Array([...body, 1]));
+  assert.match(String(extended.error), /Trailing bytes/);
+  assert.ok(Buffer.concat(extended.yielded.map(c => Buffer.from(c))).length < bytes.length,
+    'the last chunk is held until the pass is known to be complete');
+
+  // Digests from another file, or of the wrong length, are refused outright.
+  assert.throws(() => createBodyDecryptor({ key, fileId: 'two-pass', chunkSize: 1024, size: bytes.length,
+    retain: false, expected: verified.digests.slice(1) }), /chunk count/);
+  const wrongDigest = await drainSave(verifiedPlaintext(pieces(body, 4096),
+    { key, fileId: 'two-pass', chunkSize: 1024, size: bytes.length, sha256: '0'.repeat(64), digests: verified.digests }));
+  assert.match(String(wrongDigest.error), /does not match its verified digest/);
+  assert.equal(Buffer.concat(wrongDigest.yielded.map(c => Buffer.from(c))).length, 4 * 1024,
+    'a whole-file mismatch withholds the final chunk');
 });
 
 test('a fresh decryptor restarts an interrupted download and verifies the whole file', async () => {

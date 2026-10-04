@@ -7,7 +7,7 @@ export const deviceNames = new Map();
 /** @typedef {import('@playwright/test').Page} Page */
 /** @typedef {{device: string, patch: (source: string) => string} | null} AppPatch */
 
-export const test = base.extend(/** @type {import('@playwright/test').Fixtures<{devices: {alice: Page, bob: Page, disconnect: (name: string) => void}, appPatch: AppPatch, autoPair: boolean}, {}, import('@playwright/test').PlaywrightTestArgs, import('@playwright/test').PlaywrightWorkerArgs>} */ ({
+export const test = base.extend(/** @type {import('@playwright/test').Fixtures<{devices: {alice: Page, bob: Page, disconnect: (name: string) => void, server: ReturnType<typeof import('../server.js').createEvakageServer>}, appPatch: AppPatch, autoPair: boolean}, {}, import('@playwright/test').PlaywrightTestArgs, import('@playwright/test').PlaywrightWorkerArgs>} */ ({
   // Serves one device a rewritten app.js, so a test can play a peer that
   // misbehaves in a way the honest client never would. Set with
   // test.use({ appPatch: { device: 'Bob', patch: source => ... } }).
@@ -53,7 +53,7 @@ export const test = base.extend(/** @type {import('@playwright/test').Fixtures<{
         pages.push(page);
       }
       if (autoPair) await pairDevices(pages[0], pages[1]);
-      await use({ alice: pages[0], bob: pages[1], disconnect: name => {
+      await use({ alice: pages[0], bob: pages[1], server: app, disconnect: name => {
         for (const client of app.clients.values()) if (client.name === deviceNames.get(name)) client.ws.close();
       } });
       expect(pageErrors).toEqual([]);
@@ -98,6 +98,18 @@ export async function openPeer(page, name) {
   await page.locator('#peerRows tr').filter({ hasText: name })
     .getByRole('button', { name: `Open conversation with ${name}`, exact: true }).click();
   await expect(page.locator('#secureState')).toContainText('Encrypted');
+}
+
+/** Waits until the service worker controls the page, so relayed files are
+ * received in two passes with a streamed Save.
+ * @param {Page} page */
+export async function whenControlled(page) {
+  await page.evaluate(async () => {
+    await navigator.serviceWorker.ready;
+    if (!navigator.serviceWorker.controller) {
+      await new Promise(resolve => navigator.serviceWorker.addEventListener('controllerchange', resolve, { once: true }));
+    }
+  });
 }
 
 /** @param {Page} sender @param {Page} receiver @param {string} text */

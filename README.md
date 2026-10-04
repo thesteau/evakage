@@ -157,7 +157,7 @@ are not guaranteed, even when wake lock is available.
 - **Share target.** Once installed, Evakage appears in the share sheet of other apps. Shared text or a link is prefilled in the composer; shared files wait behind a banner until you pick a device or room — including a device that is offline, which gets them through the relay. The files are caught by the service worker and never reach the server unencrypted. (Android and desktop Chrome/Edge; iOS does not support web share targets.)
 - **Updates.** A new build never reloads the page underneath you; a banner offers the reload, so an in-flight transfer is not interrupted.
 
-Large files remain the weak spot on phones: received blobs are held in memory until saved, and a memory-constrained browser may evict the tab. That is a known limitation, not a solved problem.
+Large files remain the weak spot on phones. Relayed files are verified and then streamed to disk on Save without being held in memory, when the service worker is in control. Files received directly, and relayed files without the worker, are held in memory until saved, and a memory-constrained browser may evict the tab. Physical-phone memory has not been measured.
 
 ## Configuration
 
@@ -253,9 +253,15 @@ including after reconnect. **Restart download** fetches
 the whole ciphertext again from byte zero using a recipient download token.
 AES-GCM binds every chunk to its file ID, index and total; SHA-256 still must match
 before Save is offered. Relay transfers do not resume. A server restart or expiry
-removes the buffered item. The receiver still retains the whole plaintext
-file before saving; bounded-memory streaming saves are deferred to preserve the
-existing final verification guarantee. See [local measurements](docs/relay-memory.md).
+removes the buffered item.
+
+When the service worker controls the page, a relayed file is received in two
+passes. The first verifies it and keeps only a digest per chunk. **Save** fetches
+it again and streams it straight to disk, passing on only chunks identical to the
+verified ones; any difference fails the download. The server copy is kept until
+that save completes, so Save shows the expiry countdown and a file that expires
+first shows **Gone**. Without the worker, the verified file is kept in memory
+until Save, as before. See [design and measurements](docs/relay-memory.md).
 
 ## Peer protocol versioning
 

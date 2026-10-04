@@ -78,7 +78,11 @@ export interface FileRecord extends FileMeta {
   offer?: 'pending' | 'accepted' | 'declined' | null;
   awaitingConsent?: string[];
   via?: 'relay';
-  relayStage?: 'encrypting' | 'uploading' | 'downloading' | 'offered' | 'failed' | 'uploaded' | 'received' | 'declined';
+  /** 'verified' means checked and discarded, awaiting a streamed Save that fetches it again. */
+  relayStage?: 'encrypting' | 'uploading' | 'downloading' | 'offered' | 'failed' | 'uploaded' | 'received' | 'declined'
+    | 'verified' | 'saving' | 'saved' | 'gone';
+  /** Per-chunk plaintext SHA-256 from the verify pass, held until Save. */
+  relayDigests?: Uint8Array[] | null;
   relayBlobId?: string;
   relayAbort?: AbortController;
   retryUpload?: () => Promise<void>;

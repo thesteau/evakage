@@ -1,4 +1,4 @@
-import { test, openPeer, deviceNames, pairDevices } from './helpers.js';
+import { test, openPeer, deviceNames, pairDevices, whenControlled } from './helpers.js';
 import { test as engineTest, expect, devices as profiles } from '@playwright/test';
 import fs from 'node:fs/promises';
 import { startServer } from '../tests/helpers.js';
@@ -82,13 +82,15 @@ engineTest('simulated phone verifies a 32 MiB relay file before Save', async ({ 
       pages.push(page);
     }
     const [sender, receiver] = pages;
+    await whenControlled(receiver);
     await pairDevices(sender, receiver);
     for (const [page, peer] of [[sender, receiver], [receiver, sender]]) {
       const name = await peer.locator('#selfCode').getAttribute('data-device-name');
       await page.getByRole('button', { name: `Open conversation with ${name}`, exact: true }).click();
     }
+    let gets = 0;
     await receiver.route('**/blob/**', async route => {
-      if (route.request().method() === 'GET') { waiting = true; await gate; }
+      if (route.request().method() === 'GET') { gets++; waiting = true; await gate; }
       await route.continue();
     });
     const bytes = Buffer.alloc(32 * 1024 * 1024, 93);
@@ -98,14 +100,21 @@ engineTest('simulated phone verifies a 32 MiB relay file before Save', async ({ 
     await expect(row.getByRole('button', { name: 'Save', exact: true })).toHaveCount(0);
     release();
     await expect(row).toContainText('SHA-256 ✓', { timeout: 60000 });
+    expect(gets).toBe(1);
     const downloading = receiver.waitForEvent('download');
     await row.getByRole('button', { name: 'Save', exact: true }).click();
-    expect(await fs.readFile(await (await downloading).path())).toEqual(bytes);
+    const download = await downloading;
+    expect(download.url()).toContain('/save-stream/');
+    expect(await download.failure()).toBeNull();
+    expect(await fs.readFile(await download.path())).toEqual(bytes);
+    expect(gets).toBe(2);
     expect(errors).toEqual([]);
     await info.attach('receiving-validation', { contentType: 'application/json', body: JSON.stringify({
       profile: 'Chromium Pixel 7 simulation; not physical hardware', bytes: bytes.length,
       saveUnavailableBeforeReceipt: true, finalHashVerified: true, exactSavedBytes: true,
-      boundedMemory: false, pageErrors: errors
+      twoPass: true, streamedSave: true, bodyFetches: gets,
+      // Memory is measured in benchmarks/receive.mjs, not in this browser run.
+      browserMemoryMeasured: false, pageErrors: errors
     }, null, 2) });
   } finally {
     release();

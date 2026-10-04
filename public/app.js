@@ -30,8 +30,10 @@ import {
   generateContentKey,
   encryptBodyChunks,
   createBodyDecryptor,
+  verifiedPlaintext,
   cipherLayout
 } from './relay.js';
+import { saveStream, streamSaveAvailable, StreamSaveUnavailable } from './savestream.js';
 
 /** @typedef {{
  * '#connectDialog': HTMLDialogElement,
@@ -2266,7 +2268,51 @@ function notifyIncoming(conv, message) {
   });
 }
 
-/** @param {Conversation} conv
+/** A guard that throws once the sender is blocked or forgotten, or the work is aborted.
+ * @param {FileRecord} record @param {AbortController} controller */
+function relayGuard(record, controller) {
+  return () => {
+    if (record.from && !deviceAllowed(record.from)) throw new Error('Sender authorization was revoked.');
+    controller.signal.throwIfAborted();
+  };
+}
+
+/** Claims a relayed item afresh and opens its ciphertext body.
+ * @param {FileRecord} record @param {AbortSignal} signal */
+async function fetchRelayBody(record, signal) {
+  const claim = await awaitReply(`claim:${record.relayBlobId}`, () =>
+    wsSend({ type: 'blob-claim', blobId: record.relayBlobId }));
+  const response = await fetch(`/blob/${encodeURIComponent(record.relayBlobId || '')}?token=${encodeURIComponent(claim.downloadToken)}`, {
+    cache: 'no-store', signal
+  });
+  if (!response.ok || !response.body) {
+    throw Object.assign(new Error(`download failed (${response.status})`), { gone: response.status === 404 || response.status === 410 });
+  }
+  return response.body;
+}
+
+/** Network reads, checking authorization around each one.
+ * @param {ReadableStream<Uint8Array>} body @param {() => void} check */
+async function* guardedReads(body, check) {
+  const reader = body.getReader();
+  try {
+    for (;;) {
+      check();
+      const { value, done } = await reader.read();
+      check();
+      if (done) return;
+      yield value;
+    }
+  } finally { await reader.cancel().catch(() => {}); }
+}
+
+/**
+ * Downloads and verifies a relayed file. Where the browser can stream a save to
+ * disk, this is the verify pass of two-pass receiving: the plaintext is checked
+ * and discarded, keeping a digest per chunk, and the server copy stays until
+ * Save fetches it again (saveRelayed). Otherwise the verified plaintext is kept
+ * in memory for Save, and the server copy is released at once.
+ * @param {Conversation} conv
  * @param {FileRecord} record */
 async function downloadRelayed(conv, record) {
   if (record.from && !deviceAllowed(record.from)) throw new Error('This device is blocked or unverified.');
@@ -2274,40 +2320,25 @@ async function downloadRelayed(conv, record) {
   if (record.relayAbort) return;
   const controller = new AbortController();
   record.relayAbort = controller;
-  const assertSenderAllowed = () => {
-    if (record.from && !deviceAllowed(record.from)) throw new Error('Sender authorization was revoked.');
-    controller.signal.throwIfAborted();
-  };
+  const assertSenderAllowed = relayGuard(record, controller);
+  const twoPass = streamSaveAvailable();
   record.relayStage = 'downloading';
+  record.relayDigests = null;
   record.progress = 0;
   renderSession();
   try {
-    const claim = await awaitReply(`claim:${record.relayBlobId}`, () =>
-      wsSend({ type: 'blob-claim', blobId: record.relayBlobId }));
-
     const decryptor = createBodyDecryptor({
-      key: record.relayKey, fileId: record.id, chunkSize: record.relayMeta.chunkSize, size: record.size
+      key: record.relayKey, fileId: record.id, chunkSize: record.relayMeta.chunkSize, size: record.size, retain: !twoPass
     });
-    const response = await fetch(`/blob/${encodeURIComponent(record.relayBlobId)}?token=${encodeURIComponent(claim.downloadToken)}`, {
-      cache: 'no-store', signal: controller.signal
-    });
-    if (!response.ok || !response.body) throw new Error(`download failed (${response.status})`);
-
-    const reader = response.body.getReader();
-    try {
-      for (;;) {
-        assertSenderAllowed();
-        const { value, done } = await reader.read();
-        assertSenderAllowed();
-        if (done) break;
-        await decryptor.push(value);
-        assertSenderAllowed();
-        record.progress = decryptor.progress;
-        updateFileProgress(conv, record);
-      }
-    } finally { await reader.cancel().catch(() => {}); }
+    const body = await fetchRelayBody(record, controller.signal);
+    for await (const bytes of guardedReads(body, assertSenderAllowed)) {
+      await decryptor.push(bytes);
+      assertSenderAllowed();
+      record.progress = decryptor.progress;
+      updateFileProgress(conv, record);
+    }
     assertSenderAllowed();
-    const { chunks, sha256 } = decryptor.finish();
+    const { chunks, digests, sha256 } = decryptor.finish();
 
     if (sha256 !== record.sha256) {
       record.corrupt = true;
@@ -2317,16 +2348,23 @@ async function downloadRelayed(conv, record) {
       return;
     }
 
-    record.blob = new Blob(/** @type {BlobPart[]} */ (chunks), { type: record.type });
     record.complete = true;
     record.available = true;
     record.verified = true;
     record.progress = 1;
-    record.relayStage = 'received';
-    record.holders = mergeHolders(record.holders, state.self?.id);
-    // Drop the key and metadata now the bytes are safe; nothing else needs them.
-    record.relayKey = null;
-    wsSend({ type: 'blob-release', blobId: record.relayBlobId });
+    if (twoPass) {
+      // Nothing of the file is kept; the key and digests let Save fetch it again
+      // and prove every chunk is the one just verified.
+      record.relayDigests = digests;
+      record.relayStage = 'verified';
+    } else {
+      record.blob = new Blob(/** @type {BlobPart[]} */ (chunks), { type: record.type });
+      record.relayStage = 'received';
+      record.holders = mergeHolders(record.holders, state.self?.id);
+      // Drop the key and metadata now the bytes are safe; nothing else needs them.
+      record.relayKey = null;
+      wsSend({ type: 'blob-release', blobId: record.relayBlobId });
+    }
     renderSession();
     toast(`Received ${record.name} via server · SHA-256 verified`);
   } catch (err) {
@@ -2335,6 +2373,64 @@ async function downloadRelayed(conv, record) {
     renderSession();
     toast(`Could not download ${record.name}: ${err.message}`);
   } finally { record.relayAbort = undefined; }
+}
+
+/**
+ * The save pass of two-pass receiving: fetches the relayed file again and
+ * streams it to disk, passing on only chunks identical to the verified pass.
+ * Any mismatch, revocation or interruption fails the browser download instead
+ * of completing it. The server copy is released once the save completes.
+ * @param {Conversation} conv
+ * @param {FileRecord} record */
+async function saveRelayed(conv, record) {
+  if (record.relayAbort || record.relayStage !== 'verified') return;
+  if (record.from && !deviceAllowed(record.from)) {
+    toast(`Cannot save ${record.name}: the sender is blocked or unverified.`);
+    return;
+  }
+  const { relayKey: key, relayMeta: meta, relayDigests: digests } = record;
+  if (!record.relayBlobId || !key || !meta || !digests || !record.sha256) return;
+  const controller = new AbortController();
+  record.relayAbort = controller;
+  record.relayStage = 'saving';
+  renderSession();
+  const sha256 = record.sha256;
+  const options = { key, fileId: record.id, chunkSize: meta.chunkSize, size: record.size, sha256, digests };
+  try {
+    const body = await fetchRelayBody(record, controller.signal);
+    const plaintext = verifiedPlaintext(guardedReads(body, relayGuard(record, controller)), options);
+    try {
+      await saveStream({ name: record.name, size: record.size, source: plaintext, signal: controller.signal });
+    } catch (err) {
+      if (!(err instanceof StreamSaveUnavailable)) throw err;
+      // This browser would not stream the download. Nothing has been read yet,
+      // so save the same verified stream from memory instead.
+      /** @type {BlobPart[]} */
+      const parts = [];
+      for await (const chunk of plaintext) parts.push(/** @type {Uint8Array<ArrayBuffer>} */ (chunk));
+      saveBlob(new Blob(parts, { type: record.type }), record.name);
+    }
+    record.relayStage = 'saved';
+    record.relayKey = null;
+    record.relayDigests = null;
+    wsSend({ type: 'blob-release', blobId: record.relayBlobId });
+  } catch (err) {
+    if (err?.gone || /no longer available|not addressed/.test(err?.message || '')) {
+      // The server dropped it between the passes; the verified copy cannot be fetched again.
+      record.relayStage = 'gone';
+      record.relayKey = null;
+      record.relayDigests = null;
+      toast(`${record.name} is no longer on the server, so it cannot be saved.`);
+    } else {
+      record.relayStage = 'verified';
+      toast(`Could not save ${record.name}: ${err.message}`);
+    }
+  } finally {
+    // Closes the fetch if the save stopped before reading all of it.
+    controller.abort();
+    record.relayAbort = undefined;
+    renderSession();
+  }
 }
 
 /** @param {Conversation} conv
@@ -2512,11 +2608,15 @@ function notifyOffer(conv, file) {
 
 /** @param {FileRecord} file */
 function downloadFile(file) {
-  if (!file.blob) return;
-  const url = URL.createObjectURL(file.blob);
+  if (file.blob) saveBlob(file.blob, file.name);
+}
+
+/** @param {Blob} blob @param {string} name */
+function saveBlob(blob, name) {
+  const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
-  a.download = file.name;
+  a.download = name;
   document.body.appendChild(a);
   a.click();
   a.remove();
@@ -3177,8 +3277,10 @@ function renderFile(conv, file) {
   if (waitingOn) details.push(`waiting for ${waitingOn === 1 ? displayName(file.awaitingConsent?.[0]) : `${waitingOn} devices`} to accept`);
   // Only while the server is still holding it: once collected it is released,
   // and a file that arrived is the receiver's own copy with no deadline.
+  // A file verified for a streamed save is still collected from the server on Save.
   const waitingOnServer = file.via === 'relay' &&
-    (file.direction === 'sent' ? file.relayStage === 'uploaded' : !file.complete);
+    (file.direction === 'sent' ? file.relayStage === 'uploaded'
+      : !file.complete || file.relayStage === 'verified');
   const expiry = waitingOnServer ? expiryState(file.relayExpiresAt) : null;
   if (expiry) details.push(expiry.cap ? `session ends · ${expiry.text}` : expiry.text);
   if (file.hashing) details.push('hashing…');
@@ -3204,7 +3306,7 @@ function renderFile(conv, file) {
   const btn = requiredChild(node, '.file-download', 'button');
   const holders = mergeHolders(file.holders).filter(id => id !== state.self?.id && state.peers.has(id));
   const partial = Array.isArray(file.chunks) && countReceived(file.chunks) > 0;
-  const relayBusy = ['encrypting', 'uploading', 'downloading'].includes(file.relayStage || '');
+  const relayBusy = ['encrypting', 'uploading', 'downloading', 'saving'].includes(file.relayStage || '');
   const inFlight = Boolean(file.transferId) || file.hashing || file.verifying || relayBusy;
 
   // An offer waiting on the user comes first: nothing has been received yet.
@@ -3231,7 +3333,8 @@ function renderFile(conv, file) {
         : file.relayStage === 'encrypting' ? 'Encrypting…'
           : file.relayStage === 'uploading' ? 'Uploading…'
             : file.relayStage === 'downloading' ? 'Downloading…'
-              : file.direction === 'sent' ? 'Sending…' : 'Receiving…';
+              : file.relayStage === 'saving' ? 'Saving…'
+                : file.direction === 'sent' ? 'Sending…' : 'Receiving…';
     btn.disabled = true;
     if (file.transferId) {
       const cancel = document.createElement('button');
@@ -3248,6 +3351,18 @@ function renderFile(conv, file) {
   } else if (file.blob) {
     btn.textContent = 'Save';
     btn.addEventListener('click', () => downloadFile(file));
+  } else if (file.via === 'relay' && file.relayStage === 'verified') {
+    btn.textContent = 'Save';
+    btn.title = 'Fetches the verified file again and streams it to disk';
+    btn.addEventListener('click', () => saveRelayed(conv, file));
+  } else if (file.via === 'relay' && file.relayStage === 'saved') {
+    btn.textContent = 'Saved';
+    btn.disabled = true;
+    btn.title = 'Streamed to disk; the server copy has been released.';
+  } else if (file.via === 'relay' && file.relayStage === 'gone') {
+    btn.textContent = 'Gone';
+    btn.disabled = true;
+    btn.title = 'The server no longer holds this file.';
   } else if (file.via === 'relay' && file.relayStage === 'failed' && file.relayKey) {
     // The server keeps it until it is taken or it expires, so it can be retried.
     btn.textContent = 'Restart download';

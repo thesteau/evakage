@@ -31,33 +31,60 @@ Retain it: the digest must accompany signed metadata before delivery, and removi
 it would require a finalize protocol or change the receiver's integrity gate.
 No transport redesign is justified by this desktop sample alone.
 
-Receivers still retain authenticated plaintext chunks and verify the final hash
-before offering Save. Streaming to disk before the final hash has not been enabled;
-that behavior changes the integrity guarantee and has not been approved.
+Receivers verify the final hash before offering Save. Where the browser can
+stream a save, they no longer retain the plaintext to do so; see below.
+
+## Two-pass receiving
+
+A relayed file is received in two passes when a service worker controls the page:
+
+1. **Verify pass** (on receipt). Fetch, authenticate and decrypt every chunk, check
+   the signed whole-file SHA-256, and keep only a SHA-256 per 256 KiB chunk
+   (32 bytes each, 1/8192 of the file size). The plaintext is discarded and the
+   server item is *not* released. Save is offered only after this pass succeeds.
+2. **Save pass** (on Save). Claim the item again and fetch the same body. Each
+   decrypted chunk must match its verify-pass digest before it is handed on, and
+   the last chunk is held until the whole-file digest matches again. Chunks go
+   to a service-worker response with `Content-Disposition: attachment`, pulled
+   one at a time as the browser writes them (`public/savestream.js`, `public/sw.js`).
+   Any mismatch, truncation, extra bytes or sender revocation errors that
+   response, so the browser fails the download instead of completing it. The
+   server item is released only after a completed save.
+
+Nothing touches Cache Storage, IndexedDB or other staging storage; the only disk
+write is the browser's own download. The trade-offs are deliberate: the body is
+downloaded twice; Save needs the server copy, so an item that expires between
+the passes shows **Gone** and cannot be saved; and a saved relayed file is not
+kept for a second Save or for serving to peers. Without a controlling service
+worker, the earlier single-pass path is used: plaintext stays in memory until
+Save and the item is released at once. If the worker cannot take a save, Save
+falls back to the same verified second pass collected in memory.
+
+The browser engines differ in how a failed streamed download ends. Measured with
+Playwright 1.63: Chromium cancels it, WebKit fails it, and Firefox never completes
+it (its driver reports neither a file nor a failure). None produces a completed
+file. A Firefox download stalled this way may remain listed in its downloads panel;
+that UI is not observable in these tests.
 
 ## Receiving measurement
 
-Run `node --expose-gc benchmarks/receive.mjs 64` and repeat with `128`.
-The production relay decryptor receives authenticated 256 KiB chunks, checks the
-final digest and keeps plaintext until Save. Encryption supplies a chunk at a
-time; source Blob memory is excluded from the baseline. Per-chunk GC is used only
-for measurement. Node v24.14.0, Windows x64, measured 2026-10-04:
+Run `node --expose-gc benchmarks/receive.mjs 64 single` and `two-pass`, then
+repeat with `128`. Both modes run the production decryptor over authenticated
+256 KiB chunks and check the final digest. The save pass consumes and discards
+verified chunks as a disk write would. Encryption supplies a chunk at a time;
+source Blob memory is excluded from the baseline. Per-chunk GC is used only for
+measurement. Node v24.14.0, Windows x64, measured 2026-10-04:
 
-| File | Retained plaintext | Peak additional RSS | Encrypt/receive with measurement overhead |
-| --- | ---: | ---: | ---: |
-| 64 MiB | 64 MiB | 68 MiB | 792 ms |
-| 128 MiB | 128 MiB | 133 MiB | 1488 ms |
+| File | Mode | Retained after verify | Peak additional RSS | Verify pass | Save pass |
+| --- | --- | ---: | ---: | ---: | ---: |
+| 64 MiB | Single pass | 64 MiB | 69 MiB | 783 ms | — |
+| 128 MiB | Single pass | 128 MiB | 133 MiB | 1423 ms | — |
+| 64 MiB | Two-pass | 8 KiB digests | 6 MiB | 897 ms | 886 ms |
+| 128 MiB | Two-pass | 16 KiB digests | 7 MiB | 1741 ms | 1472 ms |
 
-Both runs verified the expected complete SHA-256 and byte count. Node's
-`arrayBuffers` counter increased only 2 MiB despite live WebCrypto plaintext;
-it does not account for all of these allocations. The retained-byte count and
-RSS demonstrate file-sized storage. These are Node measurements, not phone bounds.
-
-The existing single-pass architecture cannot retain a whole verified file for
-later Save with constant memory and no disk/browser storage. The current task
-therefore remains open. Alternatives require a design change: staging storage,
-streaming before the final check, or a two-pass fetch that first verifies and
-discards plaintext, then binds every saved chunk to that verified pass. A two-pass
-design would also need source availability, expiry, second-pass tamper checks,
-interruption handling and physical-browser download validation. None is enabled
-by this measurement; whole-file verification before Save is preserved.
+All runs verified the expected complete SHA-256 and byte count. Node's
+`arrayBuffers` counter does not account for all live WebCrypto plaintext, so
+RSS is the meaningful column. Two-pass peak RSS stays flat as the file doubles,
+apart from the digest list. These are Node measurements of the decrypt/verify
+code, not phone bounds. Browser memory, including the service worker and the
+download pipeline, was not measured.

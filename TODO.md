@@ -69,29 +69,39 @@ This replaces historical backlog entries that no longer matched the checkout.
 
 ## Final local checks
 
-- `npm run check`: lint, strict type checking and **92/92 unit tests pass**.
-- `npm run test:e2e`: **33/33 Chromium scenarios pass**, including receiving
-  revocation, ciphertext tampering and the simulated-phone 32 MiB transfer.
+- `npm run check`: lint, strict type checking and **98/98 unit tests pass**.
+- `npm run test:e2e`: **42/42 Chromium scenarios pass**, including receiving
+  revocation, ciphertext tampering, the two-pass suite and the simulated-phone
+  32 MiB transfer (now two-pass with a streamed save).
 - `npm run test:e2e:platform -- --repeat-each=3 --output=test-results/platform`:
-  previous **9/9 pass** across Chromium, Firefox and WebKit; the current transfer
-  fixes also pass a fresh **3/3** engine smoke run.
+  **18/18 pass** across Chromium, Firefox and WebKit, including a two-pass
+  streamed-save smoke test per engine.
+- `npx playwright test e2e/two-pass.spec.js --browser=<engine> --repeat-each=3`:
+  **24/24** in Chromium; **21/21** in Firefox and in WebKit (the CDP-throttled
+  revocation case is Chromium-only).
 - `npm audit --audit-level=high`: zero reported vulnerabilities.
 - Docker image `aria-drop-review:20261004` builds. The isolated non-root container
   returns healthy status, protocol 3 configuration and correct module MIME;
   it was stopped afterward. Nothing was published or deployed.
-- Service-worker cache evakage-v18 includes signed-message, vendored QR modules, the foreground
-  notice and transfer fixes. Local browser tests are not physical Safari/phones.
+- Service-worker cache evakage-v19 includes signed-message, vendored QR modules, the foreground
+  notice, transfer fixes and the streamed-save module. Local browser tests are not physical Safari/phones.
 - Authenticated GitHub Actions results are recorded separately for the exact
   hosted revision; they do not cover this uncommitted working tree.
 
+- [x] Bounded-memory relay receiving (two-pass). With a controlling service
+  worker, the verify pass checks the whole-file hash and keeps only per-chunk
+  digests. Save refetches the file and streams digest-matched chunks to disk
+  through the worker. Any divergence fails the download; the server copy is
+  released after a completed save. There is no staging storage. Node peak RSS
+  stays at 6–7 MiB for 64/128 MiB files (single pass: 69/133 MiB). Browser e2e
+  covers tamper, truncation, expiry, revocation, retry and fallbacks in
+  Chromium, Firefox and WebKit. See [design and measurements](docs/relay-memory.md).
+  Not covered: direct (WebRTC) transfers still assemble in memory; physical
+  browsers and phones, browser-side memory, and Firefox's downloads-panel state
+  for a failed stream are unmeasured.
+
 ## Remaining work
 
-- [ ] Bounded-memory receiving implementation. Measurements confirm plaintext
-  retention scales with file size. The single-pass design cannot retain the whole
-  verified file for later Save with constant memory and no staging storage.
-  No streaming-before-verification tradeoff is approved; browser storage remains
-  outside the design. A two-pass design is a possible future alternative, with
-  availability, tamper, expiry and download validation still required.
 - [ ] Independent protocol/security review. Automated tests and fuzzing are not
   an independent review. Local recipient approval does not create signed group
   membership and cannot protect against a server serving compromised app code.

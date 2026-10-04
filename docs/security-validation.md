@@ -32,21 +32,39 @@ after reconnect.
 Two Chromium contexts with the Pixel 7 profile transfer a 32 MiB file by HTTP
 relay. Save is unavailable before receipt; final SHA-256 verification and saved
 bytes match the input, with no page error. This is a foreground browser test,
-matching the accepted phone-simulation scope. It does not establish constant
-memory, actual phone RAM limits or battery behavior.
+matching the accepted phone-simulation scope. It does not establish actual phone
+RAM limits or battery behavior.
 
-The [receiving measurement](relay-memory.md) separately shows 64/128 MiB plaintext
-retention and verifies whole-file digests. Bounded-memory receiving has not been
-implemented. Preserve verification before Save and the existing no-staging-storage
-constraint; a two-pass or staging architecture needs implementation and validation.
+## Two-pass receiving (added after the record below)
+
+Relayed files are now received in two passes, as described in
+[relay memory](relay-memory.md). The 32 MiB phone simulation now uses this
+path: one body fetch for verification, a second for a Save streamed through
+the service worker. `e2e/two-pass.spec.js` covers these cases:
+
+- exact bytes and release after a streamed save;
+- a tampered or truncated second pass (altered on the server's disk) failing
+  the download, retaining the server copy and allowing a successful retry;
+- expiry between the passes, which shows Gone without a download;
+- a sender blocked between the passes, which refuses Save;
+- revocation during a throttled save pass, which fails the download (Chromium only);
+- the single-pass and in-memory fallbacks.
+
+Except for the Chromium-only throttled case, these pass three times each in
+Chromium, Firefox and WebKit. `tests/relay.test.js` covers digest binding,
+substitution with a validly encrypted different file, truncation and trailing
+bytes. `tests/savestream.test.js` covers the worker route. Node measurements show
+flat peak RSS for the two-pass decrypt/verify code at 64 and 128 MiB. Browser
+memory and physical phones were not measured.
 
 ## Limits of this validation
 
 Validation passed: lint, strict type checking, 92 unit tests, all 33 Chromium
 scenarios, Chromium/Firefox/WebKit smoke tests and dependency auditing with zero
 reported vulnerabilities. The [revision and results record](validation/security-validation-20261004.json)
-includes hashes of the inspected source files; hosted CI still applies only to
-its committed revision, not this working tree.
+includes hashes of the inspected source files; it predates the two-pass change,
+so those hashes no longer match `public/app.js`, `public/relay.js` or `public/sw.js`.
+Hosted CI still applies only to its committed revision, not this working tree.
 
 The inspection checked direct, relayed and synchronized-message acceptance,
 signed relay envelopes, parser/resource bounds, pairing/revocation and receiving

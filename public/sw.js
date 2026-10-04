@@ -14,7 +14,7 @@
 // DOM lib does not know about.
 const worker = /** @type {ServiceWorkerGlobalScope} */ (/** @type {unknown} */ (self));
 
-const CACHE = 'evakage-v18';
+const CACHE = 'evakage-v19';
 
 const SHELL = [
   '/',
@@ -28,6 +28,7 @@ const SHELL = [
   '/sha256.js',
   '/identity.js',
   '/relay.js',
+  '/savestream.js',
   '/manifest.webmanifest',
   '/icon.svg',
   '/icons/icon-192.png',
@@ -139,10 +140,108 @@ async function receiveShare(request) {
   }
 }
 
+// Streamed saves (see savestream.js). A page registers a save, then navigates a
+// hidden iframe to /save-stream/<id>; the response body is pulled from that page
+// a chunk at a time, so the worker never holds more than a chunk or two. Each
+// registration is single-use and lapses if no navigation claims it.
+const SAVE_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+const SAVE_CLAIM_MS = 60 * 1000;
+/** @type {Map<string, {name: string, size: number, port: MessagePort, timer: ReturnType<typeof setTimeout>}>} */
+const pendingSaves = new Map();
+/** @type {Map<string, {controller: ReadableStreamDefaultController<Uint8Array>, port: MessagePort, pulled: (() => void) | null}>} */
+const activeSaves = new Map();
+
+/** @param {any} data @param {MessagePort | undefined} port */
+function registerSave(data, port) {
+  if (!port) return;
+  const ok = SAVE_ID.test(data.id) && !pendingSaves.has(data.id) && !activeSaves.has(data.id) &&
+    typeof data.name === 'string' && data.name.length > 0 && data.name.length <= 1024 &&
+    Number.isSafeInteger(data.size) && data.size >= 0;
+  if (!ok) { port.postMessage({ type: 'refused' }); return; }
+  const timer = setTimeout(() => pendingSaves.delete(data.id), SAVE_CLAIM_MS);
+  pendingSaves.set(data.id, { name: data.name, size: data.size, port, timer });
+  port.postMessage({ type: 'registered' });
+}
+
+/** @param {string} name */
+function contentDisposition(name) {
+  // Header values cannot carry control characters; the ASCII fallback is for
+  // engines that ignore filename*.
+  const ascii = name.replace(/[^\x20-\x7e]|["\\]/g, '_');
+  const encoded = encodeURIComponent(name).replace(/['()*]/g, c => `%${c.charCodeAt(0).toString(16).toUpperCase()}`);
+  return `attachment; filename="${ascii}"; filename*=UTF-8''${encoded}`;
+}
+
+/** @param {string} id */
+function claimSave(id) {
+  const save = pendingSaves.get(id);
+  pendingSaves.delete(id);
+  // 204 leaves the iframe where it was rather than navigating it anywhere.
+  if (!save) return new Response(null, { status: 204 });
+  clearTimeout(save.timer);
+  const { port } = save;
+  const body = new ReadableStream({
+    start(controller) { activeSaves.set(id, { controller, port, pulled: null }); },
+    pull() {
+      const active = activeSaves.get(id);
+      if (!active) return;
+      return new Promise(resolve => {
+        active.pulled = () => resolve(undefined);
+        port.postMessage({ type: 'pull' });
+      });
+    },
+    cancel() {
+      activeSaves.delete(id);
+      port.postMessage({ type: 'cancel' });
+    }
+  }, { highWaterMark: 1 });
+  return new Response(body, {
+    headers: {
+      'content-type': 'application/octet-stream',
+      'content-disposition': contentDisposition(save.name),
+      'content-length': String(save.size),
+      'x-content-type-options': 'nosniff',
+      'cache-control': 'no-store'
+    }
+  });
+}
+
+/** @param {any} data */
+function feedSave(data) {
+  if (data.type === 'save-abandon') {
+    const pending = pendingSaves.get(data.id);
+    if (pending) clearTimeout(pending.timer);
+    pendingSaves.delete(data.id);
+  }
+  const active = activeSaves.get(data.id);
+  if (!active) return;
+  const wake = () => { const pulled = active.pulled; active.pulled = null; pulled?.(); };
+  if (data.type === 'save-chunk' && data.chunk instanceof Uint8Array) {
+    active.controller.enqueue(data.chunk);
+    wake();
+  } else if (data.type === 'save-done') {
+    activeSaves.delete(data.id);
+    active.controller.close();
+    wake();
+  } else if (data.type === 'save-error' || data.type === 'save-abandon') {
+    activeSaves.delete(data.id);
+    active.controller.error(new Error(typeof data.message === 'string' ? data.message : 'Save failed'));
+    wake();
+  }
+}
+
 worker.addEventListener('message', event => {
   // Only this origin's own pages can talk to its worker, but say so explicitly:
   // a share is handed to whoever asks with its ID.
   if (event.origin !== location.origin) return;
+  if (event.data?.type === 'save-stream') {
+    registerSave(event.data, event.ports[0]);
+    return;
+  }
+  if (typeof event.data?.type === 'string' && event.data.type.startsWith('save-')) {
+    feedSave(event.data);
+    return;
+  }
   // The page asks for the update rather than having it applied underneath it,
   // so a transfer in progress is never cut off by a reload.
   if (event.data === 'skip-waiting') {
@@ -170,6 +269,10 @@ worker.addEventListener('fetch', event => {
     return;
   }
   if (request.method !== 'GET') return;
+  if (url.pathname.startsWith('/save-stream/')) {
+    event.respondWith(claimSave(url.pathname.slice('/save-stream/'.length)));
+    return;
+  }
   if (NETWORK_ONLY.has(url.pathname)) return;
   // Relayed transfers must never touch Cache Storage: that would persist file
   // bodies on the device and could replay a stale one.
