@@ -7,4 +7,3 @@ test-results/
 playwright-report/
 type-edit.tmp.mjs
 type-findings.tmp
-playwright.platform.config.js
