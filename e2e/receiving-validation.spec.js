@@ -1,6 +1,8 @@
 import { test, openPeer, deviceNames, pairDevices, whenControlled } from './helpers.js';
 import { test as engineTest, expect, devices as profiles } from '@playwright/test';
 import fs from 'node:fs/promises';
+import { createReadStream } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { startServer } from '../tests/helpers.js';
 
 for (const action of ['Block', 'Forget']) {
@@ -106,7 +108,14 @@ engineTest('simulated phone verifies a 32 MiB relay file before Save', async ({ 
     const download = await downloading;
     expect(download.url()).toContain('/save-stream/');
     expect(await download.failure()).toBeNull();
-    expect(await fs.readFile(await download.path())).toEqual(bytes);
+    // Deep equality enumerates tens of millions of Buffer indices in the test
+    // worker. Stream the saved file so validation memory stays chunk-sized.
+    const savedPath = await download.path();
+    if (!savedPath) throw new Error('The completed download has no saved path');
+    expect((await fs.stat(savedPath)).size).toBe(bytes.length);
+    const savedHash = createHash('sha256');
+    for await (const chunk of createReadStream(savedPath)) savedHash.update(chunk);
+    expect(savedHash.digest('hex')).toBe(createHash('sha256').update(bytes).digest('hex'));
     expect(gets).toBe(2);
     expect(errors).toEqual([]);
     await info.attach('receiving-validation', { contentType: 'application/json', body: JSON.stringify({
