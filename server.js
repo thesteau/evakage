@@ -938,7 +938,7 @@ export function createAriaDropServer({
   /** @param {string} senderId @param {string} conv @param {string[]} recipients */
   function recipientsAllowed(senderId, conv, recipients) {
     if (!recipients.length) return false;
-    if (recipients.includes(senderId)) return false;
+    if (recipients.includes(senderId)) return conv === 'direct' && recipients.length === 1;
     if (conv === 'direct') {
       // Connected now, or seen within the window: an item addressed to it can
       // still be collected before it ages out.

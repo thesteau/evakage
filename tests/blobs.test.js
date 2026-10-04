@@ -385,7 +385,7 @@ test('a sender cannot address devices it has no session with', async t => {
   const a = await register(wsBase, 'device_sender_0007', 'A');
 
   assert.equal((await offer(a, 'device_nobody_00007', 100)).reply.type, 'error');
-  assert.equal((await offer(a, 'device_sender_0007', 100)).reply.type, 'error');
+  assert.equal((await offer(a, 'device_sender_0007', 100)).reply.type, 'blob-offered');
 
   const b = await register(wsBase, 'device_member_0007', 'B');
   const created = waitFor(b, m => m.type === 'room-joined');
@@ -455,4 +455,37 @@ test('`node server.js --sweep-blobs` removes only items past the age, then empti
   assert.equal(fs.existsSync(staleDir), false, 'a conversation with only old items disappears entirely');
   assert.equal(fs.existsSync(path.join(dir, 'd-empty')), false, 'an empty directory is removed');
   assert.equal(fs.existsSync(path.join(liveDir, 'b.env.json')), true, 'an item under the cap survives');
+});
+
+
+test('self-chat survives delivery and reconnects, expires after 24h away, and has a 3-day cap', async t => {
+  let now = 1000;
+  const { app, wsBase, base } = await startServer(t, { blobs: { now: () => now } });
+  const id = 'device_self_00001';
+  const a = await register(wsBase, id, 'Me');
+  const message = await offer(a, id, 0, { kind: 'message' });
+  const file = await offer(a, id, 100);
+  assert.equal(message.reply.type, 'blob-offered');
+  assert.equal((await upload(base, file.reply.blobId, file.reply.uploadToken, Buffer.alloc(file.bytes))).status, 204);
+  await app.blobStore.release(message.reply.blobId, id);
+  await app.blobStore.release(file.reply.blobId, id);
+  assert.equal((await app.blobStore.pendingFor(id)).length, 2);
+  const blob = app.blobStore.blobs.get(message.reply.blobId);
+  assert.ok(blob);
+  assert.equal(app.blobStore.expiresAt(blob), 1000 + 3 * DAY);
+  a.close();
+  await settle();
+  assert.equal(app.blobStore.expiresAt(blob), 1000 + DAY);
+  now += DAY - 1;
+  const b = await register(wsBase, id, 'Me');
+  assert.equal((await app.blobStore.pendingFor(id)).length, 2);
+  assert.equal(app.blobStore.expiresAt(blob), 1000 + 3 * DAY);
+  b.close();
+  await settle();
+  now += DAY;
+  const c = await register(wsBase, id, 'Me');
+  assert.deepEqual(await app.blobStore.pendingFor(id), []);
+  c.close();
+  await app.blobStore.sweepAged();
+  assert.equal(app.blobStore.blobs.size, 0);
 });

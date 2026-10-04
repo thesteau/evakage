@@ -143,9 +143,10 @@ export function createBlobStore(options = {}) {
    * @param {BlobRecord} blob
    */
   function expiresAt(blob) {
-    const deadlines = [blob.createdAt + config.maxAgeMs];
-    if (blob.idleSince !== null) deadlines.push(blob.idleSince + config.idleGraceMs);
-    if (blob.soloSince !== null) deadlines.push(blob.soloSince + config.soloMaxMs);
+    const self = blob.participants.size === 1;
+    const deadlines = [blob.createdAt + (self ? Math.min(config.maxAgeMs, 3 * DAY_MS) : config.maxAgeMs)];
+    if (blob.idleSince !== null) deadlines.push(blob.idleSince + (self ? DAY_MS : config.idleGraceMs));
+    if (blob.soloSince !== null && blob.participants.size > 1) deadlines.push(blob.soloSince + config.soloMaxMs);
     return Math.min(...deadlines);
   }
 
@@ -159,6 +160,8 @@ export function createBlobStore(options = {}) {
    * @param {BlobRecord} blob @param {number} at
    */
   function assess(blob, at) {
+    // Reconnecting after the self-chat deadline cannot revive expired copies.
+    if (blob.participants.size === 1 && expired(blob)) return;
     const present = [...blob.participants].filter(isOnline).length;
     const direct = !blob.conv.startsWith('room:');
     if (present === 0) {
@@ -408,6 +411,8 @@ export function createBlobStore(options = {}) {
   async function release(id, deviceId) {
     const blob = blobs.get(id);
     if (!blob || !blob.recipients.has(deviceId)) return false;
+    // Self-addressed copies remain recoverable across reloads until expiry.
+    if (blob.participants.size === 1 && !expired(blob)) return true;
     blob.released.add(deviceId);
     const everyoneDone = [...blob.recipients].every(recipient => blob.released.has(recipient));
     if (everyoneDone) await remove(id);

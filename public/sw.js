@@ -14,7 +14,7 @@
 // DOM lib does not know about.
 const worker = /** @type {ServiceWorkerGlobalScope} */ (/** @type {unknown} */ (self));
 
-const CACHE = 'aria-drop-v8';
+const CACHE = 'aria-drop-v9';
 
 const SHELL = [
   '/',

@@ -480,6 +480,9 @@ function rejoinRooms() {
 
 /* ---------- conversations ---------- */
 
+/** @param {Conversation} conv */
+const isSelfConversation = conv => conv.kind === 'direct' && conv.peerId === state.self?.id;
+
 const directConvId = (/** @type {string} */ peerId) => `d:${peerId}`;
 const roomConvId = (/** @type {string} */ roomId) => `r:${roomId}`;
 
@@ -550,6 +553,7 @@ function relayOnlyMembers(conv) {
 
 /** @param {Conversation} conv */
 function conversationTitle(conv) {
+  if (isSelfConversation(conv)) return 'Message yourself';
   if (conv.kind === 'room') return state.rooms.get(conv.roomId)?.name || conv.lastKnownName || 'Room';
   return getPeer(conv.peerId).name;
 }
@@ -1591,6 +1595,7 @@ const relayEnabled = () => Boolean(state.config.relay?.enabled);
  * @param {Conversation} conv */
 async function offlineTargetsFor(conv) {
   if (!relayEnabled()) return [];
+  if (isSelfConversation(conv) && state.self) return [state.self.id];
   if (conv.kind === 'direct' && !state.peers.has(conv.peerId) && !isRecentlySeen(conv.peerId)) {
     await lookupDevices([conv.peerId]);
   }
@@ -1830,7 +1835,7 @@ function settleRequest(key, value, error) {
 async function verifiedSealKey(peerId) {
   // A live presence record, or the last one we have for a device now offline.
   // Either way it is checked below; where it came from does not matter.
-  const peer = state.peers.get(peerId) || state.deviceRecords.get(peerId);
+  const peer = peerId === state.identity?.deviceId ? state.identity : state.peers.get(peerId) || state.deviceRecords.get(peerId);
   if (!peer?.sealKey || !peer.identityKey || !peer.sealKeySignature) return null;
   const cacheKey = [peerId, peer.identityKey, peer.sealKey, peer.sealKeySignature].join('|');
   if (state.sealKeyCache.has(cacheKey)) return state.sealKeyCache.get(cacheKey);
@@ -2027,7 +2032,7 @@ async function handleBlobAvailable(notice) {
 
   // Same rule as a direct transfer. Nothing is fetched until the user says yes;
   // the item simply waits on the server meanwhile.
-  if (record.offer !== 'accepted' && needsConsent(notice.from, state.links.get(notice.from))) {
+  if (!isSelfConversation(conv) && record.offer !== 'accepted' && needsConsent(notice.from, state.links.get(notice.from))) {
     record.offer = 'pending';
     record.relayStage = 'offered';
     renderSession();
@@ -2796,7 +2801,12 @@ function renderSessionNow() {
   const others = onlineMembers(conv);
   if (conv.kind === 'direct') {
     const link = state.links.get(conv.peerId);
-    if (isSecure(link)) {
+    if (isSelfConversation(conv)) {
+      secureState.textContent = 'Encrypted on server · 24h reconnect window · 3-day limit';
+      secureState.title = 'Recover with this browser’s device identity. Reconnecting refreshes the inactivity window; the 3-day limit stays fixed.';
+      secureState.classList.add('ready');
+      secureState.classList.remove('unverified');
+    } else if (isSecure(link)) {
       secureState.textContent = `Encrypted · ${link.crypto.safety}`;
       secureState.title = `${trustLabel(link)}. This safety code is derived from both devices' long-lived keys and will not change.`;
       secureState.classList.add('ready');
@@ -2842,7 +2852,9 @@ function renderSessionNow() {
   if (!items.length) {
     const empty = document.createElement('div');
     empty.className = 'timeline-empty';
-    empty.textContent = 'Nothing here yet. Messages and files live only in participant browser memory.';
+    empty.textContent = isSelfConversation(conv)
+      ? 'Send yourself a message or upload files. Encrypted copies survive disconnects for 24 hours, up to 3 days from creation.'
+      : 'Nothing here yet. Messages and files live only in participant browser memory.';
     timeline.append(empty);
   }
 
@@ -3239,6 +3251,11 @@ $('#copyCodeBtn').addEventListener('click', async () => {
   if (!code) return;
   await navigator.clipboard.writeText(code).catch(() => {});
   toast(conv.kind === 'room' ? 'Room code copied' : 'Peer code copied');
+});
+
+$('#messageSelfBtn').addEventListener('click', () => {
+  if (!state.self) return toast('Waiting for device registration.');
+  openSession(state.self.id, 'text');
 });
 
 selfCode.addEventListener('click', async () => {

@@ -30,7 +30,11 @@ Conversation/file state is held in browser memory. A stable device ID and displa
 
 If browser A disappears and browser B stays open, B retains the session. When A returns with the same device ID, B can reconnect and send chat/file metadata back over the peer channel. Completed file blobs held by B remain requestable.
 
-If **all participating browser instances lose their in-memory state** (closed/reloaded/crashed), there is intentionally nothing to recover. That is the deletion boundary.
+If **all participating browser instances lose their in-memory state** (closed/reloaded/crashed), direct-only content cannot be recovered. Self-chat copies remain recoverable from the server within their expiry window.
+
+## Message yourself
+
+Use **Message yourself**, even with no other devices online, to send notes or upload files to your own device identity. Items are encrypted and signed in the browser before upload. Reading your items keeps the encrypted server copy available after a reload. Reconnect within 24 hours of disconnecting; each item has a hard 3-day limit from creation. Use the same browser profile: clearing its identity or switching browsers prevents decryption. Server restarts still erase buffered items early. These lifetimes apply only to self-chat.
 
 ## Server relay
 
