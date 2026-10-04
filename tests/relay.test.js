@@ -15,12 +15,17 @@ import {
   cipherLayout
 } from '../public/relay.js';
 
+// The global Web Crypto, not node:crypto's: same object at runtime, but typed
+// with the DOM CryptoKey the app code expects. @types/node's KeyUsage runs ahead
+// of TypeScript's DOM lib (e.g. ML-KEM usages), which makes the two incompatible.
+const { subtle } = globalThis.crypto;
+
 // A device identity without IndexedDB: the same key shapes loadIdentity makes.
 async function makeIdentity() {
-  const signing = await crypto.subtle.generateKey({ name: 'ECDSA', namedCurve: 'P-256' }, true, ['sign', 'verify']);
-  const sealing = await crypto.subtle.generateKey({ name: 'ECDH', namedCurve: 'P-256' }, true, ['deriveBits']);
-  const raw = new Uint8Array(await crypto.subtle.exportKey('raw', signing.publicKey));
-  const sealRaw = new Uint8Array(await crypto.subtle.exportKey('raw', sealing.publicKey));
+  const signing = await subtle.generateKey({ name: 'ECDSA', namedCurve: 'P-256' }, true, ['sign', 'verify']);
+  const sealing = await subtle.generateKey({ name: 'ECDH', namedCurve: 'P-256' }, true, ['deriveBits']);
+  const raw = new Uint8Array(await subtle.exportKey('raw', signing.publicKey));
+  const sealRaw = new Uint8Array(await subtle.exportKey('raw', sealing.publicKey));
   const deviceId = await fingerprintOf(raw);
   return {
     deviceId,

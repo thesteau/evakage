@@ -14,6 +14,10 @@ WORKDIR /app
 COPY --chown=node:node package.json package-lock.json server.js blobstore.js ./
 COPY --chown=node:node public ./public
 
+# npm is never used at runtime, and its bundled dependencies are a recurring
+# source of base-image CVEs that fail the Trivy gate. Strip it while still root.
+RUN rm -rf /usr/local/lib/node_modules/npm /usr/local/bin/npm /usr/local/bin/npx
+
 USER node
 EXPOSE 3000
 
