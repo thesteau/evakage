@@ -15,11 +15,11 @@
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-  <meta name="apple-mobile-web-app-title" content="aria-drop">
+  <meta name="apple-mobile-web-app-title" content="Evakage">
   <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
 
   <link rel="stylesheet" href="/styles.css">
-  <title>aria-drop</title>
+  <title>Evakage</title>
 </head>
 <body>
   <a class="skip-link" href="#peersSection">Skip to devices</a>
@@ -27,7 +27,7 @@
   <header class="topbar">
     <div>
       <div class="eyebrow">ephemeral peer transfer</div>
-      <h1>aria-drop</h1>
+      <h1>Evakage</h1>
     </div>
     <div class="topbar-actions">
       <button id="installBtn" class="ghost hidden" type="button">Install app</button>
@@ -35,11 +35,10 @@
         <span id="themeIcon" aria-hidden="true">◐</span>
       </button>
       <button id="settingsBtn" class="ghost" type="button">Settings</button>
-      <button id="messageSelfBtn" class="ghost" type="button">Message yourself</button>
+      <button id="qrBtn" class="ghost" type="button">QR codes</button>
       <button id="devicesBtn" class="ghost" type="button">Known devices</button>
-      <button id="renameBtn" class="ghost" type="button">Rename device</button>
       <div class="identity-card">
-        <span class="muted" id="selfCodeLabel">Your code</span>
+        <span class="muted" id="selfCodeLabel">Your pairing code</span>
         <button id="selfCode" class="code-button" type="button" aria-describedby="selfCodeLabel"
                 aria-label="Your device code, activate to copy">----</button>
       </div>
@@ -54,11 +53,11 @@
         <p>Pick a device to chat, send text, or transfer a file. Drag files onto any row, or paste straight into the page. Payloads stay in browser memory and disappear when every participant is gone.</p>
       </div>
       <form id="codeForm" class="code-form">
-        <label for="codeInput">Connect by code</label>
+        <label for="codeInput">Pair by code</label>
         <div class="inline-field">
           <input id="codeInput" autocomplete="off" autocapitalize="characters" spellcheck="false"
                  placeholder="ABCD-EFGH" maxlength="16" aria-describedby="codeFeedback">
-          <button type="submit">Open</button>
+          <button type="submit">Pair</button>
         </div>
         <span id="codeFeedback" class="form-feedback" role="status"></span>
       </form>
@@ -89,7 +88,7 @@
       </div>
       <div id="emptyPeers" class="empty-state hidden">
         <strong>No other devices yet.</strong>
-        <span>Open this page on another browser connected to the same aria-drop server.</span>
+        <span>Open this page on another browser connected to the same Evakage server.</span>
       </div>
     </section>
 
@@ -160,6 +159,8 @@
       <span id="secureState" class="secure-state" role="status">Connecting…</span>
     </div>
 
+    <p class="muted transfer-notice">Keep this app open and your screen unlocked until transfers finish. Switching apps or locking your phone can interrupt a transfer.</p>
+
     <div id="timeline" class="timeline" role="log" aria-label="Messages and files" aria-live="polite"></div>
 
     <form id="messageForm" class="message-form">
@@ -171,22 +172,13 @@
     <div id="dropHint" class="drop-hint" aria-hidden="true">Drop to send</div>
   </aside>
 
-  <dialog id="renameDialog" class="dialog">
-    <form method="dialog">
-      <h2>Rename this device</h2>
-      <p class="muted">Other browsers on this server see this name. It is stored locally and is not part of your device identity.</p>
-      <label class="visually-hidden" for="renameInput">Device name</label>
-      <input id="renameInput" maxlength="64" autocomplete="off">
-      <div class="dialog-actions">
-        <button value="cancel" class="ghost" type="submit">Cancel</button>
-        <button id="renameSave" value="save" type="submit">Save</button>
-      </div>
-    </form>
-  </dialog>
-
   <dialog id="settingsDialog" class="dialog">
     <form method="dialog">
       <h2>Settings</h2>
+      <label class="setting-option">
+        <input id="verifiedOnlyInput" type="checkbox">
+        <span><strong>Only exchange with verified devices</strong><span class="muted"> — compare safety codes in Known devices first. New room members require verification before sending.</span></span>
+      </label>
       <fieldset class="setting-group">
         <legend>Incoming files</legend>
         <p class="muted">When asking, nothing is received until you accept — the sender pauses, and a file relayed through the server waits there.</p>
@@ -215,11 +207,56 @@
       <p class="muted">
         Devices are remembered by the fingerprint of their long-lived key the first
         time you connect. Forgetting one means it shows as <em>new</em> again, and its
-        safety code is worth re-checking.
+        safety code is worth re-checking. Verify by comparing codes outside this app. Blocking a device stops exchanges with it in this browser.
       </p>
       <div id="knownDeviceList" class="device-list"></div>
       <div class="dialog-actions">
         <button value="close" type="submit">Done</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="qrDialog" class="dialog">
+    <form method="dialog">
+      <h2>Connect with QR codes</h2>
+      <p>Scan the server URL to open this app, then scan the device QR or enter its pairing code under Connect by code. Pairing is required for unknown devices. Codes rotate every three days; paired identities stay paired.</p>
+      <h3>Server URL</h3>
+      <canvas id="serverQr" class="qr-code" role="img" aria-label="Server URL QR code"></canvas>
+      <p id="qrServerUrl"></p>
+      <h3>Your device code</h3>
+      <canvas id="deviceQr" class="qr-code" role="img" aria-label="Your device code QR code"></canvas>
+      <p id="qrDeviceCode"></p>
+      <p>Your full device fingerprint: <code id="qrFingerprint" class="device-fingerprint"></code></p>
+      <div class="dialog-actions"><button type="submit">Done</button></div>
+    </form>
+  </dialog>
+
+  <dialog id="connectDialog" class="dialog">
+    <form id="connectForm">
+      <h2>Pair unknown device</h2>
+      <p id="connectTarget"></p>
+      <label for="connectCode">Code from the other device</label>
+      <input id="connectCode" autocomplete="off" autocapitalize="characters" maxlength="16" required>
+      <p class="muted">Codes rotate every three days. Paired devices stay paired.</p>
+      <p id="connectFeedback" role="status"></p>
+      <div class="dialog-actions">
+        <button id="connectCancel" class="ghost" type="button">Cancel</button>
+        <button type="submit">Pair</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="pairingDialog" class="dialog">
+    <form id="pairingForm">
+      <h2>Verify device</h2>
+      <p>Contact the device owner outside this app. Ask them to open Known devices, choose your device, and read its safety code. Enter the code they read to you.</p>
+      <p>Your matching safety code: <strong id="pairingCode"></strong></p>
+      <label for="pairingInput">Code from the other device</label>
+      <input id="pairingInput" inputmode="numeric" autocomplete="off" maxlength="40" required>
+      <p id="pairingFeedback" role="status"></p>
+      <div class="dialog-actions">
+        <button id="pairingCancel" class="ghost" type="button">Cancel</button>
+        <button type="submit">Verify</button>
       </div>
     </form>
   </dialog>
@@ -242,7 +279,7 @@
   </div>
 
   <div id="updateBanner" class="update-banner hidden" role="status">
-    <span>A new version of aria-drop is ready.</span>
+    <span>A new version of Evakage is ready.</span>
     <button id="reloadBtn" type="button">Reload</button>
   </div>
 

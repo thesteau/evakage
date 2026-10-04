@@ -489,3 +489,31 @@ test('self-chat survives delivery and reconnects, expires after 24h away, and ha
   await app.blobStore.sweepAged();
   assert.equal(app.blobStore.blobs.size, 0);
 });
+
+test('chunk uploads commit boundaries and downloads refuse nonzero offsets', async t => {
+  const { base, wsBase, app } = await startServer(t);
+  const sender = await register(wsBase, 'device_chunk_sender');
+  const receiver = await register(wsBase, 'device_chunk_receiver');
+  t.after(() => { sender.close(); receiver.close(); });
+  const { reply, bytes } = await offer(sender, 'device_chunk_receiver', 2500);
+  const url = `${base}/blob/${reply.blobId}?token=${reply.uploadToken}`;
+  const body = Buffer.alloc(bytes, 37);
+  const put = (/** @type {number} */ offset, /** @type {Buffer<ArrayBuffer>} */ part) => fetch(`${url}&offset=${offset}`, { method: 'PUT', body: part });
+  assert.equal((await fetch(url, { method: 'HEAD' })).status, 405);
+  assert.equal((await put(0, body.subarray(0, 100))).status, 400);
+  assert.equal((await put(0, body.subarray(0, CHUNK + 28))).status, 204);
+  assert.equal((await put(0, body.subarray(0, CHUNK + 28))).status, 409);
+  assert.equal((await put(10, body.subarray(0, CHUNK + 28))).status, 409);
+
+  const denied = await fetch(`${base}/blob/${reply.blobId}?token=wrong&offset=${CHUNK + 28}`, { method: 'PUT', body: body.subarray(CHUNK + 28, 2 * (CHUNK + 28)) });
+  assert.equal(denied.status, 403);
+  assert.equal((await put(CHUNK + 28, body.subarray(CHUNK + 28, 2 * (CHUNK + 28)))).status, 204);
+  assert.equal((await put(2 * (CHUNK + 28), body.subarray(2 * (CHUNK + 28)))).status, 204);
+  const claim = await app.blobStore.claim(reply.blobId, 'device_chunk_receiver');
+  assert.ok(claim.downloadToken);
+  const getUrl = `${base}/blob/${reply.blobId}?token=${claim.downloadToken}`;
+  assert.equal((await fetch(`${getUrl}&offset=1`)).status, 416);
+  const resumed = await fetch(`${getUrl}&offset=${CHUNK + 28}`);
+  assert.equal(resumed.status, 416);
+  assert.deepEqual(Buffer.from(await (await fetch(getUrl)).arrayBuffer()), body);
+});

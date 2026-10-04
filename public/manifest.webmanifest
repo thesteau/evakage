@@ -1,7 +1,7 @@
 {
   "id": "/",
-  "name": "aria-drop",
-  "short_name": "aria-drop",
+  "name": "Evakage",
+  "short_name": "Evakage",
   "description": "Ephemeral browser-to-browser chat and file transfer for trusted networks.",
   "start_url": "/",
   "scope": "/",

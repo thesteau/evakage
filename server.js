@@ -31,10 +31,10 @@ const MAX_ROOMS_PER_DEVICE = 8;
 
 // Version of the peer-to-peer application protocol spoken over the DataChannel.
 // Published on /config.json for diagnostics; the browsers negotiate it directly.
-// v2 added signed long-lived device identities. The server relay does not
+// v3 requires portable chat/history signatures. The server relay does not
 // change the DataChannel protocol: it is a separate HTTP path, available to any
 // client that publishes a signed seal key at registration.
-const PROTOCOL_VERSION = 2;
+const PROTOCOL_VERSION = 3;
 
 // Plaintext bytes per sealed body chunk. Published so both sides agree.
 const BLOB_CHUNK_SIZE = 256 * 1024;
@@ -56,6 +56,7 @@ const BLOB_CHUNK_SIZE = 256 * 1024;
  * @property {string | null} sealKey
  * @property {string | null} sealKeySignature
  * @property {string} ip
+ * @property {boolean} identityVerified
  */
 
 /** @typedef {object} Room
@@ -144,6 +145,7 @@ const SECURITY_HEADERS = {
 const MIME_TYPES = {
   '.html': 'text/html; charset=utf-8',
   '.js': 'text/javascript; charset=utf-8',
+  '.mjs': 'text/javascript; charset=utf-8',
   '.css': 'text/css; charset=utf-8',
   '.json': 'application/json; charset=utf-8',
   '.webmanifest': 'application/manifest+json; charset=utf-8',
@@ -362,6 +364,47 @@ function codeForDevice(deviceId, takenCodes) {
   return crypto.randomBytes(6).toString('hex').toUpperCase();
 }
 
+export const PAIRING_CODE_MAX_AGE_MS = 3 * 24 * 60 * 60 * 1000;
+
+/** Private invitation codes: never include these in discovery records.
+ * @param {() => number} [now] */
+export function createPairingCodes(now = Date.now) {
+  /** @type {Map<string, {code: string, expiresAt: number}>} */
+  const records = new Map();
+  /** @type {Map<string, string>} */
+  const owners = new Map();
+  const forget = (/** @type {string} */ id) => {
+    const old = records.get(id);
+    if (old) owners.delete(old.code);
+    records.delete(id);
+  };
+  return {
+    issue(/** @type {string} */ id) {
+      const existing = records.get(id);
+      if (existing && now() < existing.expiresAt) return existing;
+      forget(id);
+      let code;
+      do {
+        const bytes = crypto.randomBytes(8);
+        const compact = [...bytes].map(byte => ROOM_CODE_ALPHABET[byte & 31]).join('');
+        code = `${compact.slice(0, 4)}-${compact.slice(4)}`;
+      } while (owners.has(code));
+      const entry = { code, expiresAt: now() + PAIRING_CODE_MAX_AGE_MS };
+      records.set(id, entry);
+      owners.set(code, id);
+      return entry;
+    },
+    resolve(/** @type {string} */ code) {
+      const id = owners.get(code.trim().toUpperCase());
+      if (!id) return null;
+      const record = records.get(id);
+      if (!record || now() >= record.expiresAt) { forget(id); return null; }
+      return id;
+    },
+    prune() { for (const [id, entry] of records) if (now() >= entry.expiresAt) forget(id); }
+  };
+}
+
 /** @param {Client} client */
 function peerPublic(client) {
   return {
@@ -476,13 +519,15 @@ const VALIDATOR_TABLE = {
     optionalString(m.browser, 512) &&
     // Relayed verbatim for other clients to verify; the server cannot check
     // these itself and is not trusted to.
+    optionalString(m.registrationProof, 128) &&
     optionalString(m.identityKey, 256) &&
     optionalString(m.sealKey, 256) &&
     optionalString(m.sealKeySignature, 256),
-  rename: m => optionalString(m.name, 512),
   'presence-request': () => true,
   'rooms-request': () => true,
   'resolve-code': m => optionalString(m.requestId, 128) && optionalString(m.code, 32),
+  'unpair-device': m => matches(DEVICE_ID_PATTERN, m.deviceId),
+  'pair-device': m => optionalString(m.requestId, 128) && optionalString(m.code, 32) && optionalString(m.targetId, 128),
   'create-room': m => optionalString(m.name, 512),
   'join-room': m =>
     (m.roomId == null || matches(ROOM_ID_PATTERN, m.roomId)) &&
@@ -520,7 +565,26 @@ function validatorFor(type) {
   return typeof validate === 'function' ? validate : null;
 }
 
-export function createAriaDropServer({
+/** Possession proof binds an allowlisted fingerprint to this socket challenge.
+ * @param {Inbound} msg @param {string} challenge */
+function verifyRegistration(msg, challenge) {
+  try {
+    if (typeof msg.identityKey !== 'string' || typeof msg.registrationProof !== 'string') return false;
+    const raw = Buffer.from(msg.identityKey, 'base64');
+    const signature = Buffer.from(msg.registrationProof, 'base64');
+    if (raw.length !== 65 || raw[0] !== 4 || signature.length !== 64 ||
+        crypto.createHash('sha256').update(raw).digest('base64url') !== msg.deviceId) return false;
+    const key = crypto.createPublicKey({ format: 'jwk', key: { kty: 'EC', crv: 'P-256',
+      x: raw.subarray(1, 33).toString('base64url'), y: raw.subarray(33).toString('base64url') } });
+    return crypto.verify('sha256', Buffer.from(JSON.stringify(['aria-drop/register/1', challenge, msg.deviceId])),
+      { key, dsaEncoding: 'ieee-p1363' }, signature);
+  } catch { return false; }
+}
+
+// Retain the previous factory export for integrations using the original name.
+export { createEvakageServer as createAriaDropServer };
+
+export function createEvakageServer({
   port = Number(process.env.PORT || 3000),
   host = process.env.HOST || '0.0.0.0',
   // Read per instance rather than at import time so a deployment — or a test —
@@ -528,6 +592,8 @@ export function createAriaDropServer({
   authToken = process.env.AUTH_TOKEN || '',
   trustProxy = truthy(process.env.TRUST_PROXY),
   allowedOrigins = splitList(process.env.ALLOWED_ORIGINS),
+  allowedDevices = splitList(process.env.DEVICE_ALLOWLIST),
+  pairingNow = Date.now,
   limits: limitOverrides = {},
   blobs: blobOptions = {},
   // How long a device that has disconnected can still be sent to, and how long a
@@ -545,6 +611,8 @@ export function createAriaDropServer({
   maxRecentDevices = 10000,
   maxRoomMembers = Number(process.env.ROOM_MAX_MEMBERS || DEFAULT_ROOM_MAX_MEMBERS)
 } = {}) {
+  const deviceAllowlist = new Set(allowedDevices);
+  if ([...deviceAllowlist].some(id => !/^[A-Za-z0-9_-]{43}$/.test(id))) throw new Error('DEVICE_ALLOWLIST must contain full device fingerprints.');
   const limits = { ...DEFAULT_LIMITS, ...limitOverrides };
   // Two is the smallest room that means anything; the ceiling bounds envelopes.
   const roomCap = Math.min(ROOM_MEMBERS_CEILING, Math.max(2, Math.floor(maxRoomMembers) || DEFAULT_ROOM_MAX_MEMBERS));
@@ -602,6 +670,11 @@ export function createAriaDropServer({
 
   const clients = new Map();
   const codeOwners = new Map();
+  const pairingCodes = createPairingCodes(pairingNow);
+  /** @type {Map<string, Set<string>>} */
+  const pairedDevices = new Map();
+  /** @type {Map<string, Set<string>>} */
+  const pairingRevocations = new Map();
   const sockets = new Set();
   const rooms = new Map();
 
@@ -674,7 +747,7 @@ export function createAriaDropServer({
         }
         if (!isAuthorized(req)) {
           res.writeHead(401, { ...SECURITY_HEADERS, 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'no-store' });
-          res.end('This aria-drop server requires a token. Open it as https://host/?token=YOUR_TOKEN once.');
+          res.end('This Evakage server requires a token. Open it as https://host/?token=YOUR_TOKEN once.');
           return;
         }
       }
@@ -719,7 +792,10 @@ export function createAriaDropServer({
         }
 
         if (req.method === 'PUT' || req.method === 'POST') {
-          blobStore.receive(id, presented, req).then(result => {
+          const receive = reqUrl.searchParams.has('offset')
+            ? blobStore.receiveChunk(id, presented, Number(reqUrl.searchParams.get('offset')), req)
+            : blobStore.receive(id, presented, req);
+          receive.then(result => {
             if (result.status === 204) res.writeHead(204, SECURITY_HEADERS).end();
             else res.writeHead(result.status, { ...SECURITY_HEADERS, 'content-type': 'text/plain; charset=utf-8' }).end(result.message);
           });
@@ -732,13 +808,19 @@ export function createAriaDropServer({
             res.writeHead(opened.status, { ...SECURITY_HEADERS, 'content-type': 'text/plain; charset=utf-8' }).end(opened.message);
             return;
           }
-          res.writeHead(200, {
+          const offset = Number(reqUrl.searchParams.get('offset') || 0);
+          if (offset !== 0) {
+            res.writeHead(416, SECURITY_HEADERS).end('Downloads must start from the beginning.');
+            return;
+          }
+          res.writeHead(offset ? 206 : 200, {
             ...SECURITY_HEADERS,
             'content-type': 'application/octet-stream',
-            'content-length': String(opened.blob.written),
+            'content-length': String(opened.blob.written - offset),
+            ...(offset ? { 'content-range': `bytes ${offset}-${opened.blob.written - 1}/${opened.blob.written}` } : {}),
             'cache-control': 'no-store'
           });
-          const stream = fs.createReadStream(opened.blob.path);
+          const stream = fs.createReadStream(opened.blob.path, { start: offset });
           stream.on('error', () => res.destroy());
           stream.pipe(res);
           return;
@@ -999,11 +1081,14 @@ export function createAriaDropServer({
     sockets.add(ws);
     if (head?.length) socket.unshift(head);
 
+    const registrationChallenge = crypto.randomBytes(32).toString('base64url');
+    json(ws, { type: 'registration-challenge', challenge: registrationChallenge });
     /** @type {string | null} */
     let registeredId = null;
     let released = false;
     let invalidMessages = 0;
     const messageBucket = new TokenBucket(limits.messagesPerSecond, limits.messageBurst);
+    const pairBucket = new TokenBucket(1 / 2, 24);
     const signalBucket = new TokenBucket(limits.signalsPerSecond, limits.signalBurst);
 
     const disconnect = (/** @type {number} */ code, /** @type {string} */ reason) => {
@@ -1047,6 +1132,16 @@ export function createAriaDropServer({
 
       if (msg.type === 'register') {
         const deviceId = msg.deviceId;
+        const identityVerified = verifyRegistration(msg, registrationChallenge);
+        // Real browser identities always prove possession, even without an allowlist.
+        if (deviceId.length === 43 && !identityVerified) {
+          json(ws, { type: 'error', context: 'register', message: 'This device is not authorized (identity proof failed).' });
+          return disconnect(1008, 'Device identity proof failed');
+        }
+        if (deviceAllowlist.size && (!deviceAllowlist.has(deviceId) || !verifyRegistration(msg, registrationChallenge))) {
+          json(ws, { type: 'error', context: 'register', message: 'This device is not authorized.' });
+          return disconnect(1008, 'Device authorization failed');
+        }
         let bucket = registrationBuckets.get(ip);
         if (!bucket) {
           bucket = new TokenBucket(limits.registrationsPerMinute / 60, limits.registrationsPerMinute);
@@ -1066,20 +1161,25 @@ export function createAriaDropServer({
           ws,
           deviceId,
           code,
-          name: cleanName(msg.name),
+          name: `Device ${code}`,
           platform: cleanName(msg.platform || 'Unknown').slice(0, 40),
           browser: cleanName(msg.browser || 'Browser').slice(0, 40),
           connectedAt: Date.now(),
           identityKey: typeof msg.identityKey === 'string' ? msg.identityKey : null,
           sealKey: typeof msg.sealKey === 'string' ? msg.sealKey : null,
           sealKeySignature: typeof msg.sealKeySignature === 'string' ? msg.sealKeySignature : null,
-          ip
+          ip,
+          identityVerified
         });
         noteSeen(deviceId);
         // This device is back: anything waiting for a conversation it is party
         // to is live again, and its grace starts over if it empties later.
         blobStore.refreshLiveness();
-        json(ws, { type: 'registered', self: peerPublic(clients.get(deviceId)) });
+        json(ws, { type: 'registered', self: { ...peerPublic(clients.get(deviceId)),
+          pairingCode: pairingCodes.issue(deviceId).code,
+          pairingCodeExpiresAt: pairingCodes.issue(deviceId).expiresAt },
+          paired: identityVerified ? [...(pairedDevices.get(deviceId) || [])].map(id => deviceRecord(id)).filter(Boolean) : [],
+          revoked: identityVerified ? [...(pairingRevocations.get(deviceId) || [])] : [] });
         broadcastPresence();
         json(ws, { type: 'rooms', rooms: listedRooms() });
         // Anything relayed to this device while it was away, oldest first.
@@ -1102,14 +1202,6 @@ export function createAriaDropServer({
       }
 
       if (!registeredId || !clients.has(registeredId)) return;
-
-      if (msg.type === 'rename') {
-        clients.get(registeredId).name = cleanName(msg.name);
-        noteSeen(registeredId);
-        broadcastPresence();
-        if ([...rooms.values()].some(room => room.members.has(registeredId))) broadcastRooms();
-        return;
-      }
 
       if (msg.type === 'create-room') {
         if (rooms.size >= MAX_ROOMS) {
@@ -1272,6 +1364,45 @@ export function createAriaDropServer({
         return;
       }
 
+      if (msg.type === 'unpair-device') {
+        if (!clients.get(registeredId)?.identityVerified || !pairedDevices.get(registeredId)?.has(msg.deviceId)) return;
+        pairedDevices.get(registeredId)?.delete(msg.deviceId);
+        pairedDevices.get(msg.deviceId)?.delete(registeredId);
+        for (const [a, b] of [[registeredId, msg.deviceId], [msg.deviceId, registeredId]]) {
+          if (!pairingRevocations.has(a)) pairingRevocations.set(a, new Set());
+          pairingRevocations.get(a)?.add(b);
+        }
+        const target = clients.get(msg.deviceId);
+        if (target) json(target.ws, { type: 'pairing-revoked', deviceId: registeredId });
+        json(ws, { type: 'pairing-revoked', deviceId: msg.deviceId });
+        return;
+      }
+
+      if (msg.type === 'pair-device') {
+        const sender = clients.get(registeredId);
+        if (!sender?.identityVerified || !pairBucket.take()) {
+          json(ws, { type: 'paired-device', requestId: msg.requestId, peer: null });
+          return;
+        }
+        const id = pairingCodes.resolve(String(msg.code || ''));
+        const peer = id ? deviceRecord(id) : null;
+        // Codes are bearer invitations, bound to the expected fingerprint when
+        // pairing a particular row/QR. Public discovery codes grant nothing.
+        if (!id || !peer?.identityKey || peer.id.length !== 43 || id === registeredId || (msg.targetId && msg.targetId !== id)) {
+          json(ws, { type: 'paired-device', requestId: msg.requestId, peer: null });
+          return;
+        }
+        for (const [a, b] of [[registeredId, id], [id, registeredId]]) {
+          if (!pairedDevices.has(a)) pairedDevices.set(a, new Set());
+          pairedDevices.get(a)?.add(b);
+          pairingRevocations.get(a)?.delete(b);
+        }
+        json(ws, { type: 'paired-device', requestId: msg.requestId, peer });
+        const target = clients.get(id);
+        if (target?.identityVerified) json(target.ws, { type: 'paired-device', peer: peerPublic(sender) });
+        return;
+      }
+
       if (msg.type === 'resolve-code') {
         const code = String(msg.code || '').trim().toUpperCase();
         const id = codeOwners.get(code);
@@ -1331,6 +1462,26 @@ export function createAriaDropServer({
   }, blobStore.config.sweepEveryMs);
   blobSweep.unref?.();
 
+  const rotatePairingCodes = () => {
+    for (const client of clients.values()) {
+      const entry = pairingCodes.issue(client.deviceId);
+      // Owner-only update; access checks still enforce expiry if this timer stalls.
+      json(client.ws, { type: 'pairing-code', code: entry.code, expiresAt: entry.expiresAt });
+    }
+    pairingCodes.prune();
+    for (const id of pairingRevocations.keys()) {
+      if (!clients.has(id) && !recentDevices.has(id)) pairingRevocations.delete(id);
+    }
+    for (const id of pairedDevices.keys()) {
+      if (!clients.has(id) && !recentDevices.has(id)) {
+        pairedDevices.delete(id);
+        for (const peers of pairedDevices.values()) peers.delete(id);
+      }
+    }
+  };
+  const pairingSweep = setInterval(rotatePairingCodes, 60000);
+  pairingSweep.unref?.();
+
   const heartbeat = setInterval(() => {
     for (const ws of sockets) {
       if (ws.isAlive === false) {
@@ -1377,6 +1528,7 @@ export function createAriaDropServer({
 
   async function stop({ graceMs = 250, keepBlobs = false } = {}) {
     clearInterval(heartbeat);
+    clearInterval(pairingSweep);
     clearInterval(blobSweep);
     // Item records live only in memory, so once this process ends nothing on
     // disk can be delivered again. Erase it now rather than leave it for the
@@ -1408,7 +1560,7 @@ export function createAriaDropServer({
     });
   }
 
-  return { server, clients, sockets, rooms, recentDevices, connectionsByIp, limits, blobStore, expireAway, start, stop };
+  return { server, clients, sockets, rooms, recentDevices, connectionsByIp, limits, blobStore, expireAway, pairingCodes, rotatePairingCodes, start, stop };
 }
 
 if (process.argv[1] === __filename) {
@@ -1416,7 +1568,7 @@ if (process.argv[1] === __filename) {
   // given age, removes any conversation directory left empty, and exits — so a
   // host-side cron or systemd timer can drive the sweep as well as the
   // in-process one:
-  //   docker exec aria-drop node server.js --sweep-blobs
+  //   docker exec evakage node server.js --sweep-blobs
   if (process.argv.includes('--sweep-blobs')) {
     const store = createBlobStore();
     const explicit = Number(process.argv[process.argv.indexOf('--sweep-blobs') + 1]);
@@ -1431,10 +1583,10 @@ if (process.argv[1] === __filename) {
     }
   }
 
-  const app = createAriaDropServer();
+  const app = createEvakageServer();
   app.start().then(address => {
     const printable = typeof address === 'string' ? address : `${address.address}:${address.port}`;
-    console.log(`aria-drop listening on ${printable}`);
+    console.log(`Evakage listening on ${printable}`);
     console.log(`buffered transfers: ${app.blobStore.config.dir} (max age ${app.blobStore.config.maxAgeMs}ms)`);
   }).catch(err => {
     console.error(err);

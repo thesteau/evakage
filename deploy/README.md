@@ -1,4 +1,4 @@
-# Deploying aria-drop
+# Deploying Evakage
 
 This folder runs a **published image**. It never builds from source; for that,
 use `docker-compose.yml` at the repository root.
@@ -17,8 +17,12 @@ service workers, and installing the app.
 ## The image
 
 `ghcr.io/thesteau/aria-drop:latest` is a placeholder default: it is what the
-GHCR workflow publishes from `main`. To pin a build, set `ARIA_DROP_IMAGE` in
+GHCR workflow publishes from `main`. To pin a build, set `EVAKAGE_IMAGE` in
 `.env` to a `sha-…` or version tag.
+
+The app is named Evakage; the existing repository and published image still use
+`thesteau/aria-drop`. `ARIA_DROP_IMAGE` remains a compatible fallback for existing
+configuration; `EVAKAGE_IMAGE` takes precedence.
 
 ## Relayed messages and files
 
@@ -52,7 +56,7 @@ empty, and exits:
 
 ```cron
 # m h  dom mon dow  command
-0 3 * * * docker exec aria-drop node server.js --sweep-blobs
+0 3 * * * docker exec evakage node server.js --sweep-blobs
 ```
 
 The one-shot mode judges age by file mtime, since it runs in a separate process

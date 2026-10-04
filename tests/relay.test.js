@@ -248,3 +248,17 @@ test('an oversized relayed message is refused on open', async () => {
     /Bad message text/
   );
 });
+
+test('a fresh decryptor restarts an interrupted download and verifies the whole file', async () => {
+  const { key } = await generateContentKey();
+  const data = new Blob([Buffer.alloc(2500, 17)]);
+  const body = new Uint8Array(await (await encryptBody(data, key, 'resume-file', 1024)).arrayBuffer());
+  const decryptor = createBodyDecryptor({ key, fileId: 'resume-file', chunkSize: 1024, size: data.size });
+  await decryptor.push(body.subarray(0, 1100));
+  assert.throws(() => decryptor.finish(), /before every chunk/);
+  const restarted = createBodyDecryptor({ key, fileId: 'resume-file', chunkSize: 1024, size: data.size });
+  await restarted.push(body);
+  const result = restarted.finish();
+  assert.equal(result.sha256, sha256(new Uint8Array(await data.arrayBuffer())));
+  assert.deepEqual(Buffer.concat(result.chunks.map(chunk => Buffer.from(chunk))), Buffer.alloc(2500, 17));
+});

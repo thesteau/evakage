@@ -7,12 +7,12 @@
 # The image is a placeholder until you pin a real release. The default is what
 # the GHCR workflow publishes from main; override without editing this file:
 #
-#   ARIA_DROP_IMAGE=ghcr.io/thesteau/aria-drop:sha-abc1234 docker compose up -d
+#   EVAKAGE_IMAGE=ghcr.io/thesteau/aria-drop:sha-abc1234 docker compose up -d
 
 services:
-  aria-drop:
-    image: ${ARIA_DROP_IMAGE:-ghcr.io/thesteau/aria-drop:latest}
-    container_name: aria-drop
+  evakage:
+    image: ${EVAKAGE_IMAGE:-${ARIA_DROP_IMAGE:-ghcr.io/thesteau/aria-drop:latest}}
+    container_name: evakage
     restart: unless-stopped
     ports:
       - "3712:3000"

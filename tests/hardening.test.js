@@ -192,8 +192,8 @@ test('static serving refuses traversal and sends security headers everywhere', a
   ]) {
     const response = await get(attempt);
     assert.ok(response.status === 403 || response.status === 404, `${attempt} returned ${response.status}`);
-    assert.ok(!response.body.includes('createAriaDropServer'), `${attempt} leaked server source`);
-    assert.ok(!response.body.includes('"name": "aria-drop"'), `${attempt} leaked package.json`);
+    assert.ok(!response.body.includes('createEvakageServer'), `${attempt} leaked server source`);
+    assert.ok(!response.body.includes('"name": "evakage"'), `${attempt} leaked package.json`);
   }
 
   // Every response carries the headers, not just the static-file path.

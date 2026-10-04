@@ -132,7 +132,8 @@ export function buildMessageEnvelope({ identity, recipientId, recipientSealRaw, 
         id: message.id,
         text: message.text,
         at: message.at,
-        fromName: message.fromName || ''
+        fromName: message.fromName || '',
+        proof: message.proof
       }
     }
   });
@@ -155,9 +156,10 @@ export async function openMessageEnvelope({ sealPrivateKey, box, selfId, expecte
     message: {
       id: message.id,
       text: message.text,
-      at: Number(message.at) || Date.now(),
+      at: message.at,
       from: meta.from,
-      fromName: typeof message.fromName === 'string' ? message.fromName.slice(0, 64) : ''
+      fromName: typeof message.fromName === 'string' ? message.fromName.slice(0, 64) : '',
+      proof: message.proof
     }
   };
 }
@@ -186,22 +188,27 @@ export { generateContentKey };
 /** Encrypts a Blob chunk by chunk; returns the ciphertext as a Blob.
  * @param {Blob} blob @param {CryptoKey} key @param {string} fileId @param {number} chunkSize @param {(fraction: number) => void} [onProgress] */
 export async function encryptBody(blob, key, fileId, chunkSize, onProgress) {
-  const totalChunks = Math.ceil(blob.size / chunkSize);
-  /** @type {BlobPart[]} */
   const parts = [];
-  for (let index = 0; index < totalChunks; index++) {
-    const start = index * chunkSize;
-    const plain = new Uint8Array(await blob.slice(start, Math.min(blob.size, start + chunkSize)).arrayBuffer());
-    const iv = crypto.getRandomValues(new Uint8Array(IV_BYTES));
-    const cipher = await crypto.subtle.encrypt(
-      { name: 'AES-GCM', iv, additionalData: chunkAad(fileId, index, totalChunks) },
-      key,
-      plain
-    );
-    parts.push(iv, new Uint8Array(cipher));
-    onProgress?.((index + 1) / totalChunks);
+  let index = 0;
+  for await (const part of encryptBodyChunks(blob, key, fileId, chunkSize)) {
+    parts.push(part);
+    onProgress?.(++index / Math.ceil(blob.size / chunkSize));
   }
   return new Blob(parts, { type: 'application/octet-stream' });
+}
+
+/** Encrypt one authenticated chunk at a time; never retain the full ciphertext.
+ * @param {Blob} blob @param {CryptoKey} key @param {string} fileId @param {number} chunkSize
+ * @param {number} [startIndex] */
+export async function* encryptBodyChunks(blob, key, fileId, chunkSize, startIndex = 0) {
+  const total = Math.ceil(blob.size / chunkSize);
+  for (let index = startIndex; index < total; index++) {
+    const plain = await blob.slice(index * chunkSize, Math.min(blob.size, (index + 1) * chunkSize)).arrayBuffer();
+    const iv = crypto.getRandomValues(new Uint8Array(IV_BYTES));
+    const cipher = await crypto.subtle.encrypt({ name: 'AES-GCM', iv,
+      additionalData: chunkAad(fileId, index, total) }, key, plain);
+    yield new Blob([iv, cipher]);
+  }
 }
 
 /**

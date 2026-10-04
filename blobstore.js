@@ -334,9 +334,11 @@ export function createBlobStore(options = {}) {
     return new Promise((resolve) => {
       const blob = blobs.get(id);
       if (!blob || expired(blob) || blob.kind !== 'file') return resolve({ status: 404, message: 'No such transfer.' });
-      if (blob.complete) return resolve({ status: 409, message: 'That transfer is already uploaded.' });
+      if (blob.complete || blob.written > 0) return resolve({ status: 409, message: 'Use chunk resume for a partially committed upload.' });
       if (presentedToken !== blob.uploadToken) return resolve({ status: 403, message: 'Bad upload token.' });
 
+      if (activeUploads.has(id)) return resolve({ status: 409, message: 'Upload already in progress.' });
+      activeUploads.add(id);
       const out = fs.createWriteStream(blob.path, { flags: 'w' });
       let written = 0;
       let failed = false;
@@ -348,6 +350,7 @@ export function createBlobStore(options = {}) {
         // Wait for the file handle to close before unlinking, including when
         // expiry happens while createWriteStream is still opening the file.
         out.once('close', () => {
+          activeUploads.delete(id);
           remove(id).then(() => resolve({ status, message }));
         });
         out.destroy();
@@ -360,6 +363,7 @@ export function createBlobStore(options = {}) {
         if (written > blob.bytes) abort(413, 'Upload exceeded the declared length.');
       });
       request.on('error', () => abort(400, 'Upload failed.'));
+      request.on('aborted', () => abort(400, 'Upload interrupted.'));
       out.on('error', () => abort(500, 'Could not buffer that transfer.'));
 
       out.on('finish', () => {
@@ -369,6 +373,7 @@ export function createBlobStore(options = {}) {
           abort(400, 'Upload length did not match the declared length.');
           return;
         }
+        activeUploads.delete(id);
         blob.written = written;
         blob.complete = true;
         storeBytes += written;
@@ -378,6 +383,58 @@ export function createBlobStore(options = {}) {
 
       request.pipe(out);
     });
+  }
+
+  // Commit whole ciphertext chunks only. A dropped request never advances offset.
+  const activeUploads = new Set();
+  /** @param {string} id @param {string} presentedToken */
+  function uploadStatus(id, presentedToken) {
+    const blob = blobs.get(id);
+    if (!blob || expired(blob) || blob.kind !== 'file') return { status: 404, offset: 0 };
+    if (blob.uploadToken !== presentedToken) return { status: 403, offset: 0 };
+    return { status: 200, offset: blob.written, complete: blob.complete };
+  }
+
+  /** @param {string} id @param {string} presentedToken @param {number} offset
+   * @param {import('node:stream').Readable} request
+   * @returns {Promise<{status: number, message?: string}>} */
+  async function receiveChunk(id, presentedToken, offset, request) {
+    const status = uploadStatus(id, presentedToken);
+    if (status.status !== 200) return { status: status.status, message: 'Transfer unavailable or bad token.' };
+    const blob = blobs.get(id);
+    if (!blob) return { status: 404 };
+    if (activeUploads.has(id) || offset !== blob.written || blob.complete ||
+        !Number.isSafeInteger(offset) || offset < 0) return { status: 409, message: 'Upload offset conflict.' };
+    const length = Math.min(blob.chunkSize + 28, blob.bytes - offset);
+    if (offset % (blob.chunkSize + 28) !== 0) return { status: 400, message: 'Offset must be a chunk boundary.' };
+    activeUploads.add(id);
+    try {
+      const parts = [];
+      let received = 0;
+      for await (const part of request) {
+        received += part.length;
+        if (received > length) return { status: 413, message: 'Chunk exceeded declared length.' };
+        parts.push(part);
+      }
+      if (received !== length) return { status: 400, message: 'Incomplete ciphertext chunk.' };
+      if (expired(blob) || !blobs.has(id)) return { status: 410, message: 'Transfer expired.' };
+      const handle = await fsp.open(blob.path, offset === 0 ? 'w' : 'r+');
+      try {
+        const bytes = Buffer.concat(parts);
+        let done = 0;
+        while (done < bytes.length) {
+          const result = await handle.write(bytes, done, bytes.length - done, offset + done);
+          done += result.bytesWritten;
+        }
+      } finally { await handle.close(); }
+      if (expired(blob) || !blobs.has(id)) return { status: 410, message: 'Transfer expired.' };
+      blob.written += received;
+      storeBytes += received;
+      blob.complete = blob.written === blob.bytes;
+      if (blob.complete) onAvailable(blob);
+      return { status: 204 };
+    } catch { return { status: 400, message: 'Chunk upload interrupted; retry from committed offset.' }; }
+    finally { activeUploads.delete(id); }
   }
 
   /** Issues a one-item download token to a participant.
@@ -497,6 +554,8 @@ export function createBlobStore(options = {}) {
     wipe,
     offer,
     receive,
+    receiveChunk,
+    uploadStatus,
     claim,
     openForDownload,
     release,

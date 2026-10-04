@@ -1,5 +1,6 @@
 import { test, expect } from '@playwright/test';
 import fs from 'node:fs/promises';
+import { pairDevices } from './helpers.js';
 import { startServer } from '../tests/helpers.js';
 
 test('engine smoke: identity, relay chat and verified file download', async ({ browser }) => {
@@ -11,14 +12,13 @@ test('engine smoke: identity, relay chat and verified file download', async ({ b
   /** @type {string[]} */
   const errors = [];
   try {
-    for (const name of ['Alice', 'Bob']) {
+    for (let i = 0; i < 2; i++) {
       const context = await browser.newContext();
       contexts.push(context);
-      await context.addInitScript(name => {
-        localStorage.setItem('aria-drop-device-name', name);
+      await context.addInitScript(() => {
         localStorage.setItem('aria-drop-force-relay', '1');
         localStorage.setItem('aria-drop-incoming', 'auto');
-      }, name);
+      });
       const page = await context.newPage();
       page.on('pageerror', error => errors.push(error.message));
       await page.goto(base);
@@ -26,8 +26,9 @@ test('engine smoke: identity, relay chat and verified file download', async ({ b
       pages.push(page);
     }
     const [alice, bob] = pages;
-    await alice.getByRole('button', { name: 'Open conversation with Bob', exact: true }).click();
-    await bob.getByRole('button', { name: 'Open conversation with Alice', exact: true }).click();
+    await pairDevices(alice, bob);
+    await alice.getByRole('button', { name: `Open conversation with ${await bob.locator('#selfCode').getAttribute('data-device-name')}`, exact: true }).click();
+    await bob.getByRole('button', { name: `Open conversation with ${await alice.locator('#selfCode').getAttribute('data-device-name')}`, exact: true }).click();
     await alice.locator('#messageInput').fill('Across browser engines');
     await alice.locator('#messageForm').getByRole('button', { name: 'Send', exact: true }).click();
     await expect(bob.locator('#timeline')).toContainText('Across browser engines');

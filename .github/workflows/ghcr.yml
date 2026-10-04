@@ -40,8 +40,9 @@ jobs:
           node-version: 26
           cache: npm
       - run: npm ci
-      - run: npx playwright install --with-deps chromium
+      - run: npx playwright install --with-deps chromium firefox webkit
       - run: npm run test:e2e
+      - run: npm run test:e2e:platform -- --output=test-results/platform
       - name: Preserve browser failure traces
         if: failure()
         uses: actions/upload-artifact@v7
@@ -90,7 +91,7 @@ jobs:
           context: .
           platforms: linux/amd64
           load: true
-          tags: aria-drop:scan
+          tags: evakage:scan
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
@@ -100,7 +101,7 @@ jobs:
       - name: Smoke-test the image
         shell: bash
         run: |
-          docker run -d --name smoke -p 3000:3000 aria-drop:scan
+          docker run -d --name smoke -p 3000:3000 evakage:scan
           for attempt in $(seq 1 30); do
             if curl -fsS http://127.0.0.1:3000/healthz; then
               echo
@@ -118,7 +119,7 @@ jobs:
       - name: Scan image for known vulnerabilities
         uses: aquasecurity/trivy-action@v0.36.0
         with:
-          image-ref: aria-drop:scan
+          image-ref: evakage:scan
           format: table
           exit-code: '1'
           ignore-unfixed: true

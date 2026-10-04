@@ -23,6 +23,8 @@ export interface Device {
   id: string;
   name: string;
   code: string;
+  pairingCode?: string;
+  pairingCodeExpiresAt?: number;
   platform: string;
   browser: string;
   identityKey?: string;
@@ -39,6 +41,7 @@ export interface Message {
   from: string;
   fromName: string;
   at: number;
+  proof?: { inner: string; identityKey: string; signature: string };
   verifiedAuthor?: boolean;
   relayedBy?: string | null;
   via?: 'relay';
@@ -77,6 +80,8 @@ export interface FileRecord extends FileMeta {
   via?: 'relay';
   relayStage?: 'encrypting' | 'uploading' | 'downloading' | 'offered' | 'failed' | 'uploaded' | 'received' | 'declined';
   relayBlobId?: string;
+  relayAbort?: AbortController;
+  retryUpload?: () => Promise<void>;
   relayKey?: CryptoKey | null;
   relayMeta?: { id: string; size: number; chunkSize: number; totalChunks: number };
   relayConvId?: string;

@@ -2,18 +2,22 @@ import { test as base, expect } from '@playwright/test';
 import fs from 'node:fs/promises';
 import { startServer } from '../tests/helpers.js';
 
+export const deviceNames = new Map();
+
 /** @typedef {import('@playwright/test').Page} Page */
 /** @typedef {{device: string, patch: (source: string) => string} | null} AppPatch */
 
-export const test = base.extend(/** @type {import('@playwright/test').Fixtures<{devices: {alice: Page, bob: Page, disconnect: (name: string) => void}, appPatch: AppPatch}, {}, import('@playwright/test').PlaywrightTestArgs, import('@playwright/test').PlaywrightWorkerArgs>} */ ({
+export const test = base.extend(/** @type {import('@playwright/test').Fixtures<{devices: {alice: Page, bob: Page, disconnect: (name: string) => void}, appPatch: AppPatch, autoPair: boolean}, {}, import('@playwright/test').PlaywrightTestArgs, import('@playwright/test').PlaywrightWorkerArgs>} */ ({
   // Serves one device a rewritten app.js, so a test can play a peer that
   // misbehaves in a way the honest client never would. Set with
   // test.use({ appPatch: { device: 'Bob', patch: source => ... } }).
   appPatch: [null, { option: true }],
+  autoPair: [true, { option: true }],
 
-  devices: async ({ browser, appPatch }, use) => {
+  devices: async ({ browser, appPatch, autoPair }, use) => {
     /** @type {(() => Promise<void>)[]} */
     const cleanup = [];
+    deviceNames.clear();
     const { base: url, app } = await startServer({ after: (/** @type {() => Promise<void>} */ fn) => cleanup.push(fn) });
     const contexts = [];
     /** @type {string[]} */
@@ -42,16 +46,15 @@ export const test = base.extend(/** @type {import('@playwright/test').Fixtures<{
         page.on('pageerror', error => pageErrors.push(error.message));
         await page.goto(url);
         await expect(page.locator('#selfCode')).not.toHaveText('----');
-        await page.getByRole('button', { name: 'Rename device' }).click();
-        await page.locator('#renameInput').fill(name);
-        await page.locator('#renameSave').click();
+        deviceNames.set(name, await page.locator('#selfCode').getAttribute('data-device-name'));
         await page.getByRole('button', { name: 'Settings', exact: true }).click();
         await page.locator('input[value="always"]').check();
         await page.getByRole('button', { name: 'Done', exact: true }).click();
         pages.push(page);
       }
+      if (autoPair) await pairDevices(pages[0], pages[1]);
       await use({ alice: pages[0], bob: pages[1], disconnect: name => {
-        for (const client of app.clients.values()) if (client.name === name) client.ws.close();
+        for (const client of app.clients.values()) if (client.name === deviceNames.get(name)) client.ws.close();
       } });
       expect(pageErrors).toEqual([]);
     } finally {
@@ -61,8 +64,37 @@ export const test = base.extend(/** @type {import('@playwright/test').Fixtures<{
   }
 }));
 
+/** Pair through the real owner-only code flow; never seed approval storage.
+ * @param {Page} first @param {Page} second @param {boolean} [closeConversations] */
+export async function pairDevices(first, second, closeConversations = true) {
+  await first.locator('#codeInput').fill(await second.locator('#selfCode').innerText());
+  await first.locator('#codeForm').getByRole('button', { name: 'Pair', exact: true }).click();
+  await expect(first.locator('#codeFeedback')).toContainText('Paired with');
+  await expect(first.locator('#sessionPanel')).toBeVisible();
+  const id = await first.locator('#selfCode').getAttribute('data-device-id');
+  if (await second.evaluate(() => navigator.onLine)) {
+    await expect.poll(() => second.evaluate(async other => {
+    const modulePath = '/identity.js';
+    const { deviceTrust } = await import(modulePath);
+    return Boolean(deviceTrust(other)?.pairedAt);
+    }, id)).toBe(true);
+  }
+  await first.locator('#closeSession').click();
+  await expect(first.locator('#sessionPanel')).toBeHidden();
+  // Pairing opens a temporary direct conversation; close it so room-only tests
+  // measure room links rather than direct conversations that also hold links.
+  if (!closeConversations) return;
+  for (const [page, peer] of [[first, second], [second, first]]) {
+    if (await page.locator('#sessionPanel').isVisible()) continue;
+    const name = await peer.locator('#selfCode').getAttribute('data-device-name');
+    const exit = page.getByRole('button', { name: `Exit conversation with ${name}`, exact: true });
+    if (await exit.count()) await exit.click();
+  }
+}
+
 /** @param {Page} page @param {string} name */
 export async function openPeer(page, name) {
+  name = deviceNames.get(name) || name;
   await page.locator('#peerRows tr').filter({ hasText: name })
     .getByRole('button', { name: `Open conversation with ${name}`, exact: true }).click();
   await expect(page.locator('#secureState')).toContainText('Encrypted');

@@ -1,5 +1,10 @@
 # Codex handoff: build context, tests, and improvements
 
+> Branding update (2026-10-04): the app is now **Evakage**. Historical names below
+> describe older revisions. Browser identity/settings keys, cryptographic context
+> strings, auth cookies and existing repository/image URLs intentionally retain
+> their original identifiers for compatibility. See README.md and TODO.md.
+
 > Current update (2026-09-24): this handoff includes historical claims that
 > predate relay and away-seat support. Reproducible Chromium tests now live in
 > `e2e/` (`npm run test:e2e`) and run in CI. The frame parser is independently

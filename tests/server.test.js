@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { fingerprintOf, bytesToBase64, signTranscript } from '../public/identity.js';
 import { startServer, openWs, waitFor, register } from './helpers.js';
 
 test('health, presence, stable codes, and code lookup work', async t => {
@@ -35,7 +36,7 @@ test('health, presence, stable codes, and code lookup work', async t => {
   const lookupPromise = waitFor(a, m => m.type === 'resolved-code' && m.requestId === 'lookup-1');
   a.send(JSON.stringify({ type: 'resolve-code', requestId: 'lookup-1', code: bReg.self.code }));
   const lookup = await lookupPromise;
-  assert.equal(lookup.peer.name, 'Phone');
+  assert.equal(lookup.peer.name, `Device ${bReg.self.code}`);
   assert.equal(lookup.peer.id, 'device_B_12345678');
 
   a.close();
@@ -68,7 +69,7 @@ test('rooms advertise membership, cap size, and close when their last member lea
   b.send(JSON.stringify({ type: 'join-room', code: room.code }));
   const joined = (await bJoined).room;
   await aSeesTwo;
-  assert.deepEqual(joined.members.map((/** @type {any} */ m) => m.name).sort(), ['Laptop', 'Phone']);
+  assert.deepEqual(joined.members.map((/** @type {any} */ m) => m.name).sort(), joined.members.map((/** @type {any} */ m) => `Device ${m.code}`).sort());
 
   // Sixth device is the last that fits; a seventh is refused.
   const extras = [];
@@ -164,5 +165,53 @@ test('the room cap is clamped to a sane range', async t => {
     const { base } = await startServer(t, { maxRoomMembers: asked });
     const config = await fetch(`${base}/config.json`).then(r => r.json());
     assert.equal(config.maxRoomMembers, expected, `asked for ${asked}`);
+  }
+});
+
+test('device names ignore supplied names and reject rename requests', async t => {
+  const { wsBase } = await startServer(t);
+  const ws = await openWs(wsBase);
+  t.after(() => ws.close());
+  const payload = { type: 'register', deviceId: 'device_fixed_12345678', name: 'Trusted administrator' };
+  const registered = waitFor(ws, m => m.type === 'registered');
+  ws.send(JSON.stringify(payload));
+  const { self } = await registered;
+  assert.equal(self.name, `Device ${self.code}`);
+
+  const rejected = waitFor(ws, m => m.type === 'error' && m.context === 'rename');
+  ws.send(JSON.stringify({ type: 'rename', name: 'Support' }));
+  await rejected;
+  const presence = waitFor(ws, m => m.type === 'presence');
+  ws.send(JSON.stringify({ type: 'presence-request' }));
+  assert.equal((await presence).peers[0].name, self.name);
+
+  const reregistered = waitFor(ws, m => m.type === 'registered');
+  ws.send(JSON.stringify({ ...payload, name: 'Someone else' }));
+  assert.equal((await reregistered).self.name, self.name);
+});
+
+test('allowlist requires possession of the identity key and a fresh socket challenge', async t => {
+  const keys = await crypto.subtle.generateKey({ name: 'ECDSA', namedCurve: 'P-256' }, true, ['sign', 'verify']);
+  const raw = new Uint8Array(await crypto.subtle.exportKey('raw', keys.publicKey));
+  const id = await fingerprintOf(raw);
+  const { wsBase } = await startServer(t, { allowedDevices: [id] });
+  const ws = await openWs(wsBase);
+  t.after(() => ws.close());
+  const challenge = (await waitFor(ws, m => m.type === 'registration-challenge')).challenge;
+  const proof = await signTranscript(keys.privateKey, JSON.stringify(['aria-drop/register/1', challenge, id]));
+  const registered = waitFor(ws, m => m.type === 'registered');
+  ws.send(JSON.stringify({ type: 'register', deviceId: id, identityKey: bytesToBase64(raw), registrationProof: proof }));
+  assert.equal((await registered).self.id, id);
+
+  for (const payload of [
+    { deviceId: id, identityKey: bytesToBase64(raw), registrationProof: proof },
+    { deviceId: id, identityKey: bytesToBase64(raw) },
+    { deviceId: 'x'.repeat(43), identityKey: bytesToBase64(raw), registrationProof: proof }
+  ]) {
+    const attacker = await openWs(wsBase);
+    const rejected = waitFor(attacker, m => m.type === 'error' && m.context === 'register');
+    attacker.send(JSON.stringify({ type: 'register', ...payload }));
+    assert.match((await rejected).message, /not authorized/);
+    attacker.close();
   }
 });

@@ -1,0 +1,206 @@
+{
+  "checked_date": "2026-10-04",
+  "authenticated": true,
+  "credential_source": "existing Git credential helper",
+  "local_head": "99bea4dffa9136c25a5d676cfb52b6085259cf6b",
+  "run": {
+    "id": 37187650814,
+    "name": "Build and publish container",
+    "head_sha": "99bea4dffa9136c25a5d676cfb52b6085259cf6b",
+    "status": "completed",
+    "conclusion": "success",
+    "html_url": "https://github.com/thesteau/aria-drop/actions/runs/37187650814",
+    "created_at": "2026-10-04T08:02:45Z",
+    "updated_at": "2026-10-04T08:05:32Z"
+  },
+  "jobs": [
+    {
+      "name": "test",
+      "conclusion": "success",
+      "html_url": "https://github.com/thesteau/aria-drop/actions/runs/37187650814/job/111392920474",
+      "steps": [
+        {
+          "name": "Set up job",
+          "conclusion": "success"
+        },
+        {
+          "name": "Run actions/checkout@v7",
+          "conclusion": "success"
+        },
+        {
+          "name": "Run actions/setup-node@v7",
+          "conclusion": "success"
+        },
+        {
+          "name": "Run npm ci",
+          "conclusion": "success"
+        },
+        {
+          "name": "Lint",
+          "conclusion": "success"
+        },
+        {
+          "name": "Type-check",
+          "conclusion": "success"
+        },
+        {
+          "name": "Run npm test",
+          "conclusion": "success"
+        },
+        {
+          "name": "Audit dependencies",
+          "conclusion": "success"
+        },
+        {
+          "name": "Post Run actions/setup-node@v7",
+          "conclusion": "success"
+        },
+        {
+          "name": "Post Run actions/checkout@v7",
+          "conclusion": "success"
+        },
+        {
+          "name": "Complete job",
+          "conclusion": "success"
+        }
+      ]
+    },
+    {
+      "name": "browser",
+      "conclusion": "success",
+      "html_url": "https://github.com/thesteau/aria-drop/actions/runs/37187650814/job/111392920648",
+      "steps": [
+        {
+          "name": "Set up job",
+          "conclusion": "success"
+        },
+        {
+          "name": "Run actions/checkout@v7",
+          "conclusion": "success"
+        },
+        {
+          "name": "Run actions/setup-node@v7",
+          "conclusion": "success"
+        },
+        {
+          "name": "Run npm ci",
+          "conclusion": "success"
+        },
+        {
+          "name": "Run npx playwright install --with-deps chromium",
+          "conclusion": "success"
+        },
+        {
+          "name": "Run npm run test:e2e",
+          "conclusion": "success"
+        },
+        {
+          "name": "Preserve browser failure traces",
+          "conclusion": "skipped"
+        },
+        {
+          "name": "Post Run actions/setup-node@v7",
+          "conclusion": "success"
+        },
+        {
+          "name": "Post Run actions/checkout@v7",
+          "conclusion": "success"
+        },
+        {
+          "name": "Complete job",
+          "conclusion": "success"
+        }
+      ]
+    },
+    {
+      "name": "container",
+      "conclusion": "success",
+      "html_url": "https://github.com/thesteau/aria-drop/actions/runs/37187650814/job/111393134513",
+      "steps": [
+        {
+          "name": "Set up job",
+          "conclusion": "success"
+        },
+        {
+          "name": "Run actions/checkout@v7",
+          "conclusion": "success"
+        },
+        {
+          "name": "Run docker/setup-qemu-action@v4",
+          "conclusion": "success"
+        },
+        {
+          "name": "Run docker/setup-buildx-action@v4",
+          "conclusion": "success"
+        },
+        {
+          "name": "Compute lowercase GHCR image name",
+          "conclusion": "success"
+        },
+        {
+          "name": "Log in to GHCR",
+          "conclusion": "success"
+        },
+        {
+          "name": "Container metadata",
+          "conclusion": "success"
+        },
+        {
+          "name": "Build scan candidate",
+          "conclusion": "success"
+        },
+        {
+          "name": "Smoke-test the image",
+          "conclusion": "success"
+        },
+        {
+          "name": "Scan image for known vulnerabilities",
+          "conclusion": "success"
+        },
+        {
+          "name": "Build and publish",
+          "conclusion": "success"
+        },
+        {
+          "name": "Post Build and publish",
+          "conclusion": "success"
+        },
+        {
+          "name": "Post Scan image for known vulnerabilities",
+          "conclusion": "success"
+        },
+        {
+          "name": "Post Build scan candidate",
+          "conclusion": "success"
+        },
+        {
+          "name": "Post Log in to GHCR",
+          "conclusion": "success"
+        },
+        {
+          "name": "Post Run docker/setup-buildx-action@v4",
+          "conclusion": "success"
+        },
+        {
+          "name": "Post Run docker/setup-qemu-action@v4",
+          "conclusion": "success"
+        },
+        {
+          "name": "Post Run actions/checkout@v7",
+          "conclusion": "success"
+        },
+        {
+          "name": "Complete job",
+          "conclusion": "success"
+        }
+      ]
+    }
+  ],
+  "codeql": {
+    "id": 37187650893,
+    "head_sha": "99bea4dffa9136c25a5d676cfb52b6085259cf6b",
+    "conclusion": "success",
+    "html_url": "https://github.com/thesteau/aria-drop/actions/runs/37187650893"
+  },
+  "scope": "The hosted commit only. Local uncommitted changes and the expanded three-engine browser workflow were not in this run."
+}

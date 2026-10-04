@@ -14,15 +14,13 @@
     "noEmit": true,
 
     // Ratchet, not a destination. Everything below is enforced and green today.
-    // strictNullChecks and noImplicitAny are both enabled. Next step:
-    // strictFunctionTypes, then the DOM handles in public/app.js (the `$` helper
-    // still returns `any`, which is the largest remaining hole).
-    // Counts change as the code evolves; remeasure before each pass.
-    // Tracked in TODO.md. Raise one flag at a time and fix, rather than turning
-    // on `strict` and suppressing what falls out.
+    // strictNullChecks, noImplicitAny and strictFunctionTypes are enabled.
+    // App DOM handles use concrete element types. Raise further flags one at
+    // a time and fix findings; track remaining work in TODO.md.
     "strict": false,
     "noImplicitAny": true,
     "strictNullChecks": true,
+    "strictFunctionTypes": true,
     "noImplicitThis": true,
     "noImplicitOverride": true,
     "noFallthroughCasesInSwitch": true,

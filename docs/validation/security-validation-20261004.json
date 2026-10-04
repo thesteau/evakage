@@ -1,0 +1,55 @@
+{
+  "date": "2026-10-04",
+  "review_type": "Internal code inspection and regression validation; not an independent review",
+  "head": "99bea4dffa9136c25a5d676cfb52b6085259cf6b",
+  "working_tree": "Uncommitted changes beyond HEAD",
+  "source_sha256": {
+    "server.js": "9652d4d183dee309d27612cbba0b8dffe09ff8ee9fa1c51f7fe7e27dba2b170f",
+    "blobstore.js": "1da28cd999974c96b72fa2a8e2aacd7a8f9174bf27545c466778c942215d4acc",
+    "public/app.js": "f4c344fcd7af0e6291e8fddbac99fa1b2f2eedb5be03863a39d9b3f66f87a21f",
+    "public/identity.js": "e97e73b78308d25f9eb9a96ae797098f8ca2793445f6eca5fe4221a9a42e1397",
+    "public/messages.js": "c18a843bd37194000f37acccdb8abe9576a5605929a2e721fcf4db45ab9f5df3",
+    "public/relay.js": "2e19cfc60b0928a59522f8596f7fbe66e89c4916adde4f2a0172fb8b3bbc470b",
+    "public/frames.js": "618cbdc0f38b5ed3d9622235780f2bfa40ae11aab1eb49d43680d252131d2c2b",
+    "public/sha256.js": "f8cef06add1f613dc49f1419b2cbe1d6a4bc2fe129725ace75443b92d154d320",
+    "public/sw.js": "12b61cc3994ec049596c0e6bf64ccaa673a83601c10a22cbd89235f6ac205740",
+    "public/types.d.ts": "bdf7b377c9fc90bb477850f87fba3cbdc0a2b7b899e967fb8e760c57d0a6ba3e",
+    "e2e/receiving-validation.spec.js": "ecd55923503d61e89b7cd613e4ae6d7f073e083e4b42a013baa358a961495248"
+  },
+  "checks": {
+    "lint": "pass",
+    "typecheck": "pass",
+    "unit_tests": {
+      "passed": 92,
+      "failed": 0
+    },
+    "chromium_e2e": {
+      "passed": 33,
+      "failed": 0
+    },
+    "engine_smoke": {
+      "Chromium": "pass",
+      "Firefox": "pass",
+      "WebKit": "pass"
+    },
+    "npm_audit_high": {
+      "reported_vulnerabilities": 0
+    },
+    "receiving_cases": [
+      "block during receipt refuses completion",
+      "forget during receipt refuses completion",
+      "altered ciphertext refuses Save",
+      "Pixel 7 simulation: 32 MiB exact saved bytes after hash verification"
+    ]
+  },
+  "finding": {
+    "id": "LOCAL-RECEIVE-REVOCATION",
+    "before_fix": "Blocked sender file was still received and SHA-256 verified",
+    "fixed": "Abort on authorization loss; recheck during decryption and before completion",
+    "regression": "e2e/receiving-validation.spec.js"
+  },
+  "remaining": [
+    "Bounded-memory receiving implementation",
+    "Independent protocol/security review"
+  ]
+}

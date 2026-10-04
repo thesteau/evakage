@@ -58,7 +58,7 @@ test('a device that went offline can still be looked up and sent to', async t =>
   const [record] = await lookup(a, ['device_bob_0000001']);
   assert.equal(record.id, 'device_bob_0000001');
   assert.equal(record.online, false);
-  assert.equal(record.name, 'Bob');
+  assert.equal(record.name, `Device ${record.code}`);
   assert.equal(record.sealKey, KEYS.sealKey);
   assert.equal(record.sealKeySignature, KEYS.sealKeySignature);
   assert.equal(record.identityKey, KEYS.identityKey);

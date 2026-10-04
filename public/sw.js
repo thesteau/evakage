@@ -1,6 +1,6 @@
 // Service worker for the installed app.
 //
-// The app shell is precached so a phone can open aria-drop with no network and
+// The app shell is precached so a phone can open Evakage with no network and
 // still reach the UI (it will just report signaling as disconnected). Runtime
 // data — /config.json, /healthz — is never cached, because a stale ICE or limit
 // config is worse than no answer.
@@ -14,7 +14,7 @@
 // DOM lib does not know about.
 const worker = /** @type {ServiceWorkerGlobalScope} */ (/** @type {unknown} */ (self));
 
-const CACHE = 'aria-drop-v9';
+const CACHE = 'evakage-v18';
 
 const SHELL = [
   '/',
@@ -22,6 +22,9 @@ const SHELL = [
   '/styles.css',
   '/app.js',
   '/frames.js',
+  '/messages.js',
+  '/qr.js',
+  '/vendor/qrcode.mjs',
   '/sha256.js',
   '/identity.js',
   '/relay.js',

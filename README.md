@@ -1,6 +1,9 @@
-# aria-drop
+# Evakage
 
 A Docker-first, browser-first experiment for ephemeral local peer communication. It combines the parts that feel good in LAN drop tools—automatic peer discovery and click-a-device actions—with encrypted text chat, links, and browser-to-browser file transfer, one-to-one or in a small room.
+
+The name combines **Eva-**, evoking evanescence — fading or disappearing — with
+**kage (影)**, Japanese for shadow.
 
 ## What it does
 
@@ -34,7 +37,7 @@ If **all participating browser instances lose their in-memory state** (closed/re
 
 ## Message yourself
 
-Use **Message yourself**, even with no other devices online, to send notes or upload files to your own device identity. Items are encrypted and signed in the browser before upload. Reading your items keeps the encrypted server copy available after a reload. Reconnect within 24 hours of disconnecting; each item has a hard 3-day limit from creation. Use the same browser profile: clearing its identity or switching browsers prevents decryption. Server restarts still erase buffered items early. These lifetimes apply only to self-chat.
+Open the first **Advertised devices** entry, marked **This is you**, even with no other devices online, to send notes or upload files to your own device identity. Items are encrypted and signed in the browser before upload. Reading your items keeps the encrypted server copy available after a reload. Reconnect within 24 hours of disconnecting; each item has a hard 3-day limit from creation. Use the same browser profile: clearing its identity or switching browsers prevents decryption. Server restarts still erase buffered items early. These lifetimes apply only to self-chat.
 
 ## Server relay
 
@@ -60,8 +63,9 @@ regardless:
   sending to whom, never content.
 - **Signed.** Every envelope is also signed by the sender's identity key, so a
   recipient knows the item really came from that device even if the server lies
-  about who sent it. A relayed message is therefore verified authorship, unlike
-  history recovered from another peer during a sync.
+  about who sent it. Chat also carries a portable author signature, verified
+  on live delivery, relay delivery and recovery through another peer. Altered
+  or unsigned history is discarded rather than attributed to the claimed author.
 - **Verified.** A relayed file's SHA-256 is checked after decrypting, exactly as
   for a direct transfer.
 
@@ -143,10 +147,14 @@ Once installed it runs full-screen with no browser chrome, respects display cuto
 
 Mobile-specific behaviour:
 
+Keep the app open and the screen unlocked on both devices until transfers finish.
+Switching apps or locking your phone can interrupt a transfer. Background transfers
+are not guaranteed, even when wake lock is available.
+
 - **Layout.** Below 700px the device and room tables become labelled cards instead of a seven-column table in a horizontal scroller, and controls meet the 44px touch-target minimum.
 - **Backgrounding.** iOS tears down WebSockets and peer connections when you lock the screen or switch apps. Returning to the foreground re-checks signaling and rebuilds any dead links rather than waiting on a timer that was suspended too.
-- **Screen lock during transfers.** A screen wake lock is held only while a transfer or hash is actually in flight, and released as soon as nothing is, so a long transfer is not killed by the display sleeping.
-- **Share target.** Once installed, aria-drop appears in the share sheet of other apps. Shared text or a link is prefilled in the composer; shared files wait behind a banner until you pick a device or room — including a device that is offline, which gets them through the relay. The files are caught by the service worker and never reach the server unencrypted. (Android and desktop Chrome/Edge; iOS does not support web share targets.)
+- **Screen lock during transfers.** A screen wake lock is requested only while a transfer or hash is actually in flight, and released as soon as nothing is. Browser support and permission vary; keep the screen unlocked yourself if needed.
+- **Share target.** Once installed, Evakage appears in the share sheet of other apps. Shared text or a link is prefilled in the composer; shared files wait behind a banner until you pick a device or room — including a device that is offline, which gets them through the relay. The files are caught by the service worker and never reach the server unencrypted. (Android and desktop Chrome/Edge; iOS does not support web share targets.)
 - **Updates.** A new build never reloads the page underneath you; a banner offers the reload, so an in-flight transfer is not interrupted.
 
 Large files remain the weak spot on phones: received blobs are held in memory until saved, and a memory-constrained browser may evict the tab. That is a known limitation, not a solved problem.
@@ -160,6 +168,7 @@ Large files remain the weak spot on phones: received blobs are held in memory un
 | `MAX_FILE_BYTES` | `536870912` | Browser-side per-file admission limit advertised to clients |
 | `ICE_SERVERS_JSON` | `[]` | JSON array of standard `RTCIceServer` objects for STUN/TURN |
 | `AUTH_TOKEN` | *(unset)* | When set, the whole server needs this token. Open `https://host/?token=THE_TOKEN` once and the server trades it for an `HttpOnly; SameSite=Strict` session cookie that also authorises the WebSocket upgrade. `/healthz` stays open for the container healthcheck. |
+| `DEVICE_ALLOWLIST` | *(unset)* | Comma-separated full device fingerprints permitted to register. Each must prove possession of its signing key using a fresh socket challenge. Remove a fingerprint and restart to revoke its server access. |
 | `ALLOWED_ORIGINS` | *(same host)* | Comma-separated exact origins permitted to open the WebSocket. Unset means "must match the request's own host", which is what you want behind a normal reverse proxy. |
 | `TRUST_PROXY` | `0` | Set to `1` only when a proxy you control sits in front. It makes the server believe `X-Forwarded-Host` (for origin checks) and `X-Forwarded-For` (for per-address limits). Leave it off if clients can reach the port directly, or they can spoof both. |
 | `BLOB_DIR` | `/tmp/aria-drop-blobs` in the image | Where relayed messages and files wait, one subdirectory per conversation. Keep it inside the container; do not mount a volume here. |
@@ -194,9 +203,63 @@ Because the ID is the fingerprint, the **safety code is stable**: it is derived 
 
 The key, the display name, and the fingerprints of devices you have seen are the only things persisted. No message or file content is ever written to storage.
 
+## Device verification and access
+
+Device names are fixed by the server from device codes; custom names and rename
+requests are ignored/rejected. Message/file author labels use local device
+records rather than sender-supplied display names.
+
+Unknown devices first require their private pairing code: ask the owner for
+the code shown at the top of their app, or scan their device QR. Public advertised
+codes do not grant pairing. Private codes expire after three days; successful
+pairing is remembered by fingerprint and survives code rotation. Codes expire
+at the three-day boundary even if cleanup timers stall. A server restart also
+replaces invitation codes; existing local pairings survive.
+
+Open **Known devices**, choose **Verify**, and contact the owner outside the app.
+Compare the pairwise code shown for each other's fingerprint and enter the code
+the other owner reads to you. Successful comparison is remembered locally;
+**Block** stops exchanges with that fingerprint in this browser. Unblocking
+requires a fresh verification when verified-only mode is enabled. Forgetting
+clears pairing on both sides and requires another code pairing; it does not
+revoke access to the server itself.
+
+Enable **Only exchange with verified devices** in Settings to require this
+approval for all recipients and incoming authors. Sending to a room refuses the
+whole send until every current recipient is verified, rather than silently
+including a newly added member. This policy is local to each browser.
+
+For server access controls, collect full fingerprints from **QR codes** (your own)
+or **Known devices** (peers), configure `DEVICE_ALLOWLIST`, and restart. An allowed
+ID alone is insufficient: the server checks a P-256 signature over its fresh
+socket challenge. Removing an ID and restarting disconnects/revokes that device.
+This complements `AUTH_TOKEN`; configuration/restart is the administrator flow.
+It does not protect against a server serving compromised application code.
+
+**QR codes** shows the server URL and a device invitation URL whose fragment
+contains its private pairing code and expected fingerprint, plus your full
+fingerprint for allowlist setup. Authentication tokens and existing URL query
+parameters are excluded. Pairing invitations are bearer credentials; safety-code
+comparison provides the additional out-of-band ownership check.
+
+## Interrupted relay transfers and memory
+
+Relayed uploads encrypt and PUT one ciphertext chunk at a time. An interrupted
+upload stops and abandons its server item. **Restart upload** creates a new item
+with a fresh encryption key and sends the whole file again from byte zero.
+
+Interrupted downloads discard partial plaintext and wait for an explicit restart,
+including after reconnect. **Restart download** fetches
+the whole ciphertext again from byte zero using a recipient download token.
+AES-GCM binds every chunk to its file ID, index and total; SHA-256 still must match
+before Save is offered. Relay transfers do not resume. A server restart or expiry
+removes the buffered item. The receiver still retains the whole plaintext
+file before saving; bounded-memory streaming saves are deferred to preserve the
+existing final verification guarantee. See [local measurements](docs/relay-memory.md).
+
 ## Peer protocol versioning
 
-Browsers negotiate an application protocol version in the same handshake that exchanges their public keys. A peer whose supported range does not overlap this build's is refused before any key is derived, with a message naming both ranges, and is not retried until you press **Retry**. Reconnection uses bounded exponential backoff — after eight failed attempts a peer is marked `Unreachable` rather than retried forever.
+Browsers negotiate an application protocol version in the same handshake that exchanges their public keys. Protocol v3 requires portable chat signatures; v2 peers need to reload, and unsigned legacy history is discarded. A peer whose supported range does not overlap this build's is refused before any key is derived, with a message naming both ranges, and is not retried until you press **Retry**. Reconnection uses bounded exponential backoff — after eight failed attempts a peer is marked `Unreachable` rather than retried forever.
 
 ## GHCR publishing
 
@@ -269,9 +332,8 @@ kept in `test-results/` and uploaded as CI artifacts. Inspect one with
 ## Known gaps
 
 `TODO.md` tracks what is missing, why, and what it would cost. The short version:
-history recovered from another peer during a sync is not signed (it is marked as
-unverified rather than trusted — messages that came through the server relay are
-signed), no per-device authorisation, large files still live in RAM
+no per-device authorisation or authenticated room membership, peer-synced file
+metadata lacks portable author signatures, large files still live in RAM
 on the receiving side, and browser coverage still needs real-device Safari/Android
 and larger-room scenarios.
 

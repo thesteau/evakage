@@ -1,5 +1,5 @@
 {
-  "name": "aria-drop",
+  "name": "evakage",
   "version": "0.1.0",
   "private": true,
   "description": "Browser-first ephemeral peer chat and file transfer for trusted networks.",
@@ -32,6 +32,8 @@
     "@types/node": "^26.6.3",
     "eslint": "^10.11.0",
     "globals": "^15.14.0",
+    "jsqr": "1.4.0",
+    "qrcode-generator": "2.0.4",
     "typescript": "^5.7.2"
   }
 }

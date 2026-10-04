@@ -1,6 +1,6 @@
 import { expect } from '@playwright/test';
 import fs from 'node:fs/promises';
-import { test, openPeer, chat, sendFile } from './helpers.js';
+import { deviceNames, test, openPeer, chat, sendFile } from './helpers.js';
 
 for (const relay of [false, true]) {
   test(`${relay ? 'forced relay' : 'direct'}: chat both ways, consent and exact file bytes`, async ({ devices }) => {
@@ -53,7 +53,7 @@ test('installed worker serves the app shell offline without caching config', asy
   });
   await alice.context().setOffline(true);
   await alice.reload();
-  await expect(alice.getByRole('heading', { name: 'aria-drop', exact: true })).toBeVisible();
+  await expect(alice.getByRole('heading', { name: 'Evakage', exact: true })).toBeVisible();
   expect(await alice.evaluate(async () => Boolean(await caches.match('/config.json')))).toBe(false);
 });
 
@@ -80,7 +80,7 @@ test('shared text and files pass through the worker once and reach the chosen pe
   await openPeer(alice, 'Bob');
   await openPeer(bob, 'Alice');
   await alice.locator('#shareSendBtn').click();
-  await alice.locator('#pickTargetList').getByRole('button').filter({ hasText: 'Bob' }).click();
+  await alice.locator('#pickTargetList').getByRole('button').filter({ hasText: deviceNames.get('Bob') }).click();
   await bob.getByRole('button', { name: 'Accept shared.txt', exact: true }).click();
   const row = bob.locator('.file-item').filter({ hasText: 'shared.txt' });
   await expect(row).toContainText('SHA-256 ✓');
@@ -108,7 +108,7 @@ for (const attack of ['identity', 'signature']) {
         return send.call(this, data);
       };
     }, attack);
-    await bob.getByRole('button', { name: 'Open conversation with Alice', exact: true }).click();
+    await bob.getByRole('button', { name: `Open conversation with ${deviceNames.get('Alice')}`, exact: true }).click();
     await expect(bob.locator('#toastRegion')).toContainText(attack === 'identity' ? 'does not match its device ID' : 'failed to prove ownership');
     await expect(bob.locator('#secureState')).not.toContainText('Encrypted');
   });
@@ -240,3 +240,34 @@ test('room history catches up after an away member reconnects', async ({ devices
   await expect(bob.locator('#timeline').getByText('While you were away', { exact: true })).toHaveCount(1);
   await expect(alice.locator('#sessionMembers')).not.toContainText('away');
 });
+
+for (const rejection of ['too-large', 'too-many-files', 'queue-full']) {
+  test(`share admission rejection ${rejection} reaches the user`, async ({ devices }) => {
+    const { alice } = devices;
+    await alice.evaluate(async () => {
+      await navigator.serviceWorker.ready;
+      if (!navigator.serviceWorker.controller) {
+        await new Promise(resolve => navigator.serviceWorker.addEventListener('controllerchange', resolve, { once: true }));
+      }
+    });
+    const destination = await alice.evaluate(async reason => {
+      const post = async () => {
+        const form = new FormData();
+        if (reason === 'too-large') form.set('files', new File([new Uint8Array(16 * 1024 * 1024)], 'large.bin'));
+        else if (reason === 'too-many-files') {
+          for (let i = 0; i < 33; i++) form.append('files', new File(['x'], `${i}.txt`));
+        } else form.set('text', 'Queued share');
+        return (await fetch('/share', { method: 'POST', body: form })).url;
+      };
+      if (reason === 'queue-full') for (let i = 0; i < 8; i++) await post();
+      return post();
+    }, rejection);
+    expect(new URL(destination).searchParams.get('shared')).toBe(rejection);
+    await alice.goto(destination);
+    const message = rejection === 'too-large' ? '16 MiB share-sheet limit'
+      : rejection === 'too-many-files' ? 'Share at most 32 files' : 'The share queue is full';
+    await expect(alice.locator('#toastRegion')).toContainText(message);
+    await expect(alice.locator('#shareBanner')).toBeHidden();
+    expect(await alice.evaluate(() => new URL(location.href).searchParams.has('shared'))).toBe(false);
+  });
+}

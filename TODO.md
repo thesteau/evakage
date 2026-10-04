@@ -1,202 +1,114 @@
-# Verified gaps and next changes
+# Validated task list — 2026-10-04
 
-Reviewed against the checkout on 2026-09-24, after the code and test check.
-This is a prioritized plan, not an instruction to implement every deferred idea.
+This replaces historical backlog entries that no longer matched the checkout.
 
-## Check results and completed changes
+## Completed
 
-- `npm run check`: lint, strict-null type checking, and all 63 tests pass.
-- `npm run test:e2e`: all eleven Chromium scenarios pass with isolated servers
-  and browser profiles. Coverage includes discovery, chat both ways, direct and
-  forced-relay file transfers, accept/decline, zero-byte and multi-chunk files,
-  byte-for-byte downloads, reload/history/file recovery, offline app shell,
-  worker share handoff/expiry, forged identity/signature rejection, cancel/resume,
-  and room recovery after disconnect.
-- `npm run test:e2e:platform`: the engine smoke test (identity, relay chat,
-  verified file download) passes on Chromium, Firefox and WebKit locally. WebKit
-  is the engine Safari uses, not Safari itself, and this is still loopback.
-- Playwright is development-only. CI runs Chromium before container publishing
-  and retains failure traces. `README.md` documents local setup.
-- `public/frames.js` now owns pure decrypted-frame parsing; regression and seeded
-  fuzz tests cover truncation, oversized lengths/payloads, invalid JSON shapes,
-  invalid chunk indices/counts, unknown kinds, and nonzero buffer offsets.
-  Rejected frames return before conversation lookup or mutation. The service
-  worker precaches the new module and its cache version is bumped.
-- `strictNullChecks` is enabled. Nullable state has explicit types, identity and
-  registration-dependent operations check readiness, and server/test null
-  findings are resolved. This does not eliminate existing implicit `any` types.
+- [x] Renamed the app to Evakage: interface, PWA titles, package, server messages
+  and deployment service names. Existing identities, settings and pairings stay
+  compatible; published repository/image URLs are retained.
+- [x] Device-to-device transfers, including smartphones: user confirmed.
+- [x] Self-chat is always the first advertised device, emphasized **This is you**.
+  Retention details appear in the encryption hover hint; the verbose server label is removed.
+- [x] Device renaming removed from the UI and rejected by the server, including
+  re-registration attempts to supply a different name.
+- [x] Bounded-memory relay sending: one encrypted 256 KiB chunk per upload,
+  without assembling the entire ciphertext. See [measurements](docs/relay-memory.md).
+- [x] Interrupted relay transfers stop. Restart upload creates a fresh server item
+  and sends from byte zero; Restart download discards partial plaintext and fetches
+  the whole file again. Chunk resume is outside the product scope; interruption
+  coverage verifies the restart boundaries and exact final bytes.
+- [x] Signed peer-synced message history: portable author proofs, conversation
+  binding, immutable author-scoped IDs, bounded frames and adversarial tests.
+  Protocol v2 is refused. This authenticates message authorship, not room
+  membership or peer-synced file manifests.
+- [x] Private pairing codes: owner-only rotating three-day invitations, separate
+  from public discovery codes, with expiry, guess limiting and identity proofs.
+  Established pairs survive code rotation. Forgetting revokes the server pair
+  association and prevents automatic reconnect approval.
+- [x] Verified pairing, local blocking and verified-only recipient/author checks.
+- [x] Optional server DEVICE_ALLOWLIST with fresh socket-bound possession proofs;
+  removing a fingerprint and restarting revokes server access.
+- [x] QR server/device invitations using a vendored encoder, with decoder and
+  rendered-canvas tests. Authentication query tokens are excluded; invitation
+  fragments are consumed and removed. Own fingerprint is displayed.
+- [x] DOM types, strict null checks, noImplicitAny and strictFunctionTypes.
+- [x] Frame parser regression tests and seeded fuzzing; sparse file-chunk
+  completion regression; worker admission, handoff and exact expiry checks.
+- [x] Actual browser share-rejection coverage for size, file count and queue limits.
+- [x] Local room boundary churn measurement. Six/seven-seat transitions close
+  and recreate 30 endpoints without missing or duplicate tested messages.
+  See [scope, measurements and reproduction](docs/room-churn.md).
+- [x] Hash/send measurement: retain pre-hashing and verification before Save.
+  See [memory and timing measurements](docs/relay-memory.md).
+- [x] Cross-engine smoke validation and CI configuration for all three engines.
+- [x] Local container build and smoke validation.
+- [x] Authenticated hosted CI for commit `99bea4d`: test, Chromium browser,
+  container smoke and vulnerability-scan gates succeeded. The CodeQL run also
+  succeeded. See [hosted evidence and revision scope](docs/hosted-ci.md).
+  This does not validate later uncommitted changes or the expanded browser workflow.
+- [x] Room churn validation on desktop and simulated phones: TURN-only and
+  in-flight file transition coverage, including
+  three mobile-emulation repeats. Actual selected relay candidates are checked;
+  all five incumbent recipients verify each file and sampled saved bytes match.
+  Fixed a stale direct-transfer ID that hid Save after relay fallback.
+  Phone simulation is accepted for the current foreground-use scope; physical
+  devices and WAN/CPU/battery measurements are not completion requirements.
+  The six-seat mesh boundary remains. See [measurements](docs/room-churn.md).
+- [x] Receiving memory measured at 64/128 MiB; whole-file verification before Save
+  remains. See [constraints and alternatives](docs/relay-memory.md).
+- [x] Receiving/security validation: simulated-phone 32 MiB transfer verifies
+  exact saved bytes; altered ciphertext cannot be saved. Blocking or forgetting
+  during receipt aborts the download and prevents completion. Fixed the original
+  authorization check applying only at download start. See [internal findings](docs/security-validation.md).
+- [x] Basic phone usage: keep the app open and screen unlocked during transfers.
+  The session shows a brief interruption warning. Existing wake lock and foreground
+  reconnect are best effort; guaranteed background transfers are outside the current
+  scope. Physical-phone lifecycle, share-sheet and resource measurements
+  remain deferred, with no manual evidence claimed.
+
+## Final local checks
+
+- `npm run check`: lint, strict type checking and **92/92 unit tests pass**.
+- `npm run test:e2e`: **33/33 Chromium scenarios pass**, including receiving
+  revocation, ciphertext tampering and the simulated-phone 32 MiB transfer.
+- `npm run test:e2e:platform -- --repeat-each=3 --output=test-results/platform`:
+  previous **9/9 pass** across Chromium, Firefox and WebKit; the current transfer
+  fixes also pass a fresh **3/3** engine smoke run.
 - `npm audit --audit-level=high`: zero reported vulnerabilities.
-- Docker and remote CI/PR status were not checked. Browser checks ran locally
-  in Chromium on Windows; hosted Linux CI still needs its first run.
+- Docker image `aria-drop-review:20261004` builds. The isolated non-root container
+  returns healthy status, protocol 3 configuration and correct module MIME;
+  it was stopped afterward. Nothing was published or deployed.
+- Service-worker cache evakage-v18 includes signed-message, vendored QR modules, the foreground
+  notice and transfer fixes. Local browser tests are not physical Safari/phones.
+- Authenticated GitHub Actions results are recorded separately for the exact
+  hosted revision; they do not cover this uncommitted working tree.
 
-- PWA shares are handed over once and refused at the ten-minute boundary even
-  if cleanup timers were suspended. A timer provides best-effort memory cleanup;
-  worker termination can lose shares earlier. Unit and browser tests cover this.
-- Relay access expires independently of disk cleanup: pending listings, claims,
-  uploads, and new downloads refuse expired items, including earlier tokens.
-  Uploads crossing the boundary fail. Downloads started before expiry may finish
-  later; the periodic sweep removes ciphertext afterward. Boundary tests and
-  README/SECURITY/deployment documentation describe this distinction.
+## Remaining work
 
-- **Shared data shapes.** `public/types.d.ts` defines `Link`, `SecureLink`,
-  `Conversation`, `FileRecord`, `FileMeta`, `Message`, `Device` and `Room`, used
-  from `public/app.js`. This cut the `noImplicitAny` baseline from 580 to 309
-  before the rest of the pass closed it.
-- **Sparse-chunk completion fix.** Completion used
-  `chunks.some(chunk => !chunk)`, and `.some()` skips holes in a sparse array,
-  so a file missing chunks could pass as complete and then be hashed and
-  offered. It now compares `countReceived(chunks)` against the expected length.
-- **Share admission limits.** `public/sw.js` caps one share at 16 MiB, the whole
-  queue at 32 MiB, eight queued entries and 32 files, counting in-flight request
-  bodies against the same budget so concurrent POSTs cannot bypass it.
-  Rejections redirect to `?shared=too-large|queue-full|too-many-files` and the
-  app explains each. `tests/shares.test.js` covers the entry, file-count and
-  byte budgets including in-flight bodies and recovery after rejection.
-- **Items live with their session, and say so.** A relayed item is deleted at
-  the first of: every recipient has it; every device party to it gone for 15
-  minutes; a one-to-one conversation left with a single device for 3 hours
-  (rooms exempt); 3 days absolute. `BLOB_IDLE_GRACE_MS`, `BLOB_SOLO_MAX_MS`,
-  `BLOB_MAX_AGE_MS`. The same 3-hour window bounds how long an offline device
-  stays listed, so the device table can no longer advertise something "seen 8h
-  ago". Every item carries its own `expiresAt`, and the UI counts down to it,
-  warning inside 15 minutes and naming the 3-day cap when that is what bites.
-- **Device table cut back.** Path, Rate and Transferred columns are gone; the
-  ICE candidate pair and RTT moved to the Status tooltip. Row actions are Open
-  and Exit — the session panel already carries text and file sending, and Open
-  on a room joins it in the same click.
-- **Cross-engine browser run.** `e2e/helpers.js` holds the shared fixture;
-  `e2e/platform.spec.js` plus `playwright.platform.config.js` run an engine
-  smoke test on Chromium, Firefox and WebKit.
+- [ ] Bounded-memory receiving implementation. Measurements confirm plaintext
+  retention scales with file size. The single-pass design cannot retain the whole
+  verified file for later Save with constant memory and no staging storage.
+  No streaming-before-verification tradeoff is approved; browser storage remains
+  outside the design. A two-pass design is a possible future alternative, with
+  availability, tamper, expiry and download validation still required.
+- [ ] Independent protocol/security review. Automated tests and fuzzing are not
+  an independent review. Local recipient approval does not create signed group
+  membership and cannot protect against a server serving compromised app code.
+  A [review handoff](docs/security-review.md) is ready; an external reviewer must
+  supply findings against an identified revision.
 
-- **Sparse-chunk regression test.** `e2e/transfer.spec.js` plays a peer that
-  drops a chunk and declares no hash; the receiver must refuse the file as
-  incomplete. Verified to fail against the old `.some()` check, which accepted
-  the truncated bytes. The fixture in `e2e/helpers.js` gained an `appPatch`
-  option for serving one device a rewritten `app.js`.
-- **`noImplicitAny` is on.** 309 findings annotated to zero and the flag enabled
-  in `tsconfig.json`: record typedefs for the blob store, client and room; shared
-  `Inbound` for validated wire messages; contextually typed test helpers (typing
-  `waitFor`'s predicate alone cleared 64). Two latent issues surfaced and were
-  fixed rather than suppressed: `openForDownload`/`claim` returned unions the
-  callers dereferenced without narrowing, and the upgrade handler used a socket
-  that could be null in hoisted handlers.
+## Standing decisions
 
-## Hardening, in order
+Desktop and simulated-phone checks are sufficient for current phone validation.
+Actual WAN, mobile-radio, CPU and battery costs remain unmeasured and outside the
+required scope. Revisit them if reported behavior justifies changing the six-seat
+mesh boundary.
 
-The features work. What is left is making them hold up: under memory pressure,
-on interrupted transfers, and on networks that are not loopback. Each item says
-what to measure first, because none of them should be redesigned on a guess.
+Keep designated-offerer negotiation and direct receiver-driven resume unless a real path
+shows a failure. Keep direct file transfers alongside relay; changing that product
+policy is not required by the current evidence. Administrative access/revocation
+uses configuration and restart rather than an in-app administrator API.
 
-1. **Large files: stream through the server instead of buffering in RAM.** The
-   disk that holds a file is the server's, not the browser's — that is what the
-   relay already does, sealed to the recipient and reaped within the hour. No
-   browser storage API (File System Access, OPFS) is wanted here. What is left
-   is that both browsers still hold the whole file in memory anyway, which is
-   the most likely way this fails on a phone. Two halves, independent:
-
-   - **Receiving.** `downloadRelayed` decrypts into an array of chunks and
-     assembles one Blob. Instead, have the service worker intercept a download
-     URL, fetch the ciphertext, pipe it through a decrypting `TransformStream`
-     and answer with `Content-Disposition: attachment`; the browser then writes
-     to disk itself and RAM stays flat. This fits the existing format, where
-     each chunk is separately AES-GCM-sealed with its index and count in the
-     AAD, so tampering, reordering and truncation are still caught per chunk as
-     the bytes flow. The tradeoff: the whole-file SHA-256 can only be confirmed
-     at the end, so it becomes a report on a file already written rather than a
-     gate before saving. Decide whether that is acceptable before building it.
-   - **Sending.** `sendViaRelay` builds the entire encrypted Blob before the
-     PUT, so the sender pays roughly twice the file. Streaming the request body
-     fixes it on Chromium but not Safari, which has no duplex request streams;
-     the portable alternative is chunked PUTs, which needs a server-side append
-     or range API. Measure peak memory first — this may be the cheaper half to
-     leave alone.
-
-   Open product question: if every file goes to the server anyway, the direct
-   DataChannel path for files earns its keep only as a LAN speed optimisation.
-   Worth deciding explicitly rather than maintaining both by default.
-2. **Use it on a phone over real wifi.** One afternoon of actually sending
-   things between a phone and a desktop across the LAN finds more than any
-   amount of loopback testing. It is also the only way to learn whether item 1
-   is a real failure or a theoretical one, and whether iOS backgrounding, the
-   wake lock and the Android share sheet behave. Cross-engine desktop coverage
-   exists now, but WebKit on loopback is not Safari on iOS, and loopback ICE
-   proves nothing about routed paths. Everything below is easier to judge after
-   this, so it is deliberately ahead of the code items.
-3. **Relay resume.** The same story as item 1: it only bites on a big file over
-   a flaky link. An interrupted download restarts from the beginning, and an
-   upload interrupted before it completes cannot be recovered by the server at
-   all, because the bytes only ever existed on the sender. Range requests alone
-   are not enough — define authenticated chunk boundaries, retry state and
-   integrity behaviour first, or resume becomes a way to assemble a file from
-   pieces nothing vouches for.
-4. **Give the DOM handles real types.** `public/app.js` gets every element
-   through `$`, which is now explicitly `(sel: string) => any` — a deliberate
-   `any`, and the largest remaining hole in the type story. This is above the
-   remaining transport items because it is the one task here that finds existing
-   bugs rather than guarding against hypothetical ones: typing each handle
-   concretely surfaces every place `.value` or `.checked` is read off something
-   that does not have it. Do it before raising another compiler flag;
-   `strictFunctionTypes` is next after that.
-5. **Room transport churn.** The mesh/relay switch at six/seven occupied seats
-   has no hysteresis, so a room at the boundary re-opens or drops its direct
-   links whenever someone joins or leaves. Away members hold seats too. Measure
-   how bad it actually is before adding state to smooth it — and note that a
-   room that size is unlikely in the use this was built for, which is why it is
-   last.
-
-## Standing decisions — not work
-
-- **Negotiation and acknowledgements stay as they are.** Designated-offerer
-  negotiation and receiver-driven resume hold because each link is exactly two
-  devices and is torn down rather than renegotiated. They have only been
-  exercised on loopback and a LAN, but that is a reason to test (item 2), not to
-  redesign. Revisit only if a real path demonstrates a failure.
-- **Documentation is not a priority while this is a private tool.** The share
-  limits and `npm run test:e2e:platform` are undocumented in `README.md`, and
-  `SECURITY.md` does not carry the memory-bound rationale. None of that changes
-  behaviour or catches a bug, and the code says it plainly enough. Worth a few
-  minutes only when publishing the repo, or when editing those files anyway.
-  The one gap with real value is a browser test asserting that a rejected share
-  reaches the user as a message — that is a test, not a document.
-
-## Security work requiring a design
-
-- **Signed history:** direct live messages are bound to the authenticated link;
-  server-relay envelopes are already signed. Peer-synced third-party history
-  still lacks portable authorship proof. Design a versioned, unambiguous signed
-  envelope covering author, conversation identity, message ID, timestamp, and
-  content, with key/fingerprint validation, replay rules, and legacy handling.
-  The old pipe-delimited sketch is not an implementation spec. Measure encoded
-  overhead and verification time on phones rather than assuming 176 bytes or
-  seconds of work; bound verification batches and UI blocking.
-- **Device authorization:** a server-enforced allowlist can restrict access to
-  an honest server; it cannot stop a compromised server changing membership.
-  That needs client-enforced recipient approval or authenticated membership,
-  plus a clear trust model for the server-delivered code. AUTH_TOKEN can be
-  rotated by changing configuration/restarting (invalidating existing cookies),
-  but has no per-device revocation or in-app rotation flow.
-- **Pairing:** reviewing and forgetting remembered devices already exists.
-  Forgetting is not revocation. A verified pairing state and out-of-band flow
-  remain separate work; first sighting is still TOFU.
-- **Independent protocol/security review:** commission before making stronger
-  security claims. Existing signaling fuzz tests and automated scanners are
-  useful but do not constitute that review.
-
-## Deferred product ideas
-
-- QR codes: use a maintained encoder or reviewed vendored implementation and
-  decoder round-trip tests; there is no need to write an encoder from scratch.
-- Streaming hash/send optimization: benchmark the current pre-hash pass first;
-  preserve the receiver's integrity guarantee if the protocol changes.
-
-## Already implemented
-
-MIT license and package metadata; lint/checkJs tooling; sealed and signed server
-relay for files/messages; offline delivery and away seats; incoming-file consent;
-file/text share target; remembered-device management; rename dialog; drag/drop
-and paste; themes and accessibility work; path/throughput display; larger rooms
-using relay above six seats. Keep these out of the open backlog.
-
-CODEX_HANDOFF.md contains historical architecture and test descriptions, some
-predating relay/away-seat support. Use the source and current tests to resolve
-conflicts; rewriting that historical handoff is separate documentation work.
+Historical architecture in CODEX_HANDOFF.md may predate relay and away seats;
+current source, tests, README and SECURITY take precedence.

@@ -4,7 +4,7 @@ import fsp from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
-import { createAriaDropServer } from '../server.js';
+import { createEvakageServer } from '../server.js';
 
 /**
  * Starts a server on an ephemeral port with its own blob directory.
@@ -15,11 +15,11 @@ import { createAriaDropServer } from '../server.js';
  *
  * @param {{after: (fn: () => any) => any}} t the node:test context, or anything
  *   with the same `after` hook (the Playwright fixtures pass their own)
- * @param {Parameters<typeof createAriaDropServer>[0] & {blobs?: object}} [options]
+ * @param {Parameters<typeof createEvakageServer>[0] & {blobs?: object}} [options]
  */
 export async function startServer(t, options = {}) {
   const dir = path.join(os.tmpdir(), `aria-drop-test-${crypto.randomBytes(6).toString('hex')}`);
-  const app = createAriaDropServer({
+  const app = createEvakageServer({
     port: 0,
     host: '127.0.0.1',
     ...options,

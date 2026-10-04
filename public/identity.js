@@ -11,6 +11,8 @@
 // ever stored — only this key, the display name, and the fingerprints of devices
 // already seen.
 
+// Compatibility identifiers: the Evakage rename must preserve device keys,
+// pairing records and the existing cryptographic protocol.
 const DB_NAME = 'aria-drop-identity';
 const DB_VERSION = 1;
 const STORE = 'identity';
@@ -258,7 +260,7 @@ export async function safetyCode(fingerprintA, fingerprintB) {
 // Held as a Map, never as an object indexed by fingerprint: device IDs come from
 // other devices, and one named `__proto__` must not reach an object's prototype
 // (which would also make deviceTrust() report a stranger as known).
-/** @returns {Map<string, {name: string, firstSeen: number, lastSeen: number}>} */
+/** @returns {Map<string, {name: string, firstSeen: number, lastSeen: number, verifiedAt?: number, pairedAt?: number, blocked?: boolean}>} */
 function loadKnownDevices() {
   try {
     const parsed = JSON.parse(localStorage.getItem(KNOWN_DEVICES_KEY) || '{}');
@@ -293,6 +295,7 @@ export function rememberDevice(fingerprint, name) {
   const now = Date.now();
   const existing = devices.get(fingerprint);
   const record = {
+    ...existing,
     name: name || existing?.name || '',
     firstSeen: existing?.firstSeen || now,
     lastSeen: now
@@ -302,9 +305,66 @@ export function rememberDevice(fingerprint, name) {
   return record;
 }
 
+const REVOKED_PAIRINGS_KEY = 'aria-drop-revoked-pairings';
+/** @returns {Set<string>} */
+function revokedPairings() {
+  try {
+    const ids = JSON.parse(localStorage.getItem(REVOKED_PAIRINGS_KEY) || '[]');
+    return new Set(Array.isArray(ids) ? ids.filter(id => typeof id === 'string') : []);
+  } catch { return new Set(); }
+}
+/** @param {string} fingerprint */
+export function pairingRevoked(fingerprint) { return revokedPairings().has(fingerprint); }
+/** @param {string} fingerprint */
+export function revokePairing(fingerprint) {
+  const ids = revokedPairings();
+  ids.add(fingerprint);
+  try { localStorage.setItem(REVOKED_PAIRINGS_KEY, JSON.stringify([...ids])); } catch {}
+  const devices = loadKnownDevices();
+  const record = devices.get(fingerprint);
+  if (record) { devices.set(fingerprint, { ...record, pairedAt: undefined, verifiedAt: undefined }); saveKnownDevices(devices); }
+}
+
 /** @param {string} fingerprint */
 export function forgetDevice(fingerprint) {
+  revokePairing(fingerprint);
   const devices = loadKnownDevices();
   devices.delete(fingerprint);
+  saveKnownDevices(devices);
+}
+
+/** Remember an owner-authorized server-code pairing, independently of TOFU.
+ * @param {string} fingerprint @param {string} name */
+export function pairDevice(fingerprint, name) {
+  const record = rememberDevice(fingerprint, name);
+  if (record.blocked) return false;
+  const devices = loadKnownDevices();
+  devices.set(fingerprint, { ...record, pairedAt: Date.now() });
+  const revoked = revokedPairings();
+  revoked.delete(fingerprint);
+  try { localStorage.setItem(REVOKED_PAIRINGS_KEY, JSON.stringify([...revoked])); } catch {}
+  saveKnownDevices(devices);
+  return true;
+}
+
+/** Locally approve a fingerprint only after comparing its pairwise code.
+ * @param {string} fingerprint @param {string} selfId @param {string} comparedCode */
+export async function verifyDevice(fingerprint, selfId, comparedCode) {
+  const expected = await safetyCode(fingerprint, selfId);
+  if (comparedCode.replace(/\s/g, '') !== expected.replace(/\s/g, '')) return false;
+  const devices = loadKnownDevices();
+  const record = devices.get(fingerprint);
+  if (!record || record.blocked) return false;
+  devices.set(fingerprint, { ...record, verifiedAt: Date.now() });
+  saveKnownDevices(devices);
+  return !!deviceTrust(fingerprint)?.verifiedAt;
+}
+
+/** @param {string} fingerprint @param {boolean} blocked */
+export function blockDevice(fingerprint, blocked) {
+  const devices = loadKnownDevices();
+  const record = devices.get(fingerprint);
+  if (!record) return;
+  devices.set(fingerprint, { ...record, blocked, verifiedAt: blocked ? undefined : record.verifiedAt });
   saveKnownDevices(devices);
 }

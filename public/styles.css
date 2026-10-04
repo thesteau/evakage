@@ -273,7 +273,7 @@ td.danger, .file-meta.danger { color: var(--danger); }
   background: var(--panel-solid);
   box-shadow: var(--shadow-strong);
   display: grid;
-  grid-template-rows: auto auto 1fr auto;
+  grid-template-rows: auto auto auto minmax(0, 1fr) auto;
   transform: translateX(calc(100% + 40px));
   transition: transform .2s ease;
   overflow: hidden;
@@ -315,6 +315,7 @@ td.danger, .file-meta.danger { color: var(--danger); }
 .secure-state.ready { color: var(--accent-2); }
 .secure-state.unverified { color: var(--warn); }
 
+.transfer-notice { margin: 0; padding: 8px 16px; font-size: .8rem; line-height: 1.4; border-bottom: 1px solid var(--line); }
 .timeline { padding: 18px; overflow-y: auto; display: flex; flex-direction: column; gap: 10px; }
 .timeline-empty { margin: auto; text-align: center; color: var(--muted); max-width: 280px; line-height: 1.5; }
 .message-item { display: flex; flex-direction: column; max-width: 86%; gap: 4px; }
@@ -568,3 +569,9 @@ tbody tr.offline td.expiring {
   .card, .dialog, .device-row, .file-item, tbody tr { border: 1px solid CanvasText; }
   .presence-pip, .trust-badge { forced-color-adjust: none; }
 }
+
+.self-device { background: color-mix(in srgb, var(--accent) 7%, transparent); }
+.self-badge { color: var(--accent); white-space: nowrap; }
+
+.qr-code { display: block; width: min(100%, 240px); height: auto; image-rendering: pixelated; }
+#qrServerUrl { overflow-wrap: anywhere; }

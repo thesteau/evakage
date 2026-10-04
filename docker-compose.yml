@@ -1,7 +1,7 @@
 services:
-  aria-drop:
+  evakage:
     build: .
-    container_name: aria-drop
+    container_name: evakage
     restart: unless-stopped
     ports:
       - "3712:3000"

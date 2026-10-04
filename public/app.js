@@ -1,3 +1,5 @@
+import { drawQr } from './qr.js';
+import { signMessage, verifyMessage, messageScope, historyFrames, messageKey } from './messages.js';
 import { parseFrame, CONTROL_KIND, FILE_CHUNK_KIND } from './frames.js';
 import { hashBlob, hashChunks } from './sha256.js';
 import {
@@ -9,8 +11,13 @@ import {
   safetyCode,
   deviceTrust,
   rememberDevice,
+  pairDevice,
+  pairingRevoked,
+  revokePairing,
   knownDevices,
   forgetDevice,
+  verifyDevice,
+  blockDevice,
   verifyAdvertisedIdentity,
   bytesToBase64,
   base64ToBytes
@@ -21,16 +28,91 @@ import {
   buildMessageEnvelope,
   openMessageEnvelope,
   generateContentKey,
-  encryptBody,
+  encryptBodyChunks,
   createBodyDecryptor,
   cipherLayout
 } from './relay.js';
 
-// Explicitly `any`: the handles below are used as their concrete element types
-// (value, checked, files). Giving each one a real type is the next type pass;
-// until then this is a deliberate any rather than an inferred one.
-/** @type {(sel: string) => any} */
-const $ = (sel) => document.querySelector(sel);
+/** @typedef {{
+ * '#connectDialog': HTMLDialogElement,
+ * '#connectForm': HTMLFormElement,
+ * '#connectCode': HTMLInputElement,
+ * '#connectFeedback': HTMLElement,
+ * '#connectTarget': HTMLElement,
+ * '#connectCancel': HTMLButtonElement,
+ * '#qrBtn': HTMLButtonElement,
+ * '#qrDialog': HTMLDialogElement,
+ * '#serverQr': HTMLCanvasElement,
+ * '#deviceQr': HTMLCanvasElement,
+ * '#qrServerUrl': HTMLElement,
+ * '#qrDeviceCode': HTMLElement,
+ * '#qrFingerprint': HTMLElement,
+ * '#pairingDialog': HTMLDialogElement,
+ * '#pairingForm': HTMLFormElement,
+ * '#pairingCode': HTMLElement,
+ * '#pairingInput': HTMLInputElement,
+ * '#pairingFeedback': HTMLElement,
+ * '#pairingCancel': HTMLButtonElement,
+ * '#verifiedOnlyInput': HTMLInputElement,
+ * '#peerRows': HTMLElementTagNameMap['tbody'],
+ * '#emptyPeers': HTMLElementTagNameMap['div'],
+ * '#roomRows': HTMLElementTagNameMap['tbody'],
+ * '#emptyRooms': HTMLElementTagNameMap['div'],
+ * '#serverState': HTMLElementTagNameMap['span'],
+ * '#sessionPanel': HTMLElementTagNameMap['aside'],
+ * '#sessionTitle': HTMLElementTagNameMap['h2'],
+ * '#sessionMeta': HTMLElementTagNameMap['div'],
+ * '#sessionKind': HTMLElementTagNameMap['div'],
+ * '#sessionMembers': HTMLElementTagNameMap['div'],
+ * '#leaveRoomBtn': HTMLElementTagNameMap['button'],
+ * '#secureState': HTMLElementTagNameMap['span'],
+ * '#timeline': HTMLElementTagNameMap['div'],
+ * '#messageForm': HTMLElementTagNameMap['form'],
+ * '#messageInput': HTMLElementTagNameMap['textarea'],
+ * '#fileInput': HTMLElementTagNameMap['input'],
+ * '#pickFileBtn': HTMLElementTagNameMap['button'],
+ * '#selfCode': HTMLElementTagNameMap['button'],
+ * '#toastRegion': HTMLElementTagNameMap['div'],
+ * '#codeFeedback': HTMLElementTagNameMap['span'],
+ * '#roomFeedback': HTMLElementTagNameMap['span'],
+ * '#devicesDialog': HTMLElementTagNameMap['dialog'],
+ * '#knownDeviceList': HTMLElementTagNameMap['div'],
+ * '#pickTargetDialog': HTMLElementTagNameMap['dialog'],
+ * '#pickTargetList': HTMLElementTagNameMap['div'],
+ * '#pickTargetTitle': HTMLElementTagNameMap['h2'],
+ * '#pickTargetHint': HTMLElementTagNameMap['p'],
+ * '#themeBtn': HTMLElementTagNameMap['button'],
+ * '#themeIcon': HTMLElementTagNameMap['span'],
+ * '#closeSession': HTMLElementTagNameMap['button'],
+ * '#messageTemplate': HTMLElementTagNameMap['template'],
+ * '#fileTemplate': HTMLElementTagNameMap['template'],
+ * '#codeForm': HTMLElementTagNameMap['form'],
+ * '#codeInput': HTMLElementTagNameMap['input'],
+ * '#createRoomForm': HTMLElementTagNameMap['form'],
+ * '#roomNameInput': HTMLElementTagNameMap['input'],
+ * '#joinRoomForm': HTMLElementTagNameMap['form'],
+ * '#roomCodeInput': HTMLElementTagNameMap['input'],
+ * '#copyCodeBtn': HTMLElementTagNameMap['button'],
+ * '#settingsDialog': HTMLElementTagNameMap['dialog'],
+ * '#settingsBtn': HTMLElementTagNameMap['button'],
+ * '#relayToggle': HTMLElementTagNameMap['label'],
+ * '#forceRelayInput': HTMLElementTagNameMap['input'],
+ * '#devicesBtn': HTMLElementTagNameMap['button'],
+ * '#refreshBtn': HTMLElementTagNameMap['button'],
+ * '#installBtn': HTMLElementTagNameMap['button'],
+ * '#updateBanner': HTMLElementTagNameMap['div'],
+ * '#reloadBtn': HTMLElementTagNameMap['button'],
+ * '#shareBanner': HTMLElementTagNameMap['div'],
+ * '#shareBannerText': HTMLElementTagNameMap['span'],
+ * '#shareSendBtn': HTMLElementTagNameMap['button'],
+ * '#shareDiscardBtn': HTMLElementTagNameMap['button'],
+ * }} AppElements */
+/** @template {keyof AppElements} K @param {K} sel @returns {AppElements[K]} */
+function $(sel) {
+  const element = document.querySelector(sel);
+  if (!element) throw new Error(`Missing required app element: ${sel}`);
+  return /** @type {AppElements[K]} */ (element);
+}
 const peerRows = $('#peerRows');
 const emptyPeers = $('#emptyPeers');
 const roomRows = $('#roomRows');
@@ -52,8 +134,6 @@ const selfCode = $('#selfCode');
 const toastRegion = $('#toastRegion');
 const codeFeedback = $('#codeFeedback');
 const roomFeedback = $('#roomFeedback');
-const renameDialog = $('#renameDialog');
-const renameInput = $('#renameInput');
 const devicesDialog = $('#devicesDialog');
 const knownDeviceList = $('#knownDeviceList');
 const pickTargetDialog = $('#pickTargetDialog');
@@ -74,7 +154,7 @@ const themeIcon = $('#themeIcon');
 const state = {
   ws: /** @type {WebSocket | null} */ (null),
   wsBackoff: 500,
-  self: /** @type {{id: string, name: string, code: string} | null} */ (null),
+  self: /** @type {{id: string, name: string, code: string, pairingCode?: string, pairingCodeExpiresAt?: number} | null} */ (null),
   identity: /** @type {Awaited<ReturnType<typeof loadIdentity>> | null} */ (null),            // long-lived device keypair + fingerprint
   peers: new Map(/** @type {[string, Device][]} */ ([])),          // deviceId -> online peer record from the server
   links: new Map(/** @type {[string, Link][]} */ ([])),          // deviceId -> pairwise transport + crypto
@@ -101,6 +181,7 @@ const state = {
   // with a device), or 'always'. Accepting once trusts that device for the
   // rest of the session.
   incomingPolicy: 'new',
+  verifiedOnly: false,
   consentedDevices: new Set(),
   // Last known record for every device we know of, online or not: presence,
   // room away lists, and server lookups all feed it. An offline device seen
@@ -110,6 +191,18 @@ const state = {
   relayInbound: new Set(),     // blob ids already being fetched, so a repeat notice is ignored
   sealKeyCache: new Map()      // advertised identity -> verified seal key bytes (or null)
 };
+
+/** @param {string} id */
+function deviceAllowed(id) {
+  if (id === state.self?.id) return true;
+  const trust = deviceTrust(id);
+  return !trust?.blocked && !!trust?.pairedAt && (!state.verifiedOnly || !!trust?.verifiedAt);
+}
+
+/** @param {string[]} ids */
+function assertRecipientsApproved(ids) {
+  if (ids.some(id => !deviceAllowed(id))) throw new Error('Pair unknown devices by code first. Verify or unblock every recipient in Known devices before sending.');
+}
 
 // How long to wait for a direct link before handing a file to the relay. Short,
 // because on a network where ICE never succeeds this is pure dead time.
@@ -224,8 +317,9 @@ const LOW_WATER = 3 * 1024 * 1024;
 // being left to fail somewhere deeper in the exchange.
 // v2 added signed long-lived device identities, so a v1 peer cannot prove who it
 // is and is refused rather than silently downgraded.
-const PROTOCOL_VERSION = 2;
-const MIN_PROTOCOL = 2;
+// v3 requires portable message proofs; unsigned v2 chat/history is not accepted.
+const PROTOCOL_VERSION = 3;
+const MIN_PROTOCOL = 3;
 
 // Defensive caps. A cooperating peer stays well under all of them; they bound
 // what a hostile or broken one can make this tab allocate.
@@ -243,15 +337,6 @@ const CAPS = {
   concurrentNegotiations: 3,
   reconnectAttempts: 8
 };
-
-function deviceName() {
-  let name = localStorage.getItem('aria-drop-device-name');
-  if (!name) {
-    name = `${detectPlatform()} browser`;
-    localStorage.setItem('aria-drop-device-name', name);
-  }
-  return name;
-}
 
 function detectPlatform() {
   const ua = navigator.userAgent;
@@ -293,18 +378,6 @@ function connectWebSocket() {
 
   ws.addEventListener('open', () => {
     state.wsBackoff = 500;
-    wsSend({
-      type: 'register',
-      deviceId: identity.deviceId,
-      name: deviceName(),
-      platform: detectPlatform(),
-      browser: detectBrowser(),
-      // Published so others can seal a relayed file to this device. The server
-      // passes these through untouched; receivers verify them, not the server.
-      identityKey: identity.identityKey,
-      sealKey: identity.sealKey,
-      sealKeySignature: identity.sealKeySignature
-    });
     serverState.textContent = 'Signaling connected';
     serverState.classList.add('online');
   });
@@ -313,15 +386,40 @@ function connectWebSocket() {
     let msg;
     try { msg = JSON.parse(event.data); } catch { return; }
 
+    if (msg.type === 'registration-challenge') {
+      if (typeof msg.challenge !== 'string' || msg.challenge.length > 128) return;
+      wsSend({
+        type: 'register',
+        deviceId: identity.deviceId,
+        registrationProof: await signTranscript(identity.privateKey, JSON.stringify(['aria-drop/register/1', msg.challenge, identity.deviceId])),
+        platform: detectPlatform(),
+        browser: detectBrowser(),
+        // Published so others can seal a relayed file to this device. The server
+        // passes these through untouched; receivers verify them, not the server.
+        identityKey: identity.identityKey,
+        sealKey: identity.sealKey,
+        sealKeySignature: identity.sealKeySignature
+      });
+      return;
+    }
+
     if (msg.type === 'registered') {
       state.self = msg.self;
-      selfCode.textContent = msg.self.code;
-      document.title = `${msg.self.name} · aria-drop`;
+      selfCode.textContent = msg.self.pairingCode || '----';
+      selfCode.dataset.deviceName = msg.self.name;
+      selfCode.dataset.deviceId = msg.self.id;
+      for (const id of msg.revoked || []) revokePairing(id);
+      for (const peer of msg.paired || []) {
+        if (pairingRevoked(peer.id)) wsSend({ type: 'unpair-device', deviceId: peer.id });
+        else await acceptPairing(peer);
+      }
+      document.title = `${msg.self.name} · Evakage`;
       renderPeers();
       rejoinRooms();
       // Recover records for devices we have talked to, so ones that are offline
       // right now can still be listed and sent to.
       lookupDevices([...knownDevices().map(([id]) => id), ...state.deviceRecords.keys()]);
+      await handlePairingLink();
       return;
     }
 
@@ -404,6 +502,33 @@ function connectWebSocket() {
       return;
     }
 
+    if (msg.type === 'pairing-code') {
+      if (state.self) {
+        state.self.pairingCode = msg.code;
+        state.self.pairingCodeExpiresAt = msg.expiresAt;
+        selfCode.textContent = msg.code;
+        if ($('#qrDialog').open) renderQrCodes();
+      }
+      return;
+    }
+
+    if (msg.type === 'pairing-revoked') {
+      revokePairing(msg.deviceId);
+      releaseIdleLinks();
+      renderKnownDevices(); renderPeers(); renderSession();
+      return;
+    }
+
+    if (msg.type === 'paired-device') {
+      const peer = msg.peer && await acceptPairing(msg.peer) ? msg.peer : null;
+      const pending = state.pendingCodeRequests.get(msg.requestId);
+      if (typeof pending === 'function') {
+        state.pendingCodeRequests.delete(msg.requestId);
+        pending(peer);
+      }
+      return;
+    }
+
     if (msg.type === 'resolved-code') {
       const pending = state.pendingCodeRequests.get(msg.requestId);
       if (typeof pending === 'function') {
@@ -449,13 +574,14 @@ function connectWebSocket() {
     }
   });
 
-  ws.addEventListener('close', () => {
-    serverState.textContent = 'Signaling disconnected';
+  ws.addEventListener('close', event => {
+    serverState.textContent = event.code === 1008 ? 'Access denied — reload after access is restored' : 'Signaling disconnected';
     serverState.classList.remove('online');
     state.peers.clear();
     state.rooms.clear();
     renderPeers();
     renderRooms();
+    if (event.code === 1008) return;
     setTimeout(connectWebSocket, state.wsBackoff);
     state.wsBackoff = Math.min(state.wsBackoff * 1.8, 10000);
   });
@@ -518,9 +644,15 @@ function convScope(conv) {
   return conv.kind === 'room' ? `room:${conv.roomId}` : 'direct';
 }
 
+/** @param {Conversation} conv */
+function signedScope(conv) {
+  return messageScope(convScope(conv), [state.self?.id || '', conv.peerId || state.self?.id || '']);
+}
+
 /** @param {string} fromPeerId
  * @param {string | undefined} scope */
 function resolveScope(scope, fromPeerId) {
+  if (!deviceAllowed(fromPeerId)) return null;
   if (!scope || scope === 'direct') return ensureConversation(directConvId(fromPeerId), 'direct', fromPeerId);
   if (!scope.startsWith('room:')) return null;
   const roomId = scope.slice(5);
@@ -567,7 +699,7 @@ function displayName(deviceId) {
   return state.peers.get(deviceId)?.name
     || state.deviceRecords.get(deviceId)?.name
     || deviceTrust(deviceId)?.name
-    || 'Offline device';
+    || `Device ${deviceId.slice(0, 10)}…`;
 }
 
 /* ---------- links ---------- */
@@ -618,7 +750,7 @@ function neededPeerIds() {
   for (const conv of state.conversations.values()) {
     // A large room runs entirely through the relay, so it needs no links.
     if (isRelayRoom(conv)) continue;
-    for (const id of onlineMembers(conv)) needed.add(id);
+    for (const id of onlineMembers(conv)) if (deviceAllowed(id)) needed.add(id);
   }
   return needed;
 }
@@ -631,6 +763,13 @@ function isRelayRoom(conv) {
 }
 
 function releaseIdleLinks() {
+  for (const conv of state.conversations.values()) {
+    for (const file of conv.files.values()) {
+      if (file.from && !deviceAllowed(file.from)) {
+        file.relayAbort?.abort(new Error('Sender authorization was revoked.'));
+      }
+    }
+  }
   const needed = neededPeerIds();
   for (const [peerId, link] of state.links) {
     if (needed.has(peerId)) continue;
@@ -699,6 +838,8 @@ function negotiatingCount() {
 
 /** @param {string} peerId */
 async function ensureLink(peerId, force = false) {
+  if (!deviceAllowed(peerId)) return;
+  if (deviceTrust(peerId)?.blocked) return;
   if (typeof RTCPeerConnection === 'undefined') return;
   if (!state.self || !state.peers.has(peerId)) return;
   const link = createLink(peerId);
@@ -778,6 +919,8 @@ function retryLink(peerId) {
 /** @param {string} peerId */
 /** @param {string} peerId @param {any} data */
 async function handleSignal(peerId, data) {
+  if (!deviceAllowed(peerId)) return;
+  if (deviceTrust(peerId)?.blocked) return;
   if (typeof RTCPeerConnection === 'undefined') return;
   if (!data || typeof data !== 'object') return;
   const known = state.links.get(peerId);
@@ -904,8 +1047,8 @@ function negotiateProtocol(link, hello) {
     link.protocol = null;
     const who = displayName(link.peerId);
     toast(theirMax
-      ? `${who} speaks aria-drop protocol ${theirMin}–${theirMax}; this build speaks ${MIN_PROTOCOL}–${PROTOCOL_VERSION}.`
-      : `${who} is running an older aria-drop that cannot negotiate a protocol version. Both sides need a reload.`);
+      ? `${who} speaks Evakage protocol ${theirMin}–${theirMax}; this build speaks ${MIN_PROTOCOL}–${PROTOCOL_VERSION}.`
+      : `${who} is running an older Evakage that cannot negotiate a protocol version. Both sides need a reload.`);
     try { link.dc?.close(); } catch {}
     try { link.pc?.close(); } catch {}
     renderPeers();
@@ -1113,7 +1256,10 @@ async function handleControl(link, conv, msg) {
     // one room member could post as another, since the link authenticates the
     // sender but the envelope's `from` is just data.
     if (msg.message.from !== link.peerId) return;
-    const isNew = !conv.messages.has(msg.message.id);
+    const verified = await verifyMessage(msg.message, signedScope(conv));
+    if (!verified || !deviceAllowed(link.peerId)) return;
+    msg.message = verified;
+    const isNew = !conv.messages.has(messageKey(msg.message));
     mergeMessage(conv, msg.message, { verifiedAuthor: true });
     renderSession();
     if (isNew) notifyIncoming(conv, msg.message);
@@ -1127,16 +1273,22 @@ async function handleControl(link, conv, msg) {
   }
 
   if (msg.type === 'sync-state') {
+    if (!conversationMembers(conv).includes(link.peerId)) return;
+    let rejected = 0;
     // Bound what one peer can make this tab allocate in a single sync.
     const messages = Array.isArray(msg.messages) ? msg.messages.slice(0, CAPS.syncMessages) : [];
     const files = Array.isArray(msg.files) ? msg.files.slice(0, CAPS.syncFiles) : [];
-    // Relayed history is how a rejoining peer recovers what it missed, so a
-    // third-party author is legitimate here — but it is only as trustworthy as
-    // the peer relaying it, and the UI says so.
-    for (const item of messages) {
-      mergeMessage(conv, item, { verifiedAuthor: item?.from === link.peerId, relayedBy: link.peerId });
+    // Verify sequentially and yield between batches to bound crypto/UI work.
+    for (let i = 0; i < messages.length; i++) {
+      const item = messages[i];
+      if (typeof item?.id === 'string' && typeof item?.from === 'string' && conv.messages.has(messageKey(item))) continue;
+      const verified = await verifyMessage(item, signedScope(conv));
+      if (verified && deviceAllowed(verified.from)) mergeMessage(conv, verified);
+      else rejected++;
+      if (i % 16 === 15) await new Promise(resolve => setTimeout(resolve, 0));
     }
     for (const meta of files) mergeFileMeta(conv, meta);
+    if (rejected) toast(`Ignored ${rejected} history message${rejected === 1 ? "" : "s"} with invalid or missing author signatures.`);
     renderSession();
     return;
   }
@@ -1328,14 +1480,15 @@ function mergeMessage(conv, message, options = {}) {
   if (!message?.id || typeof message.id !== 'string' || message.id.length > 64) return;
   if (typeof message.from !== 'string' || message.from.length > 128) return;
   if (typeof message.text !== 'string' || message.text.length > CAPS.messageChars) return;
-  if (conv.messages.has(message.id)) return;
+  if (conv.messages.has(messageKey(message))) return;
   if (conv.messages.size >= CAPS.messagesPerConversation) return;
-  conv.messages.set(message.id, {
+  conv.messages.set(messageKey(message), {
     id: message.id,
     text: message.text,
     from: message.from,
     fromName: typeof message.fromName === 'string' ? message.fromName.slice(0, 64) : '',
-    at: Number(message.at) || Date.now(),
+    at: message.at,
+    proof: message.proof,
     verifiedAuthor,
     relayedBy
   });
@@ -1396,14 +1549,16 @@ async function syncEverythingWith(link) {
 }
 
 /** @param {Link} link @param {Conversation} conv */
-function syncConversationWith(link, conv) {
+async function syncConversationWith(link, conv) {
+  if (!deviceAllowed(link.peerId)) return;
   const messages = [...conv.messages.values()].sort((a, b) => a.at - b.at);
-  return sendControl(link, {
-    conv: convScope(conv),
-    type: 'sync-state',
-    messages,
-    files: fileManifest(conv)
-  }).catch(() => {});
+  const channelLimit = link.pc?.sctp?.maxMessageSize || CAPS.controlBytes;
+  const maxFrameBytes = Math.min(CAPS.controlBytes, channelLimit - 28);
+  try {
+    for (const frame of historyFrames(convScope(conv), messages, fileManifest(conv), maxFrameBytes)) {
+      await sendControl(link, frame);
+    }
+  } catch { /* Link teardown stops sync; the next connection requests it again. */ }
 }
 
 // A device that rejoins a room may already hold secure links to its members:
@@ -1443,20 +1598,23 @@ async function waitForSecure(peerId, timeoutMs = 12000) {
 async function sendChat(conv, text) {
   const self = state.self;
   if (!self) throw new Error('Waiting for device registration. Try again shortly.');
+  assertRecipientsApproved([...onlineMembers(conv), ...await offlineTargetsFor(conv)]);
   const clean = text.trim();
   if (!clean) return;
-  const message = {
+  if (!state.identity) throw new Error('Device identity is not ready.');
+  const message = await signMessage(state.identity, signedScope(conv), {
     id: crypto.randomUUID(),
     text: clean,
     from: self.id,
     fromName: self.name,
     at: Date.now()
-  };
+  });
   mergeMessage(conv, message);
   renderSession();
 
   const recipients = onlineMembers(conv);
   const offline = await offlineTargetsFor(conv);
+  assertRecipientsApproved([...recipients, ...offline]);
   if (!recipients.length && !offline.length) throw unreachableError(conv);
 
   // Same rule as files: direct where a secure link is available, the relay for
@@ -1505,7 +1663,7 @@ async function sendChat(conv, text) {
     return;
   }
   const relayed = await sendMessageViaRelay(conv, message, viaRelay);
-  const stored = conv.messages.get(message.id);
+  const stored = conv.messages.get(messageKey(message));
   if (stored && relayed) {
     stored.via = 'relay';
     renderSession();
@@ -1518,6 +1676,7 @@ async function sendChat(conv, text) {
 async function sendMessageViaRelay(conv, message, recipientIds) {
   const identity = state.identity;
   if (!identity) throw new Error('Device identity is not ready.');
+  /** @type {Array<{id: string, sealRaw: Uint8Array<ArrayBuffer>}>} */
   const targets = [];
   for (const id of recipientIds) {
     const sealRaw = await verifiedSealKey(id);
@@ -1620,6 +1779,7 @@ async function sendFiles(conv, fileList) {
   if (!self) throw new Error('Waiting for device registration. Try again shortly.');
   const recipients = onlineMembers(conv);
   const offline = await offlineTargetsFor(conv);
+  assertRecipientsApproved([...recipients, ...offline]);
   if (!recipients.length && !offline.length) throw unreachableError(conv);
 
   const canRelay = relayEnabled();
@@ -1799,6 +1959,12 @@ async function sendBlobTo(links, conv, blob, meta, alreadyHeld = []) {
   }
 }
 
+/** @param {string} url @param {number} offset @param {Blob} part */
+async function uploadCipherChunk(url, offset, part) {
+  const response = await fetch(`${url}&offset=${offset}`, { method: 'PUT', body: part });
+  if (response.status !== 204) throw new Error('Upload interrupted. Restart from the beginning.');
+}
+
 /* ---------- server relay ---------- */
 
 // WebSocket request/response pairing for the relay: the server echoes a
@@ -1833,6 +1999,7 @@ function settleRequest(key, value, error) {
 
  * @param {string} peerId */
 async function verifiedSealKey(peerId) {
+  if (!deviceAllowed(peerId)) return null;
   // A live presence record, or the last one we have for a device now offline.
   // Either way it is checked below; where it came from does not matter.
   const peer = peerId === state.identity?.deviceId ? state.identity : state.peers.get(peerId) || state.deviceRecords.get(peerId);
@@ -1850,23 +2017,6 @@ async function verifiedSealKey(peerId) {
   return result;
 }
 
-/** @param {string} blobId @param {string} token @param {Blob} body @param {(fraction: number) => void} onProgress */
-function uploadBlob(blobId, token, body, onProgress) {
-  // XHR rather than fetch: fetch still has no upload progress.
-  return new Promise((resolve, reject) => {
-    const xhr = new XMLHttpRequest();
-    xhr.open('PUT', `/blob/${encodeURIComponent(blobId)}?token=${encodeURIComponent(token)}`);
-    xhr.upload.onprogress = event => {
-      if (event.lengthComputable) onProgress(event.loaded / event.total);
-    };
-    xhr.onload = () => (xhr.status === 204
-      ? resolve(undefined)
-      : reject(new Error(xhr.responseText || `upload failed (${xhr.status})`)));
-    xhr.onerror = () => reject(new Error('upload failed'));
-    xhr.send(body);
-  });
-}
-
 /** @param {Conversation} conv
  * @param {Blob} blob @param {FileMeta} meta @param {FileRecord} record @param {string[]} recipientIds */
 async function sendViaRelay(conv, blob, meta, record, recipientIds) {
@@ -1875,6 +2025,7 @@ async function sendViaRelay(conv, blob, meta, record, recipientIds) {
   const chunkSize = state.config.relay?.chunkSize ?? RELAY_CHUNK_FALLBACK;
   const { totalChunks, bytes } = cipherLayout(blob.size, chunkSize);
 
+  /** @type {Array<{id: string, sealRaw: Uint8Array<ArrayBuffer>}>} */
   const targets = [];
   for (const id of recipientIds) {
     const sealRaw = await verifiedSealKey(id);
@@ -1902,11 +2053,6 @@ async function sendViaRelay(conv, blob, meta, record, recipientIds) {
     }));
   }
 
-  const body = await encryptBody(blob, key, meta.id, chunkSize, fraction => {
-    record.progress = fraction;
-    updateFileProgress(conv, record);
-  });
-
   const requestId = crypto.randomUUID();
   const offered = await awaitReply(requestId, () => wsSend({
     type: 'blob-offer',
@@ -1924,10 +2070,36 @@ async function sendViaRelay(conv, blob, meta, record, recipientIds) {
   record.progress = 0;
   renderSession();
 
-  await uploadBlob(offered.blobId, offered.uploadToken, body, fraction => {
-    record.progress = fraction;
-    updateFileProgress(conv, record);
-  });
+  record.retryUpload = async () => {
+    record.retryUpload = undefined;
+    try {
+      await sendViaRelay(conv, blob, meta, record, recipientIds);
+    } catch (err) {
+      record.relayStage = 'failed';
+      renderSession();
+      throw err;
+    }
+  };
+  try {
+    const url = `/blob/${encodeURIComponent(offered.blobId)}?token=${encodeURIComponent(offered.uploadToken)}`;
+    let offset = 0;
+    for await (const part of encryptBodyChunks(blob, key, meta.id, chunkSize)) {
+      assertRecipientsApproved(targets.map(target => target.id));
+      await uploadCipherChunk(url, offset, part);
+      offset += part.size;
+      record.progress = bytes ? offset / bytes : 1;
+      updateFileProgress(conv, record);
+    }
+    if (bytes === 0) await uploadCipherChunk(url, 0, new Blob());
+    record.retryUpload = undefined;
+  } catch (err) {
+    wsSend({ type: 'blob-cancel', blobId: offered.blobId });
+    record.relayBlobId = undefined;
+    record.relayStage = 'failed';
+    record.progress = 0;
+    renderSession();
+    throw err;
+  }
 
   record.relayStage = 'uploaded';
   record.progress = 1;
@@ -1935,30 +2107,14 @@ async function sendViaRelay(conv, blob, meta, record, recipientIds) {
   toast(`${meta.name} is on the server for ${targets.length} device${targets.length === 1 ? '' : 's'}.`);
 }
 
-/** @param {string} blobId */
-function findRelayedFile(blobId) {
-  for (const conv of state.conversations.values()) {
-    for (const file of conv.files.values()) {
-      if (file.relayBlobId === blobId) return { conv, file };
-    }
-  }
-  return null;
-}
-
 /** @param {any} notice */
 async function handleBlobAvailable(notice) {
   const identity = state.identity;
   if (!identity) throw new Error('Device identity is not ready. Reload and try again.');
-  if (!notice?.blobId) return;
+  if (!notice?.blobId || !deviceAllowed(notice.from)) return;
   if (state.relayInbound.has(notice.blobId)) {
-    // The server announces again whatever this device has not taken yet, each
-    // time it reconnects. A download that failed earlier — typically because
-    // the connection dropped mid-way — is retried then, rather than waiting
-    // for someone to press Retry.
-    const found = findRelayedFile(notice.blobId);
-    if (found && found.file.relayStage === 'failed' && found.file.relayKey) {
-      await downloadRelayed(found.conv, found.file);
-    }
+    // Re-announcement after reconnect does not restart an interrupted download.
+    // The user can explicitly start it again from byte zero.
     return;
   }
   state.relayInbound.add(notice.blobId);
@@ -2021,6 +2177,8 @@ async function handleBlobAvailable(notice) {
     corrupt: false,
     direction: /** @type {const} */ ('received'),
     via: /** @type {const} */ ('relay'),
+    transferId: null,
+    sourceId: null,
     relayStage: /** @type {const} */ ('downloading'),
     relayBlobId: notice.blobId,
     relayMeta: meta,
@@ -2076,11 +2234,17 @@ async function handleRelayedMessage(notice) {
     return;
   }
 
-  const isNew = !conv.messages.has(opened.message.id);
+  const verified = await verifyMessage(opened.message, signedScope(conv));
+  if (!verified) {
+    wsSend({ type: 'blob-release', blobId: notice.blobId });
+    toast('Refused a message without a valid author signature.');
+    return;
+  }
+  const isNew = !conv.messages.has(messageKey(opened.message));
   // The author is the device that signed the envelope, so unlike history
   // recovered through a peer sync this is verified authorship.
-  mergeMessage(conv, opened.message, { verifiedAuthor: true, relayedBy: null });
-  const stored = conv.messages.get(opened.message.id);
+  mergeMessage(conv, verified, { verifiedAuthor: true, relayedBy: null });
+  const stored = conv.messages.get(messageKey(opened.message));
   if (stored && isNew) stored.via = 'relay';
   wsSend({ type: 'blob-release', blobId: notice.blobId });
   renderSession();
@@ -2094,7 +2258,7 @@ async function handleRelayedMessage(notice) {
 /** @param {Conversation} conv @param {Message} message */
 function notifyIncoming(conv, message) {
   if (state.activeConvId === conv.id) return;
-  const who = message.fromName || displayName(message.from);
+  const who = displayName(message.from);
   const where = conv.kind === 'room' ? ` in ${conversationTitle(conv)}` : '';
   toast(`New message from ${who}${where}`, {
     label: 'Open',
@@ -2105,7 +2269,15 @@ function notifyIncoming(conv, message) {
 /** @param {Conversation} conv
  * @param {FileRecord} record */
 async function downloadRelayed(conv, record) {
+  if (record.from && !deviceAllowed(record.from)) throw new Error('This device is blocked or unverified.');
   if (!record.relayBlobId || !record.relayKey || !record.relayMeta) throw new Error('This relayed file is no longer available.');
+  if (record.relayAbort) return;
+  const controller = new AbortController();
+  record.relayAbort = controller;
+  const assertSenderAllowed = () => {
+    if (record.from && !deviceAllowed(record.from)) throw new Error('Sender authorization was revoked.');
+    controller.signal.throwIfAborted();
+  };
   record.relayStage = 'downloading';
   record.progress = 0;
   renderSession();
@@ -2113,25 +2285,28 @@ async function downloadRelayed(conv, record) {
     const claim = await awaitReply(`claim:${record.relayBlobId}`, () =>
       wsSend({ type: 'blob-claim', blobId: record.relayBlobId }));
 
+    const decryptor = createBodyDecryptor({
+      key: record.relayKey, fileId: record.id, chunkSize: record.relayMeta.chunkSize, size: record.size
+    });
     const response = await fetch(`/blob/${encodeURIComponent(record.relayBlobId)}?token=${encodeURIComponent(claim.downloadToken)}`, {
-      cache: 'no-store'
+      cache: 'no-store', signal: controller.signal
     });
     if (!response.ok || !response.body) throw new Error(`download failed (${response.status})`);
 
-    const decryptor = createBodyDecryptor({
-      key: record.relayKey,
-      fileId: record.id,
-      chunkSize: record.relayMeta.chunkSize,
-      size: record.size
-    });
     const reader = response.body.getReader();
-    for (;;) {
-      const { value, done } = await reader.read();
-      if (done) break;
-      await decryptor.push(value);
-      record.progress = decryptor.progress;
-      updateFileProgress(conv, record);
-    }
+    try {
+      for (;;) {
+        assertSenderAllowed();
+        const { value, done } = await reader.read();
+        assertSenderAllowed();
+        if (done) break;
+        await decryptor.push(value);
+        assertSenderAllowed();
+        record.progress = decryptor.progress;
+        updateFileProgress(conv, record);
+      }
+    } finally { await reader.cancel().catch(() => {}); }
+    assertSenderAllowed();
     const { chunks, sha256 } = decryptor.finish();
 
     if (sha256 !== record.sha256) {
@@ -2156,9 +2331,10 @@ async function downloadRelayed(conv, record) {
     toast(`Received ${record.name} via server · SHA-256 verified`);
   } catch (err) {
     record.relayStage = 'failed';
+    record.progress = 0;
     renderSession();
     toast(`Could not download ${record.name}: ${err.message}`);
-  }
+  } finally { record.relayAbort = undefined; }
 }
 
 /** @param {Conversation} conv
@@ -2322,7 +2498,7 @@ function declineOffer(conv, file) {
 /** @param {Conversation} conv
  * @param {FileRecord} file */
 function notifyOffer(conv, file) {
-  const who = file.fromName || displayName(file.from);
+  const who = displayName(file.from);
   const text = `${who} wants to send you ${file.name} (${formatBytes(file.size)})`;
   if (state.activeConvId === conv.id) {
     toast(text);
@@ -2364,6 +2540,7 @@ function getPeer(peerId) {
 /** @param {string} convId
  * @param {"direct" | "room"} kind @param {string} ref */
 function openConversation(convId, kind, ref, focus = 'chat') {
+  if (kind === 'direct' && ref !== state.self?.id && !deviceTrust(ref)?.pairedAt) { openCodePairing(ref); return; }
   const conv = ensureConversation(convId, kind, ref);
   const wasClosed = state.activeConvId !== convId;
   if (wasClosed) {
@@ -2468,7 +2645,10 @@ function formatStatus(status) {
 /** @param {Link | undefined} link */
 function trustLabel(link) {
   if (!isSecure(link)) return null;
-  if (!link.trust) return 'Verified';
+  const trust = deviceTrust(link.peerId);
+  if (trust?.blocked) return 'Blocked device';
+  if (trust?.verifiedAt) return `Verified by safety code on ${new Date(trust.verifiedAt).toLocaleDateString()}`;
+  if (!link.trust) return 'Identity proved';
   return link.trust.known
     ? `Known device since ${new Date(link.trust.firstSeen).toLocaleDateString()}`
     : 'New device — compare the safety code';
@@ -2481,7 +2661,9 @@ function renderPeers() {
 function renderPeersNow() {
   peerRows.textContent = '';
   const peers = [...state.peers.values()].sort((a, b) => a.name.localeCompare(b.name));
+  if (state.self) peers.unshift({ ...state.self, platform: detectPlatform(), browser: detectBrowser() });
   for (const peer of peers) {
+    const isSelf = peer.id === state.self?.id;
     const link = state.links.get(peer.id);
     const tr = document.createElement('tr');
     tr.dataset.dropTarget = peer.id;
@@ -2497,12 +2679,20 @@ function renderPeersNow() {
     const name = document.createElement('span');
     name.textContent = peer.name;
     nameWrap.append(pip, name);
+    if (isSelf) {
+      tr.classList.add('self-device');
+      const badge = document.createElement('strong');
+      badge.className = 'self-badge';
+      badge.textContent = 'This is you';
+      nameWrap.append(badge);
+    }
     // Trust state belongs next to the name, not buried in a tooltip.
     const trust = trustLabel(link);
     if (trust && link) {
       const badge = document.createElement('span');
       badge.className = link.trust?.known === false ? 'trust-badge new' : 'trust-badge';
-      badge.textContent = link.trust?.known === false ? 'new' : 'known';
+      const remembered = deviceTrust(peer.id);
+      badge.textContent = remembered?.blocked ? 'blocked' : remembered?.verifiedAt ? 'verified' : link.trust?.known === false ? 'new' : 'known';
       badge.title = `${trust} · safety code ${link.crypto.safety}`;
       nameWrap.append(badge);
     }
@@ -2519,9 +2709,9 @@ function renderPeersNow() {
 
     const statusTd = document.createElement('td');
     statusTd.dataset.label = 'Status';
-    statusTd.textContent = formatStatus(link?.status || 'idle');
+    statusTd.textContent = isSelf ? 'Your browser' : formatStatus(link?.status || 'idle');
     if (link?.gaveUp || link?.incompatible) statusTd.classList.add('danger');
-    if (link?.protocol) statusTd.title = `aria-drop protocol v${link.protocol}`;
+    if (link?.protocol) statusTd.title = `Evakage protocol v${link.protocol}`;
 
     // The candidate path answers "is this actually peer-to-peer, or going
     // through TURN?" — worth keeping for a slow transfer, but not worth a
@@ -2538,7 +2728,7 @@ function renderPeersNow() {
     actionsTd.className = 'actions-col';
     // One way in and one way out. The session panel already carries text and
     // file controls, so opening it is the only thing a row needs to do.
-    actionsTd.append(rowActions(peer.id, peer.name, link));
+    actionsTd.append(rowActions(peer.id, isSelf ? 'yourself' : peer.name, link));
     tr.append(nameTd, codeTd, platformTd, statusTd, actionsTd);
     peerRows.append(tr);
   }
@@ -2770,7 +2960,7 @@ function renderSession() {
 function updateFileProgress(conv, file) {
   if (state.activeConvId !== conv.id) return;
   const bar = timeline.querySelector(`.file-item[data-file-id="${CSS.escape(file.id)}"] .file-progress`);
-  if (bar) bar.value = Number.isFinite(file.progress) ? file.progress : 0;
+  if (bar instanceof HTMLProgressElement) bar.value = Number.isFinite(file.progress) ? file.progress : 0;
   else renderSession();
 }
 
@@ -2802,8 +2992,8 @@ function renderSessionNow() {
   if (conv.kind === 'direct') {
     const link = state.links.get(conv.peerId);
     if (isSelfConversation(conv)) {
-      secureState.textContent = 'Encrypted on server · 24h reconnect window · 3-day limit';
-      secureState.title = 'Recover with this browser’s device identity. Reconnecting refreshes the inactivity window; the 3-day limit stays fixed.';
+      secureState.textContent = 'Encrypted';
+      secureState.title = '24h reconnect window · 3-day limit. Recover with this browser’s device identity. Reconnecting refreshes the inactivity window; the 3-day limit stays fixed.';
       secureState.classList.add('ready');
       secureState.classList.remove('unverified');
     } else if (isSecure(link)) {
@@ -2853,7 +3043,7 @@ function renderSessionNow() {
     const empty = document.createElement('div');
     empty.className = 'timeline-empty';
     empty.textContent = isSelfConversation(conv)
-      ? 'Send yourself a message or upload files. Encrypted copies survive disconnects for 24 hours, up to 3 days from creation.'
+      ? 'Send yourself a message or upload files.'
       : 'Nothing here yet. Messages and files live only in participant browser memory.';
     timeline.append(empty);
   }
@@ -2910,17 +3100,32 @@ function renderMembers(conv) {
   }
 }
 
+/** @template {keyof HTMLElementTagNameMap} K
+ * @param {Element} root @param {string} selector @param {K} tag
+ * @returns {HTMLElementTagNameMap[K]} */
+function requiredChild(root, selector, tag) {
+  const element = root.querySelector(selector);
+  if (!element || element.localName !== tag) throw new Error(`Missing ${tag}: ${selector}`);
+  return /** @type {HTMLElementTagNameMap[K]} */ (element);
+}
+
+/** @param {HTMLTemplateElement} template @returns {HTMLElement} */
+function cloneTemplate(template) {
+  const root = template.content.firstElementChild;
+  if (!(root instanceof HTMLElement)) throw new Error('Template needs an HTML root');
+  return /** @type {HTMLElement} */ (root.cloneNode(true));
+}
+
 /** @param {Conversation} conv
  * @param {Message} message */
 function renderMessage(conv, message) {
-  const node = $('#messageTemplate').content.firstElementChild.cloneNode(true);
+  const node = cloneTemplate($('#messageTemplate'));
   const mine = message.from === state.self?.id;
   if (mine) node.classList.add('self');
-  const author = node.querySelector('.message-author');
+  const author = requiredChild(node, '.message-author', 'div');
   if (conv.kind === 'room' && !mine) {
-    author.textContent = message.fromName || displayName(message.from);
-    // History relayed by a third peer is not proof of who wrote it, so mark it
-    // rather than presenting it with the same confidence as a live message.
+    author.textContent = displayName(message.from);
+    // Only cryptographically verified authorship earns the verified UI state.
     if (!message.verifiedAuthor) {
       author.classList.add('unverified');
       author.textContent += ' · relayed';
@@ -2929,10 +3134,10 @@ function renderMessage(conv, message) {
   } else {
     author.remove();
   }
-  appendLinkifiedText(node.querySelector('.message-bubble'), message.text);
+  appendLinkifiedText(requiredChild(node, '.message-bubble', 'div'), message.text);
   const time = new Date(message.at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
   // As with files, say when a message took the server path.
-  node.querySelector('.message-time').textContent = message.via === 'relay' ? `${time} · via server` : time;
+  requiredChild(node, '.message-time', 'div').textContent = message.via === 'relay' ? `${time} · via server` : time;
   timeline.append(node);
 }
 
@@ -2957,10 +3162,10 @@ function appendLinkifiedText(container, text) {
 /** @param {Conversation} conv
  * @param {FileRecord} file */
 function renderFile(conv, file) {
-  const node = $('#fileTemplate').content.firstElementChild.cloneNode(true);
+  const node = cloneTemplate($('#fileTemplate'));
   node.dataset.fileId = file.id;
-  node.querySelector('.file-name').textContent = file.name;
-  const owner = file.from === state.self?.id ? 'sent by you' : `from ${file.fromName || displayName(file.from)}`;
+  requiredChild(node, '.file-name', 'strong').textContent = file.name;
+  const owner = file.from === state.self?.id ? 'sent by you' : `from ${displayName(file.from)}`;
 
   const details = [formatBytes(file.size), owner];
   // Say which path a file took: it is the first thing to check when one path
@@ -2981,7 +3186,7 @@ function renderFile(conv, file) {
   else if (file.corrupt) details.push('SHA-256 mismatch');
   else if (file.verified && file.sha256) details.push(`SHA-256 ✓ ${file.sha256.slice(0, 12)}`);
   else if (file.sha256) details.push(`SHA-256 ${file.sha256.slice(0, 12)}`);
-  const metaLine = node.querySelector('.file-meta');
+  const metaLine = requiredChild(node, '.file-meta', 'div');
   metaLine.textContent = details.join(' · ');
   metaLine.classList.toggle('danger', Boolean(file.corrupt));
   metaLine.classList.toggle('expiring', Boolean(expiry?.warn));
@@ -2992,11 +3197,11 @@ function renderFile(conv, file) {
   }
   if (file.sha256) metaLine.title = `SHA-256 ${file.sha256}`;
 
-  const progress = node.querySelector('.file-progress');
+  const progress = requiredChild(node, '.file-progress', 'progress');
   progress.value = Number.isFinite(file.progress) ? file.progress : (file.blob ? 1 : 0);
 
-  const actions = node.querySelector('.file-actions');
-  const btn = node.querySelector('.file-download');
+  const actions = requiredChild(node, '.file-actions', 'div');
+  const btn = requiredChild(node, '.file-download', 'button');
   const holders = mergeHolders(file.holders).filter(id => id !== state.self?.id && state.peers.has(id));
   const partial = Array.isArray(file.chunks) && countReceived(file.chunks) > 0;
   const relayBusy = ['encrypting', 'uploading', 'downloading'].includes(file.relayStage || '');
@@ -3036,12 +3241,17 @@ function renderFile(conv, file) {
       cancel.addEventListener('click', () => cancelTransfer(conv, file));
       actions.append(cancel);
     }
+  } else if (file.retryUpload && file.relayStage === 'failed') {
+    btn.textContent = 'Restart upload';
+    btn.title = 'Start over from the beginning';
+    btn.addEventListener('click', () => file.retryUpload?.().catch(err => toast(err.message)));
   } else if (file.blob) {
     btn.textContent = 'Save';
     btn.addEventListener('click', () => downloadFile(file));
   } else if (file.via === 'relay' && file.relayStage === 'failed' && file.relayKey) {
     // The server keeps it until it is taken or it expires, so it can be retried.
-    btn.textContent = 'Retry download';
+    btn.textContent = 'Restart download';
+    btn.title = 'Start over from the beginning';
     btn.addEventListener('click', () => downloadRelayed(conv, file));
   } else if (holders.length) {
     btn.textContent = file.corrupt ? 'Retry' : partial ? 'Resume' : 'Request';
@@ -3158,8 +3368,8 @@ async function refreshStats() {
 }
 
 
-/** @param {string} code */
-function resolveCode(code) {
+/** @param {string} code @param {string} [targetId] */
+function resolveCode(code, targetId = undefined) {
   const requestId = crypto.randomUUID();
   return new Promise((resolve) => {
     const timer = setTimeout(() => {
@@ -3170,7 +3380,7 @@ function resolveCode(code) {
       clearTimeout(timer);
       resolve(peer);
     });
-    wsSend({ type: 'resolve-code', requestId, code });
+    wsSend({ type: 'pair-device', requestId, code, targetId });
   });
 }
 
@@ -3183,11 +3393,11 @@ $('#codeForm').addEventListener('submit', async (/** @type {Event} */ event) => 
   codeFeedback.textContent = 'Looking up device…';
   const peer = await resolveCode(code);
   if (!peer || peer.id === state.self?.id) {
-    codeFeedback.textContent = 'No other active device found with that code.';
+    codeFeedback.textContent = 'That pairing code is invalid, expired, or belongs to an unavailable device.';
     return;
   }
   state.peers.set(peer.id, peer);
-  codeFeedback.textContent = `Found ${peer.name}`;
+  codeFeedback.textContent = `Paired with ${peer.name}`;
   renderPeers();
   openSession(peer.id);
 });
@@ -3247,26 +3457,28 @@ leaveRoomBtn.addEventListener('click', () => {
 $('#copyCodeBtn').addEventListener('click', async () => {
   const conv = activeConversation();
   if (!conv) return;
-  const code = conv.kind === 'room' ? state.rooms.get(conv.roomId)?.code : getPeer(conv.peerId).code;
+  const code = conv.kind === 'room' ? state.rooms.get(conv.roomId)?.code : state.self?.pairingCode;
   if (!code) return;
   await navigator.clipboard.writeText(code).catch(() => {});
   toast(conv.kind === 'room' ? 'Room code copied' : 'Peer code copied');
 });
 
-$('#messageSelfBtn').addEventListener('click', () => {
-  if (!state.self) return toast('Waiting for device registration.');
-  openSession(state.self.id, 'text');
-});
-
 selfCode.addEventListener('click', async () => {
   if (!state.self?.code) return;
-  await navigator.clipboard.writeText(state.self.code).catch(() => {});
+  await navigator.clipboard.writeText(state.self.pairingCode || '').catch(() => {});
   toast('Your device code copied');
 });
 
-$('#renameBtn').addEventListener('click', openRenameDialog);
 
 function setupSettings() {
+  const verifiedOnlyInput = $('#verifiedOnlyInput');
+  try { state.verifiedOnly = localStorage.getItem('aria-drop-verified-only') === '1'; } catch {}
+  verifiedOnlyInput.checked = state.verifiedOnly;
+  verifiedOnlyInput.addEventListener('change', () => {
+    state.verifiedOnly = verifiedOnlyInput.checked;
+    try { localStorage.setItem('aria-drop-verified-only', state.verifiedOnly ? '1' : '0'); } catch {}
+    renderSession();
+  });
   const dialog = $('#settingsDialog');
   const radios = [...dialog.querySelectorAll('input[name="incomingPolicy"]')];
   try {
@@ -3274,6 +3486,7 @@ function setupSettings() {
     if (INCOMING_POLICIES.includes(stored)) state.incomingPolicy = stored;
   } catch {}
   for (const radio of radios) {
+    if (!(radio instanceof HTMLInputElement)) continue;
     radio.checked = radio.value === state.incomingPolicy;
     radio.addEventListener('change', () => {
       if (!radio.checked) return;
@@ -3282,7 +3495,7 @@ function setupSettings() {
     });
   }
   $('#settingsBtn').addEventListener('click', () => {
-    openDialog(dialog, radios.find(radio => radio.checked) || radios[0]);
+    openDialog(dialog, radios.find(radio => radio instanceof HTMLInputElement && radio.checked) || radios[0]);
   });
 }
 
@@ -3298,6 +3511,22 @@ function setupRelayToggle() {
     try { localStorage.setItem('aria-drop-force-relay', input.checked ? '1' : '0'); } catch {}
   });
 }
+
+function renderQrCodes() {
+  if (!state.self?.pairingCode) return;
+  const url = new URL(location.pathname, location.origin).href;
+  const invitation = new URL(url);
+  invitation.hash = new URLSearchParams({ pair: state.self.pairingCode, device: state.self.id }).toString();
+  drawQr($('#serverQr'), url);
+  drawQr($('#deviceQr'), invitation.href);
+  $('#qrServerUrl').textContent = url;
+  $('#qrDeviceCode').textContent = invitation.href;
+  $('#qrFingerprint').textContent = state.self.id;
+}
+$('#qrBtn').addEventListener('click', () => {
+  try { renderQrCodes(); } catch (err) { return toast(err.message); }
+  openDialog($('#qrDialog'));
+});
 
 $('#devicesBtn').addEventListener('click', () => {
   renderKnownDevices();
@@ -3373,21 +3602,79 @@ function openDialog(dialog, focusTarget) {
   if (focusTarget instanceof HTMLElement) focusTarget.focus();
 }
 
-function openRenameDialog() {
-  renameInput.value = deviceName();
-  openDialog(renameDialog, renameInput);
-  renameInput.select();
+/** @param {Device} peer */
+async function acceptPairing(peer) {
+  if (!peer.identityKey || !peer.sealKey || !peer.sealKeySignature) return false;
+  if (!peer.identityKey || !peer.sealKey || !peer.sealKeySignature) return false;
+  const checked = await verifyAdvertisedIdentity({ deviceId: peer.id, identityKey: peer.identityKey,
+    sealKey: peer.sealKey, sealKeySignature: peer.sealKeySignature });
+  if (!checked || !pairDevice(peer.id, peer.name)) return false;
+  recordDevice(peer, peer.online !== false);
+  if (peer.online !== false) state.peers.set(peer.id, peer);
+  renderPeers(); renderRooms(); renderKnownDevices(); renderSession();
+  reconcileLinks(new Set(state.peers.keys()));
+  wsSend({ type: 'blobs-request' });
+  for (const link of state.links.values()) if (deviceAllowed(link.peerId) && isSecure(link)) syncEverythingWith(link);
+  return true;
 }
 
-renameDialog.addEventListener('close', () => {
-  if (renameDialog.returnValue !== 'save') return;
-  const name = renameInput.value.trim().slice(0, 64);
-  if (!name) return;
-  localStorage.setItem('aria-drop-device-name', name);
-  if (state.self) state.self.name = name;
-  document.title = `${name} · aria-drop`;
-  wsSend({ type: 'rename', name });
-  toast(`This device is now "${name}"`);
+let connectTargetId = /** @type {string | undefined} */ (undefined);
+/** @param {string} id */
+function openCodePairing(id) {
+  connectTargetId = id;
+  $('#connectTarget').textContent = `Ask the owner of ${displayName(id)} for their pairing code, or scan their device QR.`;
+  $('#connectCode').value = '';
+  $('#connectFeedback').textContent = '';
+  openDialog($('#connectDialog'), $('#connectCode'));
+}
+$('#connectCancel').addEventListener('click', () => $('#connectDialog').close());
+$('#connectForm').addEventListener('submit', async event => {
+  event.preventDefault();
+  const peer = await resolveCode($('#connectCode').value.trim().toUpperCase(), connectTargetId);
+  if (!peer) {
+    $('#connectFeedback').textContent = 'Code invalid or expired. Ask this device for its current pairing code.';
+    return;
+  }
+  $('#connectDialog').close();
+  openSession(peer.id);
+});
+
+window.addEventListener('hashchange', () => {
+  if (state.self) handlePairingLink().catch(err => toast(err.message || 'Pairing failed.'));
+});
+
+async function handlePairingLink() {
+  const params = new URLSearchParams(location.hash.slice(1));
+  const code = params.get('pair');
+  if (!code) return;
+  const id = params.get('device');
+  history.replaceState(null, '', location.pathname + location.search);
+  const peer = await resolveCode(code, id || undefined);
+  if (peer) { codeFeedback.textContent = `Paired with ${peer.name}`; openSession(peer.id); }
+  else codeFeedback.textContent = 'That QR pairing code is invalid or expired. Ask for a current code.';
+}
+
+let pairingDevice = '';
+/** @param {string} fingerprint */
+async function openPairing(fingerprint) {
+  if (!state.self) return;
+  pairingDevice = fingerprint;
+  $('#pairingCode').textContent = await safetyCode(state.self.id, fingerprint);
+  $('#pairingInput').value = '';
+  $('#pairingFeedback').textContent = '';
+  openDialog($('#pairingDialog'), $('#pairingInput'));
+}
+$('#pairingCancel').addEventListener('click', () => $('#pairingDialog').close());
+$('#pairingForm').addEventListener('submit', async event => {
+  event.preventDefault();
+  if (!state.self || !await verifyDevice(pairingDevice, state.self.id, $('#pairingInput').value)) {
+    $('#pairingFeedback').textContent = 'The codes do not match, or this device is blocked.';
+    return;
+  }
+  $('#pairingDialog').close();
+  renderKnownDevices(); renderPeers(); renderSession();
+  wsSend({ type: 'blobs-request' });
+  for (const link of state.links.values()) if (deviceAllowed(link.peerId) && isSecure(link)) syncEverythingWith(link);
 });
 
 function renderKnownDevices() {
@@ -3415,7 +3702,7 @@ function renderKnownDevices() {
     meta.className = 'muted';
     meta.style.fontSize = '.74rem';
     const online = state.peers.has(fingerprint);
-    meta.textContent = `${online ? 'Online now' : 'Not connected'} · first seen ${new Date(record.firstSeen).toLocaleDateString()}`;
+    meta.textContent = `${record.blocked ? 'Blocked' : record.verifiedAt ? 'Verified' : record.pairedAt ? 'Paired' : 'Not paired'} · ${online ? 'Online now' : 'Not connected'} · first seen ${new Date(record.firstSeen).toLocaleDateString()}`;
     const fp = document.createElement('div');
     fp.className = 'device-fingerprint';
     fp.textContent = fingerprint;
@@ -3425,17 +3712,37 @@ function renderKnownDevices() {
     forget.type = 'button';
     forget.className = 'ghost';
     forget.textContent = 'Forget';
+    forget.disabled = !!record.blocked;
+    if (record.blocked) forget.title = 'Unblock this device before forgetting it.';
     forget.addEventListener('click', () => {
       forgetDevice(fingerprint);
+      wsSend({ type: 'unpair-device', deviceId: fingerprint });
+      releaseIdleLinks();
       const link = state.links.get(fingerprint);
       if (link) link.trust = { known: false, firstSeen: Date.now(), previousName: record.name };
       renderKnownDevices();
       renderPeers();
       renderSession();
-      toast(`Forgot ${record.name || 'device'}. It will show as new next time.`);
+      toast(`Forgot ${record.name || 'device'}. Pair by code again to exchange with it.`);
     });
 
-    row.append(main, forget);
+    const verify = document.createElement('button');
+    verify.type = 'button';
+    verify.textContent = record.verifiedAt ? 'Compare code' : 'Verify';
+    verify.disabled = !!record.blocked;
+    verify.setAttribute('aria-label', `Verify ${record.name}`);
+    verify.addEventListener('click', () => openPairing(fingerprint));
+    const block = document.createElement('button');
+    block.type = 'button';
+    block.className = 'ghost';
+    block.textContent = record.blocked ? 'Unblock' : 'Block';
+    block.setAttribute('aria-label', `${record.blocked ? 'Unblock' : 'Block'} ${record.name}`);
+    block.addEventListener('click', () => {
+      blockDevice(fingerprint, !record.blocked);
+      releaseIdleLinks();
+      renderKnownDevices(); renderPeers(); renderSession();
+    });
+    row.append(main, verify, block, forget);
     knownDeviceList.append(row);
   }
 }
@@ -3734,7 +4041,7 @@ function setupInstallPrompt() {
     installBtn.classList.remove('hidden');
     installBtn.textContent = 'Install';
     installBtn.addEventListener('click', () => {
-      toast('In Safari, tap Share then "Add to Home Screen" to install aria-drop.');
+      toast('In Safari, tap Share then "Add to Home Screen" to install Evakage.');
     });
   }
 }
@@ -3842,7 +4149,7 @@ async function consumeShareTarget() {
   history.replaceState(null, '', location.pathname);
 
   if (id === 'failed') {
-    toast('That share did not reach aria-drop. Open the app once, then share again.');
+    toast('That share did not reach Evakage. Open the app once, then share again.');
     return;
   }
   if (id === 'too-large' || id === 'queue-full' || id === 'too-many-files') {
