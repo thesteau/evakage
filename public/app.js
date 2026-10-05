@@ -460,9 +460,17 @@ function signal(to, data) {
   wsSend({ type: 'signal', to, data });
 }
 
+// At most one reconnect may be pending. A foreground or online event can connect
+// before the backoff timer fires; letting the timer fire too would open a second
+// socket for this device, and the server closes the older one with 4001.
+/** @type {ReturnType<typeof setTimeout> | undefined} */
+let wsReconnectTimer;
+
 function connectWebSocket() {
   const identity = state.identity;
   if (!identity) throw new Error('Device identity is not ready. Reload and try again.');
+  clearTimeout(wsReconnectTimer);
+  wsReconnectTimer = undefined;
   const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
   const ws = new WebSocket(`${protocol}//${location.host}`);
   state.ws = ws;
@@ -470,13 +478,14 @@ function connectWebSocket() {
   serverState.classList.remove('online');
 
   ws.addEventListener('open', () => {
+    if (state.ws !== ws) return;
     state.wsBackoff = 500;
     serverState.textContent = 'Signaling connected';
     serverState.classList.add('online');
   });
 
   ws.addEventListener('message', async (event) => {
-    if (signingOut) return;
+    if (signingOut || state.ws !== ws) return;
     let msg;
     try { msg = JSON.parse(event.data); } catch { return; }
 
@@ -682,7 +691,8 @@ function connectWebSocket() {
   });
 
   ws.addEventListener('close', event => {
-    if (signingOut) return;
+    // A superseded socket closing must not tear down or re-dial for its replacement.
+    if (signingOut || state.ws !== ws) return;
     accountGeneration++;
     accountPeerIds.clear();
     releaseIdleLinks();
@@ -698,7 +708,7 @@ function connectWebSocket() {
       return;
     }
     if (event.code === 1008) return;
-    setTimeout(connectWebSocket, state.wsBackoff);
+    wsReconnectTimer = setTimeout(connectWebSocket, state.wsBackoff);
     state.wsBackoff = Math.min(state.wsBackoff * 1.8, 10000);
   });
 
