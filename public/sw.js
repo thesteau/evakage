@@ -14,7 +14,7 @@
 // DOM lib does not know about.
 const worker = /** @type {ServiceWorkerGlobalScope} */ (/** @type {unknown} */ (self));
 
-const CACHE = 'evakage-v19';
+const CACHE = 'evakage-v21';
 
 const SHELL = [
   '/',
@@ -24,6 +24,9 @@ const SHELL = [
   '/frames.js',
   '/messages.js',
   '/qr.js',
+  '/scanner.js',
+  '/preferences.js',
+  '/vendor/jsqr.js',
   '/vendor/qrcode.mjs',
   '/sha256.js',
   '/identity.js',
@@ -276,7 +279,7 @@ worker.addEventListener('fetch', event => {
   if (NETWORK_ONLY.has(url.pathname)) return;
   // Relayed transfers must never touch Cache Storage: that would persist file
   // bodies on the device and could replay a stale one.
-  if (url.pathname.startsWith('/blob/')) return;
+  if (url.pathname.startsWith('/blob/') || url.pathname.startsWith('/account/')) return;
 
   // Navigations: network first so an auth redirect or a new build is picked up,
   // falling back to the cached shell when offline.

@@ -11,5 +11,10 @@ services:
       # For routed/VPN/remote networks, supply valid RTCIceServer objects, e.g.:
       # ICE_SERVERS_JSON: '[{"urls":"turn:turn.example.com:3478","username":"user","credential":"secret"}]'
       MAX_FILE_BYTES: "536870912"
-    # No volumes on purpose: relayed files live inside the container only.
+      ACCOUNTS_DB: ${ACCOUNTS_DB-/home/node/evakage-accounts/accounts.sqlite}
+    volumes:
+      - account-data:/home/node/evakage-accounts
+    # Relay storage stays inside the container; never mount BLOB_DIR.
     # To run a published image instead of building, use deploy/.
+volumes:
+  account-data:

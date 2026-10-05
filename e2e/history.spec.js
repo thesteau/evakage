@@ -1,5 +1,5 @@
 import { expect } from '@playwright/test';
-import { test, chat, deviceNames, openPeer, pairDevices } from './helpers.js';
+import { test, chat, deviceNames, openPeer, pairDevices, joinRoom } from './helpers.js';
 
 /** @typedef {import('@playwright/test').Page} Page */
 /** @param {{alice: Page, bob: Page, disconnect: (name: string) => void}} devices
@@ -11,7 +11,7 @@ async function recoverFromSurvivingPeer(devices, browser, inspect) {
   await alice.locator('#roomNameInput').fill(room);
   await alice.locator('#createRoomForm').getByRole('button', { name: 'Create' }).click();
   await alice.getByRole('button', { name: `Open room ${room}`, exact: true }).click();
-  await bob.getByRole('button', { name: `Open room ${room}`, exact: true }).click();
+  await joinRoom(bob, alice, room);
   await expect(alice.locator('#secureState')).toHaveText('1 of 1 links encrypted');
   await expect(bob.locator('#secureState')).toHaveText('1 of 1 links encrypted');
   await chat(alice, bob, 'Original message signed by Alice');
@@ -31,7 +31,7 @@ async function recoverFromSurvivingPeer(devices, browser, inspect) {
     await expect(recipient.locator('#selfCode')).not.toHaveText('----');
     await pairDevices(recipient, alice, false);
     await pairDevices(recipient, bob, false);
-    await recipient.getByRole('button', { name: `Open room ${room}`, exact: true }).click();
+    await joinRoom(recipient, bob, room);
     await expect(recipient.locator('#timeline').getByText('Original message signed by Alice', { exact: true })).toHaveCount(1);
     const original = recipient.locator('.message-item').filter({ hasText: 'Original message signed by Alice' });
     await expect(original.locator('.message-author')).toHaveText(deviceNames.get('Alice'));

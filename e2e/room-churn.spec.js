@@ -1,6 +1,6 @@
 import { test, expect, devices } from '@playwright/test';
 import fs from 'node:fs/promises';
-import { pairDevices } from './helpers.js';
+import { pairDevices, joinRoom } from './helpers.js';
 import { performance } from 'node:perf_hooks';
 import { startServer } from '../tests/helpers.js';
 
@@ -123,7 +123,8 @@ async function measureChurn(browser, info, transferChurn) {
     await owner.locator('#roomNameInput').fill(roomName);
     await owner.locator('#createRoomForm').getByRole('button', { name: 'Create' }).click();
     for (const page of incumbents) {
-      await page.getByRole('button', { name: `Open room ${roomName}`, exact: true }).click();
+      if (page === owner) await page.getByRole('button', { name: `Open room ${roomName}`, exact: true }).click();
+      else await joinRoom(page, owner, roomName);
       await expect(page.locator('#sessionTitle')).toHaveText(roomName);
     }
     const meshReady = async () => {
@@ -178,7 +179,7 @@ async function measureChurn(browser, info, transferChurn) {
         }
         const start = performance.now();
         if (phase === 'relay') {
-          await seventh.getByRole('button', { name: `Open room ${roomName}`, exact: true }).click();
+          await joinRoom(seventh, owner, roomName);
           await Promise.all(pages.map(page => expect(page.locator('#secureState')).toContainText('Large room')));
         } else {
           await seventh.locator('#leaveRoomBtn').click();

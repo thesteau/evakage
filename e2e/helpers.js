@@ -49,6 +49,7 @@ export const test = base.extend(/** @type {import('@playwright/test').Fixtures<{
         deviceNames.set(name, await page.locator('#selfCode').getAttribute('data-device-name'));
         await page.getByRole('button', { name: 'Settings', exact: true }).click();
         await page.locator('input[value="always"]').check();
+        await page.locator('#discoverableInput').check();
         await page.getByRole('button', { name: 'Done', exact: true }).click();
         pages.push(page);
       }
@@ -87,7 +88,7 @@ export async function pairDevices(first, second, closeConversations = true) {
   for (const [page, peer] of [[first, second], [second, first]]) {
     if (await page.locator('#sessionPanel').isVisible()) continue;
     const name = await peer.locator('#selfCode').getAttribute('data-device-name');
-    const exit = page.getByRole('button', { name: `Exit conversation with ${name}`, exact: true });
+    const exit = page.getByRole('button', { name: `Delete conversation with ${name}`, exact: true });
     if (await exit.count()) await exit.click();
   }
 }
@@ -137,3 +138,13 @@ export async function sendFile(sender, receiver, name, buffer, accept = true) {
   expect(await fs.readFile(await download.path())).toEqual(buffer);
 }
 
+
+/** Join using an invitation shared by a current member.
+ * @param {Page} page @param {Page} owner @param {string} name */
+export async function joinRoom(page, owner, name) {
+  const row = owner.locator('#roomRows tr').filter({ hasText: name });
+  const code = await row.locator('.peer-code').innerText();
+  await page.locator('#roomCodeInput').fill(code);
+  await page.locator('#joinRoomForm').getByRole('button', { name: 'Join by code' }).click();
+  await expect(page.locator('#sessionTitle')).toHaveText(name);
+}

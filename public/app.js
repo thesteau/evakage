@@ -1,3 +1,5 @@
+import { setupAccounts, accountSocketTicket } from './preferences.js';
+import { setupScanner, pairingInvitation } from './scanner.js';
 import { drawQr } from './qr.js';
 import { signMessage, verifyMessage, messageScope, historyFrames, messageKey } from './messages.js';
 import { parseFrame, CONTROL_KIND, FILE_CHUNK_KIND } from './frames.js';
@@ -18,6 +20,7 @@ import {
   forgetDevice,
   verifyDevice,
   blockDevice,
+  hideDevice,
   verifyAdvertisedIdentity,
   bytesToBase64,
   base64ToBytes
@@ -162,6 +165,7 @@ const state = {
   links: new Map(/** @type {[string, Link][]} */ ([])),          // deviceId -> pairwise transport + crypto
   conversations: new Map(/** @type {[string, Conversation][]} */ ([])),  // convId -> in-memory chat/file state
   rooms: new Map(/** @type {[string, Room][]} */ ([])),          // roomId -> server room record
+  pendingOpenRoomCode: '',
   joinedRoomIds: new Set(),  // rooms this browser is a member of
   activeConvId: /** @type {string | null} */ (null),
   activeSends: new Map(),    // transferId -> { cancelled, fileId, name }
@@ -193,12 +197,91 @@ const state = {
   relayInbound: new Set(),     // blob ids already being fetched, so a repeat notice is ignored
   sealKeyCache: new Map()      // advertised identity -> verified seal key bytes (or null)
 };
+// Account approval is ephemeral; never turn it into a stored code pairing.
+const accountPeerIds = new Set();
+let accountGeneration = 0;
+let signingOut = false;
+const accountEvents = typeof BroadcastChannel === 'undefined' ? null : new BroadcastChannel('evakage-account-session');
+accountEvents?.addEventListener('message', event => {
+  if (event.data === 'sign-out') clearSignedOutDevice(false);
+});
+window.addEventListener('storage', event => {
+  if (event.key === 'aria-drop-account-signout' && event.newValue) clearSignedOutDevice(false);
+});
+
+/** @param {boolean} [broadcast] */
+function clearSignedOutDevice(broadcast = true) {
+  if (signingOut) return;
+  signingOut = true;
+  if (broadcast) {
+    accountEvents?.postMessage('sign-out');
+    try { localStorage.setItem('aria-drop-account-signout', crypto.randomUUID()); } catch {}
+  }
+  accountGeneration++;
+  accountPeerIds.clear();
+  for (const [id, record] of knownDevices()) {
+    if (record.blocked || record.hidden) revokePairing(id);
+    else forgetDevice(id);
+  }
+  try { localStorage.setItem('aria-drop-discoverable', '0'); } catch {}
+  for (const send of state.activeSends.values()) send.cancelled = true;
+  for (const conv of state.conversations.values()) {
+    for (const file of conv.files.values()) file.relayAbort?.abort();
+    conv.messages.clear(); conv.files.clear();
+  }
+  for (const link of state.links.values()) {
+    clearTimeout(link.reconnectTimer ?? undefined);
+    clearTimeout(link.queueTimer ?? undefined);
+    try { link.dc?.close(); link.pc?.close(); } catch {}
+  }
+  state.conversations.clear(); state.links.clear(); state.joinedRoomIds.clear();
+  state.deviceRecords.clear(); state.consentedDevices.clear();
+  messageInput.value = ''; fileInput.value = ''; sharedFiles = [];
+  timeline.replaceChildren();
+  state.ws?.close();
+  // A fresh document discards pending crypto operations and transfer buffers too.
+  location.replace(location.pathname);
+}
+
+/** @param {{signedIn: boolean, peers: Device[]}} message */
+async function updateAccountPeers(message) {
+  if (!message.signedIn && !accountPeerIds.size) return;
+  const generation = ++accountGeneration;
+  const previous = new Set(accountPeerIds);
+  accountPeerIds.clear();
+  for (const peer of message.peers || []) {
+    if (!peer.identityKey || !peer.sealKey || !peer.sealKeySignature) continue;
+    const verified = await verifyAdvertisedIdentity({ deviceId: peer.id, identityKey: peer.identityKey,
+      sealKey: peer.sealKey, sealKeySignature: peer.sealKeySignature });
+    if (generation !== accountGeneration || signingOut) return;
+    if (!verified) continue;
+    accountPeerIds.add(peer.id);
+    recordDevice(peer, true);
+    state.peers.set(peer.id, peer);
+    ensureConversation(directConvId(peer.id), 'direct', peer.id);
+  }
+  for (const id of previous) {
+    if (accountPeerIds.has(id)) continue;
+    revokePairing(id);
+    state.peers.delete(id);
+    const record = state.deviceRecords.get(id);
+    if (record) recordDevice(record, false);
+  }
+  releaseIdleLinks();
+  for (const id of accountPeerIds) {
+    ensureConversationLinks(ensureConversation(directConvId(id), 'direct', id));
+  }
+  renderPeers(); renderSession();
+  const candidates = [...accountPeerIds].filter(id => deviceAllowed(id) && !deviceTrust(id)?.hidden);
+  // Keep an existing chat selected; with several devices the list is the picker.
+  if (candidates.length === 1 && !state.activeConvId) openSession(candidates[0]);
+}
 
 /** @param {string} id */
 function deviceAllowed(id) {
   if (id === state.self?.id) return true;
   const trust = deviceTrust(id);
-  return !trust?.blocked && !!trust?.pairedAt && (!state.verifiedOnly || !!trust?.verifiedAt);
+  return !signingOut && !trust?.blocked && (accountPeerIds.has(id) || !!trust?.pairedAt) && (!state.verifiedOnly || !!trust?.verifiedAt);
 }
 
 /** @param {string[]} ids */
@@ -361,6 +444,7 @@ function detectBrowser() {
 
 /** @param {object} payload */
 function wsSend(payload) {
+  if (signingOut) return;
   if (state.ws?.readyState === WebSocket.OPEN) state.ws.send(JSON.stringify(payload));
 }
 
@@ -385,6 +469,7 @@ function connectWebSocket() {
   });
 
   ws.addEventListener('message', async (event) => {
+    if (signingOut) return;
     let msg;
     try { msg = JSON.parse(event.data); } catch { return; }
 
@@ -396,6 +481,7 @@ function connectWebSocket() {
         registrationProof: await signTranscript(identity.privateKey, JSON.stringify(['aria-drop/register/1', msg.challenge, identity.deviceId])),
         platform: detectPlatform(),
         browser: detectBrowser(),
+        discoverable: localStorage.getItem('aria-drop-discoverable') === '1',
         // Published so others can seal a relayed file to this device. The server
         // passes these through untouched; receivers verify them, not the server.
         identityKey: identity.identityKey,
@@ -407,10 +493,15 @@ function connectWebSocket() {
 
     if (msg.type === 'registered') {
       state.self = msg.self;
+      accountUI.refresh();
       selfCode.textContent = msg.self.pairingCode || '----';
       selfCode.dataset.deviceName = msg.self.name;
       selfCode.dataset.deviceId = msg.self.id;
-      for (const id of msg.revoked || []) revokePairing(id);
+      for (const id of msg.revoked || []) {
+        revokePairing(id);
+        const conv = state.conversations.get(directConvId(id));
+        if (conv) conv.syncAfter = Date.now();
+      }
       for (const peer of msg.paired || []) {
         if (pairingRevoked(peer.id)) wsSend({ type: 'unpair-device', deviceId: peer.id });
         else await acceptPairing(peer);
@@ -424,6 +515,9 @@ function connectWebSocket() {
       await handlePairingLink();
       return;
     }
+
+    if (msg.type === 'account-reset') { clearSignedOutDevice(); return; }
+    if (msg.type === 'account-peers') { await updateAccountPeers(msg); return; }
 
     if (msg.type === 'devices-found') {
       settleRequest(`lookup:${msg.requestId}`, msg);
@@ -486,8 +580,9 @@ function connectWebSocket() {
       renderRooms();
       ensureConversationLinks(conv);
       renderSession();
-      if (state.pendingOpenRoomId === msg.room.id) {
+      if (state.pendingOpenRoomId === msg.room.id || state.pendingOpenRoomCode === msg.room.code) {
         state.pendingOpenRoomId = null;
+        state.pendingOpenRoomCode = '';
         openRoom(msg.room.id);
       }
       // Anything left for this device in the room while it was away, including
@@ -515,7 +610,10 @@ function connectWebSocket() {
     }
 
     if (msg.type === 'pairing-revoked') {
+      accountPeerIds.delete(msg.deviceId);
       revokePairing(msg.deviceId);
+      const conv = state.conversations.get(directConvId(msg.deviceId));
+      if (conv) conv.syncAfter = Date.now();
       releaseIdleLinks();
       renderKnownDevices(); renderPeers(); renderSession();
       return;
@@ -577,12 +675,21 @@ function connectWebSocket() {
   });
 
   ws.addEventListener('close', event => {
+    if (signingOut) return;
+    accountGeneration++;
+    accountPeerIds.clear();
+    releaseIdleLinks();
     serverState.textContent = event.code === 1008 ? 'Access denied — reload after access is restored' : 'Signaling disconnected';
     serverState.classList.remove('online');
     state.peers.clear();
     state.rooms.clear();
     renderPeers();
     renderRooms();
+    renderSession();
+    if (event.code === 4001) {
+      serverState.textContent = 'This device is active in another tab. Close that tab and reload here to reconnect.';
+      return;
+    }
     if (event.code === 1008) return;
     setTimeout(connectWebSocket, state.wsBackoff);
     state.wsBackoff = Math.min(state.wsBackoff * 1.8, 10000);
@@ -1275,6 +1382,7 @@ async function handleControl(link, conv, msg) {
   }
 
   if (msg.type === 'sync-state') {
+    if (conv.kind === 'direct' && accountPeerIds.has(link.peerId)) return;
     if (!conversationMembers(conv).includes(link.peerId)) return;
     let rejected = 0;
     // Bound what one peer can make this tab allocate in a single sync.
@@ -1552,12 +1660,14 @@ async function syncEverythingWith(link) {
 
 /** @param {Link} link @param {Conversation} conv */
 async function syncConversationWith(link, conv) {
+  if (conv.kind === 'direct' && accountPeerIds.has(link.peerId)) return;
   if (!deviceAllowed(link.peerId)) return;
-  const messages = [...conv.messages.values()].sort((a, b) => a.at - b.at);
+  const messages = [...conv.messages.values()].filter(message => !conv.syncAfter || message.at > conv.syncAfter).sort((a, b) => a.at - b.at);
   const channelLimit = link.pc?.sctp?.maxMessageSize || CAPS.controlBytes;
   const maxFrameBytes = Math.min(CAPS.controlBytes, channelLimit - 28);
   try {
-    for (const frame of historyFrames(convScope(conv), messages, fileManifest(conv), maxFrameBytes)) {
+    const files = fileManifest(conv).filter(file => !conv.syncAfter || (file.addedAt || 0) > conv.syncAfter);
+    for (const frame of historyFrames(convScope(conv), messages, files, maxFrameBytes)) {
       await sendControl(link, frame);
     }
   } catch { /* Link teardown stops sync; the next connection requests it again. */ }
@@ -1598,6 +1708,7 @@ async function waitForSecure(peerId, timeoutMs = 12000) {
 /** @param {Conversation} conv
  * @param {string} text */
 async function sendChat(conv, text) {
+  if (isSelfConversation(conv) && state.ws?.readyState !== WebSocket.OPEN) throw new Error('Reconnect to the server before saving self notes.');
   const self = state.self;
   if (!self) throw new Error('Waiting for device registration. Try again shortly.');
   assertRecipientsApproved([...onlineMembers(conv), ...await offlineTargetsFor(conv)]);
@@ -1777,6 +1888,7 @@ function unreachableError(conv) {
 /** @param {Conversation} conv
  * @param {FileList | File[]} fileList */
 async function sendFiles(conv, fileList) {
+  if (isSelfConversation(conv) && state.ws?.readyState !== WebSocket.OPEN) throw new Error('Reconnect to the server before saving files to yourself.');
   const self = state.self;
   if (!self) throw new Error('Waiting for device registration. Try again shortly.');
   const recipients = onlineMembers(conv);
@@ -2640,7 +2752,7 @@ function getPeer(peerId) {
 /** @param {string} convId
  * @param {"direct" | "room"} kind @param {string} ref */
 function openConversation(convId, kind, ref, focus = 'chat') {
-  if (kind === 'direct' && ref !== state.self?.id && !deviceTrust(ref)?.pairedAt) { openCodePairing(ref); return; }
+  if (kind === 'direct' && ref !== state.self?.id && !accountPeerIds.has(ref) && !deviceTrust(ref)?.pairedAt) { openCodePairing(ref); return; }
   const conv = ensureConversation(convId, kind, ref);
   const wasClosed = state.activeConvId !== convId;
   if (wasClosed) {
@@ -2760,7 +2872,7 @@ function renderPeers() {
 
 function renderPeersNow() {
   peerRows.textContent = '';
-  const peers = [...state.peers.values()].sort((a, b) => a.name.localeCompare(b.name));
+  const peers = [...state.peers.values()].filter(peer => !deviceTrust(peer.id)?.hidden).sort((a, b) => a.name.localeCompare(b.name));
   if (state.self) peers.unshift({ ...state.self, platform: detectPlatform(), browser: detectBrowser() });
   for (const peer of peers) {
     const isSelf = peer.id === state.self?.id;
@@ -2797,6 +2909,11 @@ function renderPeersNow() {
       nameWrap.append(badge);
     }
     nameTd.append(nameWrap);
+    if (accountPeerIds.has(peer.id)) {
+      const badge = document.createElement('span');
+      badge.className = 'trust-badge'; badge.textContent = 'Your account';
+      nameWrap.append(badge);
+    }
 
     const codeTd = document.createElement('td');
     codeTd.className = 'peer-code';
@@ -2809,7 +2926,7 @@ function renderPeersNow() {
 
     const statusTd = document.createElement('td');
     statusTd.dataset.label = 'Status';
-    statusTd.textContent = isSelf ? 'Your browser' : formatStatus(link?.status || 'idle');
+    statusTd.textContent = isSelf ? 'Your browser' : deviceTrust(peer.id)?.blocked ? 'Blocked' : formatStatus(link?.status || 'idle');
     if (link?.gaveUp || link?.incompatible) statusTd.classList.add('danger');
     if (link?.protocol) statusTd.title = `Evakage protocol v${link.protocol}`;
 
@@ -2844,7 +2961,7 @@ function renderPeersNow() {
 function offlineDevicesToList() {
   if (!relayEnabled()) return [];
   return [...state.deviceRecords.values()]
-    .filter(record => isRecentlySeen(record.id))
+    .filter(record => isRecentlySeen(record.id) && !deviceTrust(record.id)?.hidden)
     .filter(record => deviceTrust(record.id) || state.conversations.has(directConvId(record.id)))
     .sort((a, b) => (b.lastSeen || 0) - (a.lastSeen || 0));
 }
@@ -2877,11 +2994,22 @@ function rowActions(peerId, label, link) {
     const exit = document.createElement('button');
     exit.type = 'button';
     exit.className = 'ghost';
-    exit.textContent = 'Exit';
+    exit.title = 'Delete local conversation history and disconnect unused links. Stored pairing remains.';
+    exit.textContent = 'Delete';
     exit.dataset.focusKey = `peer:${peerId}:exit`;
-    exit.setAttribute('aria-label', `Exit conversation with ${label}`);
+    exit.setAttribute('aria-label', `Delete conversation with ${label}`);
     exit.addEventListener('click', () => forgetConversation(directConvId(peerId)));
     actions.append(exit);
+  }
+  if (peerId !== state.self?.id) {
+    const hide = document.createElement('button');
+    hide.type = 'button';
+    hide.className = 'ghost';
+    hide.textContent = 'Hide';
+    hide.setAttribute('aria-label', `Hide ${label}`);
+    hide.dataset.focusKey = `peer:${peerId}:hide`;
+    hide.addEventListener('click', () => { hideDevice(peerId, label, true); renderPeers(); });
+    actions.append(hide);
   }
   return actions;
 }
@@ -2892,7 +3020,7 @@ function renderOfflineRow(record) {
   tr.className = 'offline';
   tr.dataset.dropTarget = record.id;
   tr.dataset.dropKind = 'direct';
-  tr.title = `Offline. Anything you send waits on the server for up to ${relayWindowText()}.`;
+  tr.title = state.ws?.readyState === WebSocket.OPEN ? `Offline. Anything you send waits on the server for up to ${relayWindowText()}.` : 'Status unknown while signaling is disconnected. Reconnect before sending through the server.';
 
   const cell = (/** @type {string} */ label, /** @type {string} */ text) => {
     const td = document.createElement('td');
@@ -2916,7 +3044,7 @@ function renderOfflineRow(record) {
   // row never offers a device whose deadline has already passed.
   const windowMs = state.config.relay?.soloMaxMs ?? 3 * 60 * 60 * 1000;
   const left = expiryState((record.lastSeen || 0) + windowMs);
-  const statusTd = cell('Status', `Offline · seen ${formatAgo(record.lastSeen)}${left ? ` · ${left.text}` : ''}`);
+  const statusTd = cell('Status', `${state.ws?.readyState === WebSocket.OPEN ? 'Offline' : 'Status unknown'} · seen ${formatAgo(record.lastSeen)}${left ? ` · ${left.text}` : ''}`);
   statusTd.classList.add('muted');
   if (left?.warn) {
     statusTd.classList.add('expiring');
@@ -3029,9 +3157,9 @@ function renderRoomsNow() {
       const exit = document.createElement('button');
       exit.type = 'button';
       exit.className = 'ghost';
-      exit.textContent = 'Exit';
+      exit.textContent = 'Delete';
       exit.dataset.focusKey = `room:${room.id}:exit`;
-      exit.setAttribute('aria-label', `Exit room ${room.name}`);
+      exit.setAttribute('aria-label', `Delete local room ${room.name}`);
       exit.addEventListener('click', () => leaveRoom(room.id));
       actions.append(exit);
     }
@@ -3069,21 +3197,21 @@ function renderSessionNow() {
   if (!conv) return;
 
   sessionTitle.textContent = conversationTitle(conv);
-  sessionKind.textContent = conv.kind === 'room' ? 'ephemeral room' : 'ephemeral session';
+  sessionKind.textContent = isSelfConversation(conv) ? 'private notes for this browser profile' : conv.kind === 'room' ? 'ephemeral room' : 'ephemeral session';
   leaveRoomBtn.classList.toggle('hidden', conv.kind !== 'room');
 
   if (conv.kind === 'direct') {
     const peer = getPeer(conv.peerId);
     const offlineRecord = !state.peers.has(conv.peerId) ? state.deviceRecords.get(conv.peerId) : null;
-    sessionMeta.textContent = offlineRecord
-      ? `${peer.platform} · ${peer.browser} · offline, seen ${formatAgo(offlineRecord.lastSeen)}`
+    sessionMeta.textContent = isSelfConversation(conv) ? 'Encrypted notes for this identity. Other browsers have separate identities; pair them to send to them.' : offlineRecord
+      ? `${peer.platform} · ${peer.browser} · ${state.ws?.readyState === WebSocket.OPEN ? 'offline' : 'status unknown'}, seen ${formatAgo(offlineRecord.lastSeen)}`
       : `${peer.platform} · ${peer.browser} · ${peer.code}`;
   } else {
     const room = state.rooms.get(conv.roomId);
     const away = room?.away?.length || 0;
     sessionMeta.textContent = room
       ? `${room.code} · ${room.members.length + away} of ${room.maxMembers} devices${away ? ` · ${away} away` : ''}`
-      : 'This room is no longer advertised';
+      : 'This room is unavailable';
   }
 
   renderMembers(conv);
@@ -3092,7 +3220,7 @@ function renderSessionNow() {
   if (conv.kind === 'direct') {
     const link = state.links.get(conv.peerId);
     if (isSelfConversation(conv)) {
-      secureState.textContent = 'Encrypted';
+      secureState.textContent = state.ws?.readyState === WebSocket.OPEN ? 'Encrypted' : 'Encrypted · server disconnected';
       secureState.title = '24h reconnect window · 3-day limit. Recover with this browser’s device identity. Reconnecting refreshes the inactivity window; the 3-day limit stays fixed.';
       secureState.classList.add('ready');
       secureState.classList.remove('unverified');
@@ -3107,9 +3235,13 @@ function renderSessionNow() {
     } else if (typeof RTCPeerConnection === 'undefined' && relayEnabled()) {
       secureState.textContent = 'Via server · direct connections unavailable';
       secureState.classList.remove('ready');
+    } else if (!deviceAllowed(conv.peerId)) {
+      secureState.textContent = 'Pairing required';
+      secureState.title = 'Pair by code or QR, or sign into the same account on both devices.';
+      secureState.classList.remove('ready');
     } else if (!state.peers.has(conv.peerId)) {
       // Nothing to connect to; say what will actually happen to a message.
-      secureState.textContent = isRecentlySeen(conv.peerId)
+      secureState.textContent = state.ws?.readyState !== WebSocket.OPEN ? 'Status unknown · server disconnected' : isRecentlySeen(conv.peerId)
         ? 'Offline · messages wait on the server'
         : 'Offline';
       secureState.title = `Sealed to this device and left on the server for up to ${relayWindowText()}.`;
@@ -3531,6 +3663,7 @@ $('#joinRoomForm').addEventListener('submit', (/** @type {Event} */ event) => {
   const input = $('#roomCodeInput');
   const code = input.value.trim().toUpperCase();
   if (!code) return;
+  state.pendingOpenRoomCode = code;
   roomFeedback.textContent = 'Joining room…';
   wsSend({ type: 'join-room', code });
   input.value = '';
@@ -3543,7 +3676,10 @@ messageForm.addEventListener('submit', async (/** @type {Event} */ event) => {
   if (!conv || !text.trim()) return;
   messageInput.value = '';
   try { await sendChat(conv, text); }
-  catch (err) { toast(err.message || 'Could not send message'); }
+  catch (err) {
+    if (!messageInput.value) messageInput.value = text;
+    toast(err.message || 'Could not send message');
+  }
 });
 
 messageInput.addEventListener('keydown', (/** @type {KeyboardEvent} */ event) => {
@@ -3586,6 +3722,14 @@ selfCode.addEventListener('click', async () => {
 
 
 function setupSettings() {
+  const discoverable = document.querySelector('#discoverableInput');
+  if (discoverable instanceof HTMLInputElement) {
+    discoverable.checked = localStorage.getItem('aria-drop-discoverable') === '1';
+    discoverable.addEventListener('change', () => {
+      localStorage.setItem('aria-drop-discoverable', discoverable.checked ? '1' : '0');
+      wsSend({ type: 'set-discoverable', enabled: discoverable.checked });
+    });
+  }
   const verifiedOnlyInput = $('#verifiedOnlyInput');
   try { state.verifiedOnly = localStorage.getItem('aria-drop-verified-only') === '1'; } catch {}
   verifiedOnlyInput.checked = state.verifiedOnly;
@@ -3826,9 +3970,10 @@ function renderKnownDevices() {
     const forget = document.createElement('button');
     forget.type = 'button';
     forget.className = 'ghost';
-    forget.textContent = 'Forget';
+    forget.textContent = 'Delete';
+    forget.title = 'Delete the stored pairing and trust record. Pair again to exchange.';
     forget.disabled = !!record.blocked;
-    if (record.blocked) forget.title = 'Unblock this device before forgetting it.';
+    if (record.blocked) forget.title = 'Unblock this device before deleting its stored relationship.';
     forget.addEventListener('click', () => {
       forgetDevice(fingerprint);
       wsSend({ type: 'unpair-device', deviceId: fingerprint });
@@ -3838,7 +3983,7 @@ function renderKnownDevices() {
       renderKnownDevices();
       renderPeers();
       renderSession();
-      toast(`Forgot ${record.name || 'device'}. Pair by code again to exchange with it.`);
+      toast(`Deleted the pairing with ${record.name || 'device'}. Pair by code again to exchange with it.`);
     });
 
     const verify = document.createElement('button');
@@ -3857,7 +4002,15 @@ function renderKnownDevices() {
       releaseIdleLinks();
       renderKnownDevices(); renderPeers(); renderSession();
     });
-    row.append(main, verify, block, forget);
+    const hide = document.createElement('button');
+    hide.type = 'button';
+    hide.className = 'ghost';
+    hide.textContent = record.hidden ? 'Show' : 'Hide';
+    hide.addEventListener('click', () => {
+      hideDevice(fingerprint, record.name, !record.hidden);
+      renderKnownDevices(); renderPeers();
+    });
+    row.append(main, verify, hide, block, forget);
     knownDeviceList.append(row);
   }
 }
@@ -4326,3 +4479,38 @@ async function boot() {
 }
 
 boot();
+
+setupScanner(async (code, id) => {
+  const peer = await resolveCode(code, id);
+  if (peer) { toast(`Paired with ${peer.name}`); openSession(peer.id); }
+  else toast('Pairing code invalid, expired, or device unavailable.');
+});
+document.querySelector('#connectQrBtn')?.addEventListener('click', () => {
+  $('#connectDialog').close();
+  renderQrCodes();
+  openDialog($('#qrDialog'));
+});
+// focus-existing launches deliver URLs through the Launch Queue rather than
+// navigating the already-open app. Handle the invitation in that app instance.
+const launchWindow = /** @type {Window & {launchQueue?: {setConsumer: (callback: (launch: {targetURL?: string}) => void) => void}}} */ (window);
+launchWindow.launchQueue?.setConsumer(launch => {
+  if (!launch.targetURL) return;
+  try {
+    const invitation = pairingInvitation(launch.targetURL, location.origin);
+    location.hash = new URLSearchParams({ pair: invitation.code, device: invitation.device }).toString();
+  } catch { /* Ordinary app launches have no pairing invitation. */ }
+});
+
+const accountUI = setupAccounts({
+  async onSession() {
+    if (!state.self || state.ws?.readyState !== WebSocket.OPEN || signingOut) return;
+    const { token } = await accountSocketTicket(state.self.id);
+    wsSend({ type: 'account-connect', token });
+  },
+  onSignOut: clearSignedOutDevice
+});
+
+document.querySelector('#codeQrBtn')?.addEventListener('click', () => {
+  renderQrCodes();
+  openDialog($('#qrDialog'));
+});

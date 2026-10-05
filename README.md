@@ -1,13 +1,13 @@
 # Evakage
 
-A Docker-first, browser-first experiment for ephemeral local peer communication. It combines the parts that feel good in LAN drop tools—automatic peer discovery and click-a-device actions—with encrypted text chat, links, and browser-to-browser file transfer, one-to-one or in a small room.
+A Docker-first, browser-first experiment for ephemeral local peer communication. It combines the parts that feel good in LAN drop tools—opt-in peer discovery and click-a-device actions—with encrypted text chat, links, and browser-to-browser file transfer, one-to-one or in a small room.
 
 The name combines **Eva-**, evoking evanescence — fading or disappearing — with
 **kage (影)**, Japanese for shadow.
 
 ## What it does
 
-- Automatically advertises connected browser peers in a table.
+- Keeps devices private by default; advertising in Settings is opt-in. Paired devices and fellow room members can still see one another.
 - Shows device name, short code, platform/browser, connection state, RTT, and WebRTC bytes sent/received.
 - Opens a direct peer session from the table with **Chat**, **Text**, or **File** actions.
 - Provides **connect by code** as a fallback if presence UI is stale or awkward.
@@ -21,7 +21,7 @@ The name combines **Eva-**, evoking evanescence — fading or disappearing — w
 - Allows a returned peer to request an in-memory file again from whichever peer still holds the bytes.
 - Falls back to a **server relay** for messages and files when a direct connection cannot be made — sealed so the server cannot read them, deleted once delivered, and otherwise living only as long as the conversation they belong to.
 - Asks before receiving files from a device you have not met (configurable).
-- Contains no server-side database.
+- Works without accounts; optional SQLite accounts connect your online devices privately and sync selected preferences.
 - Verifies every device's long-lived identity key and shows a stable safety code.
 - Works as an ordinary browser page too — installing is optional.
 
@@ -29,7 +29,7 @@ The name combines **Eva-**, evoking evanescence — fading or disappearing — w
 
 The signaling server knows who is currently online, tracks room membership, and routes WebRTC negotiation messages. It receives a message or a file only when that item goes through the relay (below), and then only as ciphertext sealed to the recipient.
 
-Conversation/file state is held in browser memory. A stable device ID and display name are the only values kept in `localStorage`.
+Conversation/file state is held in browser memory. Device keys live in IndexedDB; trust records and preferences live in localStorage. Optional account storage contains password hashes and selected preferences, never device keys or content.
 
 If browser A disappears and browser B stays open, B retains the session. When A returns with the same device ID, B can reconnect and send chat/file metadata back over the peer channel. Completed file blobs held by B remain requestable.
 
@@ -37,7 +37,7 @@ If **all participating browser instances lose their in-memory state** (closed/re
 
 ## Message yourself
 
-Open the first **Advertised devices** entry, marked **This is you**, even with no other devices online, to send notes or upload files to your own device identity. Items are encrypted and signed in the browser before upload. Reading your items keeps the encrypted server copy available after a reload. Reconnect within 24 hours of disconnecting; each item has a hard 3-day limit from creation. Use the same browser profile: clearing its identity or switching browsers prevents decryption. Server restarts still erase buffered items early. These lifetimes apply only to self-chat.
+Open the first **Devices** entry, marked **This is you**, even with no other devices online, to send notes or upload files to your own device identity. Items are encrypted and signed in the browser before upload. Reading your items keeps the encrypted server copy available after a reload. Reconnect within 24 hours of disconnecting; each item has a hard 3-day limit from creation. Use the same browser profile: clearing its identity or switching browsers prevents decryption. Server restarts still erase buffered items early. These lifetimes apply only to self-chat.
 
 ## Server relay
 
@@ -104,7 +104,7 @@ host. See `deploy/README.md` for an optional host cron.
 
 ## Ephemeral rooms
 
-Rooms extend the same model to a small group. Create one from the rooms table, then share its `ABCD-EFGH` code with the other devices — or let them join from the table, since rooms are advertised to everyone connected to the server.
+Rooms extend the same model to a small group. Create one from the rooms table, then share its `ABCD-EFGH` code with the other devices. Only joined members receive room details, codes, names, membership and transport state. Outsiders see an empty room list. Joining requires the invitation code; a room ID alone does not authorize a new member. All unsuccessful invitation attempts return the same generic response.
 
 - **Up to six members, transport is a full mesh.** Every member holds one DataChannel per other member, each with its own ECDH/AES-GCM key and its own safety code (hover a member chip to read it). Nothing is relayed through other peers; a member a direct link cannot reach gets its copy through the server relay instead, sealed to it.
 - **Past six, a room runs through the server.** A mesh costs O(n²) connections and a sender uploads each file once per recipient, so a bigger room opens no direct links at all: every message and file goes through the relay, sealed separately to each member, and a file is uploaded once however many members there are. The room says `Large room · sealed to each member via server`. There are no per-link safety codes in this mode — authenticity rests on each item's signature. The cap is `ROOM_MAX_MEMBERS` (default 20, at most 64).
@@ -171,6 +171,7 @@ Large files remain the weak spot on phones. Relayed files are verified and then 
 | `DEVICE_ALLOWLIST` | *(unset)* | Comma-separated full device fingerprints permitted to register. Each must prove possession of its signing key using a fresh socket challenge. Remove a fingerprint and restart to revoke its server access. |
 | `ALLOWED_ORIGINS` | *(same host)* | Comma-separated exact origins permitted to open the WebSocket. Unset means "must match the request's own host", which is what you want behind a normal reverse proxy. |
 | `TRUST_PROXY` | `0` | Set to `1` only when a proxy you control sits in front. It makes the server believe `X-Forwarded-Host` (for origin checks) and `X-Forwarded-For` (for per-address limits). Leave it off if clients can reach the port directly, or they can spoof both. |
+| `ACCOUNTS_DB` | `/home/node/evakage-accounts/accounts.sqlite` in Docker; unset for Node | Optional SQLite account database path. Use a separate persistent account volume; no text or files are stored here. |
 | `BLOB_DIR` | `/tmp/aria-drop-blobs` in the image | Where relayed messages and files wait, one subdirectory per conversation. Keep it inside the container; do not mount a volume here. |
 | `BLOB_IDLE_GRACE_MS` | `900000` (15 min) | How long an item outlives the moment every device party to it disconnected. |
 | `BLOB_SOLO_MAX_MS` | `10800000` (3h) | How long a one-to-one conversation may sit with only one device present before its items expire. Rooms are exempt. Also how long an offline device stays listed as reachable, and how long an away member keeps its room seat. |
@@ -201,7 +202,7 @@ That closes the gap where the signaling server was trusted for identity. If a se
 
 Because the ID is the fingerprint, the **safety code is stable**: it is derived from both devices' long-lived fingerprints, so it stays the same across reloads, reconnects, and restarts. Compare it out of band once. Devices are also remembered on first use — a peer shows `new` the first time you connect and `known` afterwards; a re-keyed browser appears as a new device rather than silently inheriting the old one's trust.
 
-The key, the display name, and the fingerprints of devices you have seen are the only things persisted. No message or file content is ever written to storage.
+Device keys, local trust records and preferences are persisted; optional accounts also store password hashes and selected preferences. No message or file content is written to the account database. Direct content stays in browser memory; relayed ciphertext is buffered temporarily under the relay expiry policy.
 
 ## Device verification and access
 
@@ -288,11 +289,11 @@ After the first successful publish, set package visibility/permissions in GitHub
   <kbd>Ctrl/Cmd+V</kbd> anywhere on the page sends clipboard files or text, and
   asks where to send if no session is open.
 - **Send text or a link** — open a session and type, or paste and press Enter.
-- **Rooms** — create one and share its `ABCD-EFGH` code, or join from the table.
+- **Rooms** — create one and share its `ABCD-EFGH` code; join with **Join by code**.
   Dropping a file on a joined room sends it to every member.
 - **Theme** — the header toggle cycles system → light → dark and remembers the
   choice.
-- **Known devices** — review the devices this browser remembers, and forget any
+- **Known devices** — review the devices this browser remembers, and delete any
   of them, from **Known devices** in the header.
 - **Incoming files** — **Settings** in the header chooses what happens when a
   device sends you a file: *ask for new devices* (the default), *always ask*, or
@@ -350,3 +351,89 @@ MIT — see `LICENSE`.
 ## Threat model in one paragraph
 
 The server is designed not to be able to read chat or files. Anything that reaches it through the relay arrives as ciphertext sealed to the recipient and signed by the sender; access expires with the conversation it belongs to — and in no case later than 3 days — with disk cleanup following on the sweep. WebRTC provides DTLS-encrypted DataChannels and the app additionally encrypts payload frames using an ephemeral ECDH-derived AES-GCM key. The displayed safety code can be compared out-of-band if you want to detect active interception. This MVP has **not** undergone a security audit; see `SECURITY.md` and `CODEX_HANDOFF.md` before exposing it beyond a trusted environment.
+
+## Networking privacy and optional accounts
+
+Each browser profile has one persistent key fingerprint. Concurrent tabs use the
+same identity; the newest tab owns the connection and the replaced tab stops
+reconnecting. Different browsers and devices have different identities, even
+when signed into the same account. Self-messaging stores encrypted notes for this
+browser identity; pair another browser or sign into the same account to message it. Offline code-paired peers receive
+sealed relay items when they return, within the relay expiry window. A disconnected
+signaling server means peer status is unknown, not proof that another device is offline.
+
+Advertising controls public discovery. Devices whose full fingerprints are already
+known can still be looked up directly, including after server restarts. Payload
+exchange continues to require locally approved pairing.
+
+**Hide** removes a device from the list and **Show** restores it in Known devices.
+**Block** prevents exchanges. **Delete** on a conversation removes its local memory
+and disconnects unused links; it keeps the pairing and cannot recall delivered or
+server-buffered content. **Delete** in Known devices removes the stored relationship.
+**Leave room** gives up membership without deleting the room for other members.
+**Delete** on an unjoined room removes its remaining local conversation history.
+
+**Scan QR** uses the camera inside the app, including the installed PWA, and
+stops the camera when scanning completes, is cancelled, or the page is hidden.
+HTTPS or localhost and camera permission are required. **My pairing QR** beside
+Pair by code shows your current invitation. Scanned invitations must belong to
+this server; arbitrary URLs are never opened. QR decoding is bundled locally.
+
+External QR scans use ordinary in-scope HTTPS links. Opening the installed PWA
+is controlled by browser/OS support and the user's link preferences; installation
+alone cannot guarantee it. The app handles Launch Queue invitations when supported.
+See [Chrome navigation management](https://developer.chrome.com/docs/capabilities/pwa-navigation-management).
+Scanning inside the installed app is the dependable way to remain in it.
+
+Docker enables accounts by default with a SQLite database at
+`/home/node/evakage-accounts/accounts.sqlite`. Both Compose configurations mount
+an `account-data` volume so accounts and preferences survive container replacement.
+Signing up remains optional; the app works without an account.
+
+When running Node locally, set `ACCOUNTS_DB=./data/accounts.sqlite` to enable
+accounts. Without that setting, local Node accounts are disabled. Set
+`ACCOUNTS_DB` to an empty value to disable accounts in Docker or Compose.
+The database stores only usernames, salted password hashes and selected preferences;
+text, files, private device keys and login sessions are never stored in it. The
+database schema is created automatically on first startup.
+
+SQLite uses Node's built-in `node:sqlite` module (Node 22.13.0 or newer), with
+prepared statements, a unique username constraint and atomic revision checks
+for preference updates. See [Node SQLite documentation](https://nodejs.org/api/sqlite.html).
+WAL mode and full synchronous commits protect account writes. Keep the database
+and its `-wal`/`-shm` files together in the account volume. Use SQLite's backup API
+for a live backup, or stop the server before copying the database file.
+Passwords use salted scrypt hashes, sessions use HttpOnly/SameSite cookies,
+and account changes require same-origin requests. Sessions end on server
+restart; accounts and preferences survive. There is no password recovery flow.
+
+For Docker, the default configuration already includes the account volume:
+
+```bash
+docker compose up -d --build
+```
+
+For a published image, run `docker compose up -d` from `deploy/`.
+The account volume is separate from ephemeral relay storage; never mount BLOB_DIR.
+Behind an HTTPS reverse proxy set `TRUST_PROXY=1` for Secure account cookies.
+
+Use **Account (optional)** to create an account or sign in. **Save preferences**
+uploads theme, incoming-file policy, verified-only mode and relay preference.
+On another browser, sign in and choose **Load preferences and reload** to apply
+that configuration (reloading clears local in-memory conversations). Concurrent
+updates require loading the newer version before saving. Advertising consent,
+pairings, verification/block/hide records, private device keys, messages and files
+remain local. The app stays fully usable without an account.
+
+Online browsers signed into the same account discover each other privately,
+connect automatically, and open a chat when there is one other visible device.
+With several devices, choose one from the device list. Public advertising remains
+off unless enabled separately. Blocking and verified-only restrictions still apply.
+Account connections require both devices to be online; they do not queue messages
+for offline delivery.
+
+Signing out clears all chats, received files and drafts in that browser, revokes
+its connections and room memberships, and reloads the app. Other devices keep
+their local history. The signed-out browser needs a code/QR pairing or a new login
+to reconnect. Account chats do not restore history from another device after
+signing back in. Previously downloaded files outside the app are unaffected.

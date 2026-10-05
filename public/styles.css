@@ -575,3 +575,5 @@ tbody tr.offline td.expiring {
 
 .qr-code { display: block; width: min(100%, 240px); height: auto; image-rendering: pixelated; }
 #qrServerUrl { overflow-wrap: anywhere; }
+
+.qr-preview { width: 100%; max-height: 50vh; }

@@ -5,7 +5,7 @@ import { createReadStream } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { startServer } from '../tests/helpers.js';
 
-for (const action of ['Block', 'Forget']) {
+for (const action of ['Block', 'Delete']) {
   test(`${action.toLowerCase()} during a relay download prevents accepting or saving it`, async ({ devices }) => {
     const { alice, bob } = devices;
     await openPeer(alice, 'Bob'); await openPeer(bob, 'Alice');
@@ -25,7 +25,7 @@ for (const action of ['Block', 'Forget']) {
       await bob.locator('#closeSession').click();
       await bob.getByRole('button', { name: 'Known devices', exact: true }).click();
       const deviceRow = bob.locator('#knownDeviceList .device-row').filter({ hasText: deviceNames.get('Alice') });
-      await deviceRow.getByRole('button', { name: action === 'Forget' ? action : `${action} ${deviceNames.get('Alice')}`, exact: true }).click();
+      await deviceRow.getByRole('button', { name: action === 'Delete' ? action : `${action} ${deviceNames.get('Alice')}`, exact: true }).click();
       await bob.locator('#devicesDialog').getByRole('button', { name: 'Done', exact: true }).click();
       release();
       await expect(bob.locator('#toastRegion')).toContainText('Sender authorization was revoked');

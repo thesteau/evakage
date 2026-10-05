@@ -17,7 +17,7 @@ async function connect(t, wsBase, id) {
   const challenge = (await waitFor(ws, m => m.type === 'registration-challenge')).challenge;
   const registrationProof = await signTranscript(id.privateKey, JSON.stringify(['aria-drop/register/1', challenge, id.deviceId]));
   const reply = waitFor(ws, m => m.type === 'registered');
-  ws.send(JSON.stringify({ type: 'register', deviceId: id.deviceId, identityKey: id.identityKey, registrationProof }));
+  ws.send(JSON.stringify({ type: 'register', discoverable: true, deviceId: id.deviceId, identityKey: id.identityKey, registrationProof }));
   return { ws, registered: await reply };
 }
 /** @param {WebSocket} ws @param {string} code @param {string} [targetId] */

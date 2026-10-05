@@ -29,3 +29,21 @@ test('self-chat recovers encrypted messages and uploads after reload', async ({ 
   const download = await downloading;
   expect(await fs.readFile(await download.path())).toEqual(Buffer.from('private self upload'));
 });
+
+test('self notes require a server connection and retain the draft for retry', async ({ devices }) => {
+  const { alice } = devices;
+  await alice.getByRole('button', { name: 'Open conversation with yourself', exact: true }).click();
+  await alice.context().setOffline(true);
+  devices.disconnect('Alice');
+  await expect(alice.locator('#secureState')).toContainText('server disconnected');
+  await alice.locator('#messageInput').fill('Offline draft to myself');
+  await alice.locator('#messageForm').getByRole('button', { name: 'Send', exact: true }).click();
+  await expect(alice.locator('#toastRegion')).toContainText('Reconnect to the server');
+  await expect(alice.locator('#timeline')).not.toContainText('Offline draft to myself');
+  await expect(alice.locator('#messageInput')).toHaveValue('Offline draft to myself');
+  await alice.context().setOffline(false);
+  await expect(alice.locator('#serverState')).toHaveText('Signaling connected');
+  await alice.locator('#messageForm').getByRole('button', { name: 'Send', exact: true }).click();
+  await expect(alice.locator('#timeline')).toContainText('Offline draft to myself');
+  await expect(alice.locator('#timeline')).toContainText('via server');
+});

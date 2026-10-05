@@ -24,12 +24,22 @@ The app is named Evakage; the existing repository and published image still use
 `thesteau/aria-drop`. `ARIA_DROP_IMAGE` remains a compatible fallback for existing
 configuration; `EVAKAGE_IMAGE` takes precedence.
 
+## Accounts and preferences
+
+SQLite accounts are enabled by default. The `account-data` volume stores the
+database at `/home/node/evakage-accounts/accounts.sqlite`, preserving accounts and
+preferences across container replacement. Signing up is optional. Text, files
+and device private keys never enter this database.
+
+Set `ACCOUNTS_DB=` in `.env` to disable accounts. Behind an HTTPS reverse proxy,
+set `TRUST_PROXY=1` so account session cookies are Secure.
+
 ## Relayed messages and files
 
 Messages and files that cannot go directly between devices are held by the
 server, sealed so it cannot read them. They are stored **inside the container**
 (`/tmp/aria-drop-blobs`), one directory per conversation, and there is
-intentionally no volume, so they are never exposed on the host and cannot
+intentionally no relay volume, so they are never exposed on the host and cannot
 outlive the container.
 
 A relayed item is removed at the first of:

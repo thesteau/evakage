@@ -65,6 +65,41 @@ const upload = (base, blobId, token, body) =>
 
 const settle = (ms = 200) => new Promise(r => setTimeout(r, ms));
 
+test('device revocation removes direct buffers and room download capabilities without deleting other recipients', async t => {
+  const { app } = await startServer(t);
+  const store = app.blobStore;
+  const item = { senderId: 'sender', bytes: 128, chunkSize: 100, totalChunks: 1,
+    envelopes: { recipient: BOX, other: BOX } };
+  const direct = await store.offer({ ...item, conv: 'direct' });
+  const room = await store.offer({ ...item, conv: 'room:private' });
+  assert.ok(direct.blob); assert.ok(room.blob);
+  for (const blob of [direct.blob, room.blob]) {
+    const body = new PassThrough(); body.end(Buffer.alloc(128));
+    assert.equal((await store.receive(blob.id, blob.uploadToken, body)).status, 204);
+  }
+  const directClaim = await store.claim(direct.blob.id, 'recipient');
+  const roomClaim = await store.claim(room.blob.id, 'recipient');
+  assert.ok(directClaim.downloadToken); assert.ok(roomClaim.downloadToken);
+  await store.revokeDevice('recipient');
+  assert.equal(store.openForDownload(direct.blob.id, directClaim.downloadToken).status, 404);
+  assert.equal(store.openForDownload(room.blob.id, roomClaim.downloadToken).status, 403);
+  assert.ok((await store.claim(room.blob.id, 'recipient')).error);
+  assert.deepEqual(await store.pendingFor('recipient'), []);
+  assert.ok((await store.claim(room.blob.id, 'other')).downloadToken);
+});
+
+test('a relay offer whose authorization is revoked during disk work is never published', async t => {
+  const { app, dir } = await startServer(t);
+  let published = false;
+  app.blobStore.onAvailable = () => { published = true; };
+  const result = await app.blobStore.offer({ senderId: 'sender', conv: 'direct', kind: 'message',
+    bytes: 0, chunkSize: CHUNK, totalChunks: 0, envelopes: { recipient: BOX }, authorized: () => false });
+  assert.ok(result.error);
+  assert.equal(published, false);
+  assert.equal(app.blobStore.blobs.size, 0);
+  assert.deepEqual((await onDisk(dir)).files, []);
+});
+
 test('relay access expires at the deadline before the physical sweep', async t => {
   let now = 1000;
   const { app, base, wsBase, dir } = await startServer(t, { blobs: { now: () => now, maxAgeMs: 1000 } });
@@ -241,7 +276,7 @@ test('a half-open direct session expires on its own clock; a room with one membe
   a.send(JSON.stringify({ type: 'create-room', name: 'Room' }));
   const room = (await created).room;
   const bJoined = waitFor(b, m => m.type === 'room-joined');
-  b.send(JSON.stringify({ type: 'join-room', roomId: room.id }));
+  b.send(JSON.stringify({ type: 'join-room', code: room.code }));
   await bJoined;
 
   const direct = await offer(a, 'device_solo_bbbb01', 0, { kind: 'message' });
@@ -311,7 +346,7 @@ test('the same two devices share one directory whichever sends; others get their
   a.send(JSON.stringify({ type: 'create-room', name: 'R' }));
   const room = (await created).room;
   const bJoined = waitFor(b, m => m.type === 'room-joined');
-  b.send(JSON.stringify({ type: 'join-room', roomId: room.id }));
+  b.send(JSON.stringify({ type: 'join-room', code: room.code }));
   await bJoined;
   const inRoom = await offer(a, 'device_pair_bbbb01', 0, { kind: 'message', conv: `room:${room.id}` });
   assert.notEqual(dirOf(inRoom.reply.blobId), dirOf(ab.reply.blobId));

@@ -1,4 +1,5 @@
 import http from 'node:http';
+import { createAccounts } from './accounts.js';
 import path from 'node:path';
 import fs from 'node:fs';
 import crypto from 'node:crypto';
@@ -56,7 +57,13 @@ const BLOB_CHUNK_SIZE = 256 * 1024;
  * @property {string | null} sealKey
  * @property {string | null} sealKeySignature
  * @property {string} ip
+ * @property {string} presenceSnapshot
+ * @property {string} roomsSnapshot
+ * @property {Set<string>} watchedDevices
+ * @property {boolean} discoverable
  * @property {boolean} identityVerified
+ * @property {string | null} accountSession
+ * @property {string} accountSnapshot
  */
 
 /** @typedef {object} Room
@@ -136,7 +143,7 @@ const SECURITY_HEADERS = {
   'x-content-type-options': 'nosniff',
   'referrer-policy': 'no-referrer',
   'x-robots-tag': 'noindex, nofollow',
-  'permissions-policy': 'camera=(), microphone=(), geolocation=()',
+  'permissions-policy': 'camera=(self), microphone=(), geolocation=()',
   'cross-origin-opener-policy': 'same-origin',
   'cross-origin-resource-policy': 'same-origin'
 };
@@ -517,16 +524,19 @@ const VALIDATOR_TABLE = {
     optionalString(m.name, 512) &&
     optionalString(m.platform, 512) &&
     optionalString(m.browser, 512) &&
+    (m.discoverable == null || typeof m.discoverable === 'boolean') &&
     // Relayed verbatim for other clients to verify; the server cannot check
     // these itself and is not trusted to.
     optionalString(m.registrationProof, 128) &&
     optionalString(m.identityKey, 256) &&
     optionalString(m.sealKey, 256) &&
     optionalString(m.sealKeySignature, 256),
+  'set-discoverable': m => typeof m.enabled === 'boolean',
   'presence-request': () => true,
   'rooms-request': () => true,
   'resolve-code': m => optionalString(m.requestId, 128) && optionalString(m.code, 32),
   'unpair-device': m => matches(DEVICE_ID_PATTERN, m.deviceId),
+  'account-connect': m => typeof m.token === 'string' && /^[A-Za-z0-9_-]{43}$/.test(m.token),
   'pair-device': m => optionalString(m.requestId, 128) && optionalString(m.code, 32) && optionalString(m.targetId, 128),
   'create-room': m => optionalString(m.name, 512),
   'join-room': m =>
@@ -594,6 +604,7 @@ export function createEvakageServer({
   allowedOrigins = splitList(process.env.ALLOWED_ORIGINS),
   allowedDevices = splitList(process.env.DEVICE_ALLOWLIST),
   pairingNow = Date.now,
+  accountsDb = process.env.ACCOUNTS_DB || '',
   limits: limitOverrides = {},
   blobs: blobOptions = {},
   // How long a device that has disconnected can still be sent to, and how long a
@@ -673,6 +684,11 @@ export function createEvakageServer({
   const pairingCodes = createPairingCodes(pairingNow);
   /** @type {Map<string, Set<string>>} */
   const pairedDevices = new Map();
+  /** Account relationships require both devices to remain signed in and online.
+   * @type {Map<string, Set<string>>} */
+  const accountDevices = new Map();
+  /** @type {Map<string, Set<string>>} */
+  const sessionDevices = new Map();
   /** @type {Map<string, Set<string>>} */
   const pairingRevocations = new Map();
   const sockets = new Set();
@@ -681,6 +697,7 @@ export function createEvakageServer({
   const connectionsByIp = new Map();
   const registrationBuckets = new Map();
 
+  const accounts = createAccounts({ file: accountsDb, secure: trustProxy, onRevoke: revokeAccountSession });
   const server = http.createServer((req, res) => {
     try {
       const reqUrl = new URL(req.url || '/', `http://${req.headers.host || 'localhost'}`);
@@ -693,7 +710,6 @@ export function createEvakageServer({
         res.end(JSON.stringify({
           ok: true,
           peers: clients.size,
-          rooms: rooms.size,
           bufferedTransfers: buffered.files,
           bufferedMessages: buffered.messages,
           bufferedBytes: buffered.bytes
@@ -752,6 +768,11 @@ export function createEvakageServer({
         }
       }
 
+      if (reqUrl.pathname.startsWith('/account/')) {
+        accounts.handle(req, res, reqUrl).catch(() => { if (!res.headersSent) res.writeHead(503, { 'cache-control': 'no-store' }); res.end(); });
+        return;
+      }
+
       if (reqUrl.pathname === '/config.json') {
         let iceServers = [];
         try {
@@ -761,6 +782,7 @@ export function createEvakageServer({
         const maxFileBytes = Math.max(1, Number(process.env.MAX_FILE_BYTES || DEFAULT_MAX_FILE_BYTES));
         res.writeHead(200, { ...SECURITY_HEADERS, 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' });
         res.end(JSON.stringify({
+          accountsEnabled: !!accountsDb,
           iceServers,
           maxFileBytes,
           maxRoomMembers: roomCap,
@@ -863,9 +885,85 @@ export function createEvakageServer({
     }
   });
 
+  /** @param {string} viewer */
+  function visiblePeers(viewer) {
+    const known = new Set([viewer, ...(pairedDevices.get(viewer) || []), ...(clients.get(viewer)?.watchedDevices || [])]);
+    for (const peer of accountPeers(viewer)) known.add(peer.id);
+    for (const room of rooms.values()) {
+      if (room.members.has(viewer) || room.away.has(viewer)) {
+        for (const id of room.members) known.add(id);
+      }
+    }
+    return [...clients.values()].filter(client => client.discoverable || known.has(client.deviceId)).map(peerPublic);
+  }
   function broadcastPresence() {
-    const peers = [...clients.values()].map(peerPublic);
-    for (const client of clients.values()) json(client.ws, { type: 'presence', peers });
+    for (const client of clients.values()) {
+      const account = JSON.stringify({ type: 'account-peers', signedIn: !!accountName(client), peers: accountPeers(client.deviceId) });
+      for (const peer of accountPeers(client.deviceId)) {
+        if (!accountDevices.has(client.deviceId)) accountDevices.set(client.deviceId, new Set());
+        accountDevices.get(client.deviceId)?.add(peer.id);
+      }
+      if (account !== client.accountSnapshot) {
+        client.accountSnapshot = account;
+        client.ws.send(account);
+      }
+      const peers = visiblePeers(client.deviceId);
+      const snapshot = JSON.stringify(peers);
+      if (snapshot === client.presenceSnapshot) continue;
+      client.presenceSnapshot = snapshot;
+      json(client.ws, { type: 'presence', peers });
+    }
+  }
+
+  /** @param {Client | undefined} client */
+  function accountName(client) {
+    return client?.accountSession ? accounts.sessionName(client.accountSession) : null;
+  }
+  /** @param {string} viewer */
+  function accountPeers(viewer) {
+    const name = accountName(clients.get(viewer));
+    return name ? [...clients.values()].filter(peer => peer.deviceId !== viewer && peer.identityVerified && accountName(peer) === name).map(peerPublic) : [];
+  }
+  /** Sign-out revokes relationships, room seats, and pending relay copies.
+   * @param {string} session */
+  function revokeAccountSession(session) {
+    const devices = sessionDevices.get(session) || new Set();
+    sessionDevices.delete(session);
+    for (const id of devices) {
+      const client = clients.get(id);
+      if (client?.accountSession && client.accountSession !== session) continue;
+      const peers = new Set([...(pairedDevices.get(id) || []), ...(accountDevices.get(id) || [])]);
+      if (client) {
+        client.accountSession = null;
+        client.discoverable = false;
+        client.watchedDevices.clear();
+      }
+      pairedDevices.delete(id);
+      for (const peer of clients.values()) peer.watchedDevices.delete(id);
+      for (const peerId of peers) {
+        if (peerId === id) continue;
+        pairedDevices.get(peerId)?.delete(id);
+        clients.get(peerId)?.watchedDevices.delete(id);
+        for (const [a, b] of [[id, peerId], [peerId, id]]) {
+          if (!pairingRevocations.has(a)) pairingRevocations.set(a, new Set());
+          pairingRevocations.get(a)?.add(b);
+        }
+        const peer = clients.get(peerId);
+        if (peer) json(peer.ws, { type: 'pairing-revoked', deviceId: id });
+      }
+      for (const room of [...rooms.values()]) dropSeat(room, id);
+      blobStore.revokeDevice(id).catch(() => {});
+      if (client) json(client.ws, { type: 'account-reset' });
+    }
+    broadcastPresence();
+    broadcastRooms();
+  }
+
+  /** @param {string} a @param {string} b */
+  function relationshipRevoked(a, b) {
+    if (accountPeers(a).some(peer => peer.id === b)) return false;
+    if (accountDevices.get(a)?.has(b) && !pairedDevices.get(a)?.has(b)) return true;
+    return pairingRevocations.get(a)?.has(b) || pairingRevocations.get(b)?.has(a);
   }
 
   /* ---------- recently seen devices ---------- */
@@ -938,16 +1036,22 @@ export function createEvakageServer({
     return room.members.size + room.away.size;
   }
 
-  // A room nobody is connected to is dormant: kept so its away members can
-  // come back to their seats, but not advertised. Otherwise every room whose
-  // members all closed their tabs would sit in everyone's list for a day.
-  function listedRooms() {
-    return [...rooms.values()].filter(room => room.members.size > 0).map(roomPublic);
+  // Room records, including held away seats, are visible only to their members.
+  /** @param {string} viewer */
+  function listedRooms(viewer) {
+    return [...rooms.values()].filter(room => room.members.has(viewer) || room.away.has(viewer)).map(roomPublic);
   }
 
   function broadcastRooms() {
-    const list = listedRooms();
-    for (const client of clients.values()) json(client.ws, { type: 'rooms', rooms: list });
+    for (const client of clients.values()) {
+      const list = listedRooms(client.deviceId);
+      const snapshot = JSON.stringify(list);
+      // Do not announce unrelated room changes, even as repeated empty lists.
+      if (snapshot === client.roomsSnapshot) continue;
+      client.roomsSnapshot = snapshot;
+      json(client.ws, { type: 'rooms', rooms: list });
+    }
+    broadcastPresence();
   }
 
   // A disconnect is not a leave. A phone that locks or drops off Wi-Fi keeps its
@@ -1024,7 +1128,7 @@ export function createEvakageServer({
     if (conv === 'direct') {
       // Connected now, or seen within the window: an item addressed to it can
       // still be collected before it ages out.
-      return recipients.length === 1 && isRecent(recipients[0]);
+      return recipients.length === 1 && isRecent(recipients[0]) && !relationshipRevoked(senderId, recipients[0]);
     }
     const room = rooms.get(conv.slice(5));
     if (!room || !room.members.has(senderId)) return false;
@@ -1169,7 +1273,13 @@ export function createEvakageServer({
           sealKey: typeof msg.sealKey === 'string' ? msg.sealKey : null,
           sealKeySignature: typeof msg.sealKeySignature === 'string' ? msg.sealKeySignature : null,
           ip,
-          identityVerified
+          identityVerified,
+          accountSession: null,
+          accountSnapshot: '',
+          discoverable: msg.discoverable === true,
+          watchedDevices: new Set(),
+          presenceSnapshot: '',
+          roomsSnapshot: '[]'
         });
         noteSeen(deviceId);
         // This device is back: anything waiting for a conversation it is party
@@ -1181,7 +1291,7 @@ export function createEvakageServer({
           paired: identityVerified ? [...(pairedDevices.get(deviceId) || [])].map(id => deviceRecord(id)).filter(Boolean) : [],
           revoked: identityVerified ? [...(pairingRevocations.get(deviceId) || [])] : [] });
         broadcastPresence();
-        json(ws, { type: 'rooms', rooms: listedRooms() });
+        json(ws, { type: 'rooms', rooms: listedRooms(deviceId) });
         // Anything relayed to this device while it was away, oldest first.
         deliverPending(ws, deviceId);
 
@@ -1202,6 +1312,18 @@ export function createEvakageServer({
       }
 
       if (!registeredId || !clients.has(registeredId)) return;
+
+      if (msg.type === 'account-connect') {
+        const client = clients.get(registeredId);
+        const session = client.identityVerified && accounts.consumeTicket(msg.token, registeredId);
+        if (!session) { json(ws, { type: 'error', context: 'account-connect', message: 'Account connection rejected. Sign in again.' }); return; }
+        for (const devices of sessionDevices.values()) devices.delete(registeredId);
+        if (!sessionDevices.has(session)) sessionDevices.set(session, new Set());
+        sessionDevices.get(session)?.add(registeredId);
+        client.accountSession = session;
+        broadcastPresence();
+        return;
+      }
 
       if (msg.type === 'create-room') {
         if (rooms.size >= MAX_ROOMS) {
@@ -1243,7 +1365,7 @@ export function createEvakageServer({
           restoring = Boolean(room);
         }
         if (!room) {
-          json(ws, { type: 'error', context: 'join-room', message: 'That room is no longer active.' });
+          json(ws, { type: 'error', context: 'join-room', message: 'Unable to join with this invitation.' });
           return;
         }
         // An away member is reclaiming its own seat, so it always fits; anyone
@@ -1251,14 +1373,18 @@ export function createEvakageServer({
         // Restoring a room counts as returning to it: it has nobody connected
         // yet, and the dormant-room rule below must not lock out its restorer.
         const returning = restoring || room.members.has(registeredId) || room.away.has(registeredId);
+        if (!returning && !byCode) {
+          json(ws, { type: 'error', context: 'join-room', message: 'Unable to join with this invitation.' });
+          return;
+        }
         // A dormant room is kept only for its own away members; to anyone else
         // it has, in effect, ended.
         if (!returning && room.members.size === 0) {
-          json(ws, { type: 'error', context: 'join-room', message: 'That room is no longer active.' });
+          json(ws, { type: 'error', context: 'join-room', message: 'Unable to join with this invitation.' });
           return;
         }
         if (!returning && roomSeatsTaken(room) >= roomCap) {
-          json(ws, { type: 'error', context: 'join-room', message: `Rooms are limited to ${roomCap} devices.` });
+          json(ws, { type: 'error', context: 'join-room', message: 'Unable to join with this invitation.' });
           return;
         }
         room.away.delete(registeredId);
@@ -1278,13 +1404,21 @@ export function createEvakageServer({
       }
 
       if (msg.type === 'lookup-devices') {
+        // Knowing a full fingerprint allows targeted lookup, as before. Keep
+        // these subscriptions separate from public advertising so browsers can
+        // rediscover locally remembered peers after a signaling-server restart.
+        const viewer = clients.get(registeredId);
+        for (const id of msg.deviceIds) {
+          if (viewer.watchedDevices.size < 200) viewer.watchedDevices.add(id);
+        }
         const devices = msg.deviceIds.map(deviceRecord).filter(Boolean);
         json(ws, { type: 'devices-found', requestId: msg.requestId, devices });
+        json(ws, { type: 'presence', peers: visiblePeers(registeredId) });
         return;
       }
 
       if (msg.type === 'rooms-request') {
-        json(ws, { type: 'rooms', rooms: listedRooms() });
+        json(ws, { type: 'rooms', rooms: listedRooms(registeredId) });
         return;
       }
 
@@ -1297,6 +1431,7 @@ export function createEvakageServer({
           return;
         }
         const senderId = registeredId;
+        const accountSession = clients.get(senderId)?.accountSession;
         blobStore.offer({
           senderId,
           conv: msg.conv,
@@ -1304,7 +1439,8 @@ export function createEvakageServer({
           bytes: msg.bytes,
           chunkSize: msg.chunkSize,
           totalChunks: msg.totalChunks,
-          envelopes: msg.envelopes
+          envelopes: msg.envelopes,
+          authorized: () => clients.get(senderId)?.accountSession === accountSession && recipientsAllowed(senderId, msg.conv, recipients)
         }).then(result => {
           if (!result.blob) {
             json(ws, { type: 'error', context: 'blob-offer', requestId: msg.requestId, message: result.error });
@@ -1359,8 +1495,15 @@ export function createEvakageServer({
         return;
       }
 
+      if (msg.type === 'set-discoverable') {
+        clients.get(registeredId).discoverable = msg.enabled;
+        noteSeen(registeredId);
+        broadcastPresence();
+        return;
+      }
+
       if (msg.type === 'presence-request') {
-        json(ws, { type: 'presence', peers: [...clients.values()].map(peerPublic) });
+        json(ws, { type: 'presence', peers: visiblePeers(registeredId) });
         return;
       }
 
@@ -1368,6 +1511,8 @@ export function createEvakageServer({
         if (!clients.get(registeredId)?.identityVerified || !pairedDevices.get(registeredId)?.has(msg.deviceId)) return;
         pairedDevices.get(registeredId)?.delete(msg.deviceId);
         pairedDevices.get(msg.deviceId)?.delete(registeredId);
+        clients.get(registeredId)?.watchedDevices.delete(msg.deviceId);
+        clients.get(msg.deviceId)?.watchedDevices.delete(registeredId);
         for (const [a, b] of [[registeredId, msg.deviceId], [msg.deviceId, registeredId]]) {
           if (!pairingRevocations.has(a)) pairingRevocations.set(a, new Set());
           pairingRevocations.get(a)?.add(b);
@@ -1375,6 +1520,7 @@ export function createEvakageServer({
         const target = clients.get(msg.deviceId);
         if (target) json(target.ws, { type: 'pairing-revoked', deviceId: registeredId });
         json(ws, { type: 'pairing-revoked', deviceId: msg.deviceId });
+        broadcastPresence();
         return;
       }
 
@@ -1398,6 +1544,7 @@ export function createEvakageServer({
           pairingRevocations.get(a)?.delete(b);
         }
         json(ws, { type: 'paired-device', requestId: msg.requestId, peer });
+        broadcastPresence();
         const target = clients.get(id);
         if (target?.identityVerified) json(target.ws, { type: 'paired-device', peer: peerPublic(sender) });
         return;
@@ -1407,13 +1554,13 @@ export function createEvakageServer({
         const code = String(msg.code || '').trim().toUpperCase();
         const id = codeOwners.get(code);
         const target = id ? clients.get(id) : null;
-        json(ws, { type: 'resolved-code', requestId: msg.requestId, peer: target ? peerPublic(target) : null });
+        json(ws, { type: 'resolved-code', requestId: msg.requestId, peer: target && visiblePeers(registeredId).some(peer => peer.id === target.deviceId) ? peerPublic(target) : null });
         return;
       }
 
       if (msg.type === 'signal') {
         const target = clients.get(msg.to);
-        if (!target || target.deviceId === registeredId) return;
+        if (!target || target.deviceId === registeredId || relationshipRevoked(registeredId, target.deviceId)) return;
         // Only the validated fields are forwarded, so nothing a peer did not
         // declare rides along inside the signaling envelope.
         const data = msg.data.type === 'ice'
@@ -1478,11 +1625,15 @@ export function createEvakageServer({
         for (const peers of pairedDevices.values()) peers.delete(id);
       }
     }
+    for (const id of accountDevices.keys()) {
+      if (!clients.has(id) && !recentDevices.has(id)) accountDevices.delete(id);
+    }
   };
   const pairingSweep = setInterval(rotatePairingCodes, 60000);
   pairingSweep.unref?.();
 
   const heartbeat = setInterval(() => {
+    accounts.prune();
     for (const ws of sockets) {
       if (ws.isAlive === false) {
         ws.terminate();
@@ -1558,6 +1709,7 @@ export function createEvakageServer({
       grace.unref?.();
       server.close(done);
     });
+    accounts.close();
   }
 
   return { server, clients, sockets, rooms, recentDevices, connectionsByIp, limits, blobStore, expireAway, pairingCodes, rotatePairingCodes, start, stop };

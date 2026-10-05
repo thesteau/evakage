@@ -6,17 +6,23 @@ FROM node:26-alpine
 ENV NODE_ENV=production \
     PORT=3000 \
     HOST=0.0.0.0 \
-    BLOB_DIR=/tmp/aria-drop-blobs
+    BLOB_DIR=/tmp/aria-drop-blobs \
+    ACCOUNTS_DB=/home/node/evakage-accounts/accounts.sqlite
 
 WORKDIR /app
 # Every server-side module must be listed here. The app has no runtime
 # dependencies, so there is no npm install step to pull them in implicitly.
-COPY --chown=node:node package.json package-lock.json server.js blobstore.js ./
+COPY --chown=node:node package.json package-lock.json server.js blobstore.js accounts.js account-store.js ./
 COPY --chown=node:node public ./public
 
 # npm is never used at runtime, and its bundled dependencies are a recurring
 # source of base-image CVEs that fail the Trivy gate. Strip it while still root.
 RUN rm -rf /usr/local/lib/node_modules/npm /usr/local/bin/npm /usr/local/bin/npx
+
+RUN mkdir -p /home/node/evakage-accounts && chown node:node /home/node/evakage-accounts
+
+# Only account credentials and preferences persist across container replacement.
+VOLUME /home/node/evakage-accounts
 
 USER node
 EXPOSE 3000

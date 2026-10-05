@@ -5,7 +5,7 @@ import globals from 'globals';
 // drives WebSocket and fetch).
 export default [
   {
-    ignores: ['node_modules/**', 'public/icons/**', 'test-results/**', 'playwright-report/**']
+    ignores: ['node_modules/**', 'public/vendor/jsqr.js', 'public/icons/**', 'test-results/**', 'playwright-report/**']
   },
   {
     files: ['**/*.js'],
@@ -62,7 +62,7 @@ export default [
   },
   {
     // The signaling server and its modules.
-    files: ['server.js', 'blobstore.js'],
+    files: ['server.js', 'blobstore.js', 'accounts.js', 'account-store.js'],
     languageOptions: {
       globals: { ...globals.node }
     }

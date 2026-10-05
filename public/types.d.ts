@@ -94,6 +94,8 @@ export interface FileRecord extends FileMeta {
 }
 
 interface ConversationState {
+  /** Content before a peer's sign-out remains local and is never re-sent as history. */
+  syncAfter?: number;
   id: string;
   lastKnownName: string | null;
   lastKnownCode: string | null;

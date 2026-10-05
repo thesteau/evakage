@@ -17,10 +17,10 @@ async function createRoom(ws, name = 'Room') {
   return (await created).room;
 }
 
-/** @param {WebSocket} ws @param {string} roomId */
-async function joinRoom(ws, roomId) {
+/** @param {WebSocket} ws @param {string} code */
+async function joinRoom(ws, code) {
   const joined = waitFor(ws, m => m.type === 'room-joined');
-  ws.send(JSON.stringify({ type: 'join-room', roomId }));
+  ws.send(JSON.stringify({ type: 'join-room', code }));
   return (await joined).room;
 }
 
@@ -121,7 +121,7 @@ test('a member who drops off keeps its seat as away, and the room survives', asy
   const a = await register(wsBase, 'device_alice_00004', 'Alice');
   const b = await register(wsBase, 'device_bob_0000004', 'Bob', KEYS);
   const room = await createRoom(a, 'Kitchen');
-  await joinRoom(b, room.id);
+  await joinRoom(b, room.code);
 
   const aSeesAway = waitFor(a, m => m.type === 'rooms' && m.rooms[0]?.away.length === 1);
   b.close();
@@ -143,7 +143,7 @@ test('a room message can be addressed to an away member, who gets it on rejoinin
   const a = await register(wsBase, 'device_alice_00005', 'Alice');
   const b = await register(wsBase, 'device_bob_0000005', 'Bob', KEYS);
   const room = await createRoom(a);
-  await joinRoom(b, room.id);
+  await joinRoom(b, room.code);
   b.close();
   await settle();
 
@@ -157,7 +157,7 @@ test('a room message can be addressed to an away member, who gets it on rejoinin
   assert.equal((await delivered).blobId, sent.blobId);
 
   // Rejoining turns the away seat back into membership.
-  const rejoined = await joinRoom(back, room.id);
+  const rejoined = await joinRoom(back, room.code);
   assert.deepEqual(rejoined.members.map((/** @type {any} */ m) => m.id).sort(), ['device_alice_00005', 'device_bob_0000005']);
   assert.equal(rejoined.away.length, 0);
 
@@ -172,7 +172,7 @@ test('an away seat is held in a full room and only its owner can reclaim it', as
   const members = [];
   for (let i = 0; i < 5; i++) {
     const ws = await register(wsBase, `device_member_0006${i}`, `M${i}`);
-    await joinRoom(ws, room.id);
+    await joinRoom(ws, room.code);
     members.push(ws);
   }
   members[0].close(); // now 5 connected + 1 away = 6 seats
@@ -181,10 +181,10 @@ test('an away seat is held in a full room and only its owner can reclaim it', as
   const outsider = await register(wsBase, 'device_outsider_006', 'Outsider');
   const refused = waitFor(outsider, m => m.type === 'error' && m.context === 'join-room');
   outsider.send(JSON.stringify({ type: 'join-room', roomId: room.id }));
-  assert.match((await refused).message, /limited to 6 devices/);
+  assert.match((await refused).message, /Unable to join with this invitation/);
 
   const returning = await register(wsBase, 'device_member_00060', 'M0');
-  const back = await joinRoom(returning, room.id);
+  const back = await joinRoom(returning, room.code);
   assert.equal(back.members.length, 6);
 
   for (const ws of [owner, outsider, returning, ...members.slice(1)]) ws.close();
@@ -195,7 +195,7 @@ test('a device that reconnects but does not rejoin (a reload) loses its away sea
   const a = await register(wsBase, 'device_alice_00007', 'Alice');
   const b = await register(wsBase, 'device_bob_0000007', 'Bob');
   const room = await createRoom(a);
-  await joinRoom(b, room.id);
+  await joinRoom(b, room.code);
   b.close();
   await settle();
   assert.equal(app.rooms.get(room.id).away.has('device_bob_0000007'), true);
@@ -215,7 +215,7 @@ test('an explicit leave gives the seat up rather than going away', async t => {
   const a = await register(wsBase, 'device_alice_00008', 'Alice');
   const b = await register(wsBase, 'device_bob_0000008', 'Bob');
   const room = await createRoom(a);
-  await joinRoom(b, room.id);
+  await joinRoom(b, room.code);
 
   const left = waitFor(b, m => m.type === 'room-left');
   b.send(JSON.stringify({ type: 'leave-room', roomId: room.id }));
@@ -250,7 +250,7 @@ test('away seats expire with the window, and a room with no seats left closes', 
 
   const refused = waitFor(back, m => m.type === 'error' && m.context === 'join-room');
   back.send(JSON.stringify({ type: 'join-room', roomId: '11111111-2222-3333-4444-555555555555' }));
-  assert.match((await refused).message, /no longer active/);
+  assert.match((await refused).message, /Unable to join with this invitation/);
   back.close();
 });
 
@@ -270,19 +270,19 @@ test('a dormant room is kept for its away members but hidden from everyone else'
   assert.deepEqual((await listing).rooms, [], 'a room nobody is connected to is not advertised');
   const refused = waitFor(outsider, m => m.type === 'error' && m.context === 'join-room');
   outsider.send(JSON.stringify({ type: 'join-room', roomId: room.id }));
-  assert.match((await refused).message, /no longer active/);
+  assert.match((await refused).message, /Unable to join with this invitation/);
   const byCode = waitFor(outsider, m => m.type === 'error' && m.context === 'join-room');
   outsider.send(JSON.stringify({ type: 'join-room', code: room.code }));
-  assert.match((await byCode).message, /no longer active/);
+  assert.match((await byCode).message, /Unable to join with this invitation/);
 
   // Alice, returning, reclaims it and it is listed again.
   const back = await register(wsBase, 'device_alice_00010', 'Alice');
-  const rejoined = await joinRoom(back, room.id);
+  const rejoined = await joinRoom(back, room.code);
   assert.equal(rejoined.id, room.id);
-  const relisted = waitFor(outsider, m => m.type === 'rooms' && m.rooms.some((/** @type {any} */ r) => r.id === room.id));
+  const relisted = waitFor(outsider, m => m.type === 'rooms');
   back.send(JSON.stringify({ type: 'rooms-request' }));
   outsider.send(JSON.stringify({ type: 'rooms-request' }));
-  await relisted;
+  assert.deepEqual((await relisted).rooms, [], 'returning members remain private');
 
   outsider.close();
   back.close();

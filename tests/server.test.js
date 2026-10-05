@@ -9,7 +9,7 @@ test('health, presence, stable codes, and code lookup work', async t => {
   const wsBase = env.wsBase;
 
   const health = await fetch(`${base}/healthz`).then(r => r.json());
-  assert.deepEqual(health, { ok: true, peers: 0, rooms: 0, bufferedTransfers: 0, bufferedMessages: 0, bufferedBytes: 0 });
+  assert.deepEqual(health, { ok: true, peers: 0, bufferedTransfers: 0, bufferedMessages: 0, bufferedBytes: 0 });
 
   const config = await fetch(`${base}/config.json`).then(r => r.json());
   assert.deepEqual(config.iceServers, []);
@@ -21,14 +21,14 @@ test('health, presence, stable codes, and code lookup work', async t => {
 
   const a = await openWs(wsBase);
   const aRegPromise = waitFor(a, m => m.type === 'registered');
-  a.send(JSON.stringify({ type: 'register', deviceId: 'device_A_12345678', name: 'Laptop', platform: 'Linux', browser: 'Firefox' }));
+  a.send(JSON.stringify({ type: 'register', discoverable: true, deviceId: 'device_A_12345678', name: 'Laptop', platform: 'Linux', browser: 'Firefox' }));
   const aReg = await aRegPromise;
   assert.match(aReg.self.code, /^[A-Z0-9]{4}-[A-Z0-9]+$/);
 
   const b = await openWs(wsBase);
   const bRegPromise = waitFor(b, m => m.type === 'registered');
   const aPresenceTwo = waitFor(a, m => m.type === 'presence' && m.peers.length === 2);
-  b.send(JSON.stringify({ type: 'register', deviceId: 'device_B_12345678', name: 'Phone', platform: 'iOS', browser: 'Safari' }));
+  b.send(JSON.stringify({ type: 'register', discoverable: true, deviceId: 'device_B_12345678', name: 'Phone', platform: 'iOS', browser: 'Safari' }));
   const bReg = await bRegPromise;
   await aPresenceTwo;
   assert.notEqual(aReg.self.code, bReg.self.code);
@@ -43,7 +43,7 @@ test('health, presence, stable codes, and code lookup work', async t => {
   b.close();
 });
 
-test('rooms advertise membership, cap size, and close when their last member leaves', async t => {
+test('rooms keep membership private, cap size, and close when their last member leaves', async t => {
   // A cap of 6 keeps the full-room case quick to reach.
   const { app, ...env } = await startServer(t, { maxRoomMembers: 6 });
   const wsBase = env.wsBase;
@@ -59,10 +59,10 @@ test('rooms advertise membership, cap size, and close when their last member lea
   assert.equal(room.maxMembers, 6);
   assert.deepEqual(room.members.map((/** @type {any} */ m) => m.id), ['device_A_12345678']);
 
-  // Rooms are advertised to every connected client, joined or not.
-  const bSeesRoom = waitFor(b, m => m.type === 'rooms' && m.rooms.some((/** @type {any} */ r) => r.id === room.id));
-  a.send(JSON.stringify({ type: 'rooms-request' }));
-  await bSeesRoom;
+  // Only successfully joined members can see room details.
+  const bListing = waitFor(b, m => m.type === 'rooms');
+  b.send(JSON.stringify({ type: 'rooms-request' }));
+  assert.deepEqual((await bListing).rooms, []);
 
   const bJoined = waitFor(b, m => m.type === 'room-joined');
   const aSeesTwo = waitFor(a, m => m.type === 'rooms' && m.rooms[0]?.members.length === 2);
@@ -77,13 +77,13 @@ test('rooms advertise membership, cap size, and close when their last member lea
     const ws = await register(wsBase, `device_X${i}_12345678`, `Extra ${i}`);
     extras.push(ws);
     const ok = waitFor(ws, m => m.type === 'room-joined');
-    ws.send(JSON.stringify({ type: 'join-room', roomId: room.id }));
+    ws.send(JSON.stringify({ type: 'join-room', code: room.code }));
     await ok;
   }
   const overflow = await register(wsBase, 'device_Z_12345678', 'Too many');
   const refused = waitFor(overflow, m => m.type === 'error' && m.context === 'join-room');
-  overflow.send(JSON.stringify({ type: 'join-room', roomId: room.id }));
-  assert.match((await refused).message, /limited to 6 devices/);
+  overflow.send(JSON.stringify({ type: 'join-room', code: room.code }));
+  assert.match((await refused).message, /Unable to join with this invitation/);
   assert.equal(app.rooms.get(room.id).members.size, 6);
 
   // Leaving drops membership but the room survives while anyone remains.
@@ -144,7 +144,7 @@ test('rooms past the mesh size switch to the relay, up to the configured cap', a
   for (let i = 1; i < 8; i++) {
     const ws = await register(wsBase, `device_large_mem00${i}`, `M${i}`);
     const joined = waitFor(ws, m => m.type === 'room-joined');
-    ws.send(JSON.stringify({ type: 'join-room', roomId: room.id }));
+    ws.send(JSON.stringify({ type: 'join-room', code: room.code }));
     last = (await joined).room;
     members.push(ws);
     // Six seats is still a mesh; the seventh tips it over.
@@ -154,8 +154,8 @@ test('rooms past the mesh size switch to the relay, up to the configured cap', a
 
   const ninth = await register(wsBase, 'device_large_nine00', 'Ninth');
   const refused = waitFor(ninth, m => m.type === 'error' && m.context === 'join-room');
-  ninth.send(JSON.stringify({ type: 'join-room', roomId: room.id }));
-  assert.match((await refused).message, /limited to 8 devices/);
+  ninth.send(JSON.stringify({ type: 'join-room', code: room.code }));
+  assert.match((await refused).message, /Unable to join with this invitation/);
 
   for (const ws of [owner, ninth, ...members]) ws.close();
 });
@@ -172,7 +172,7 @@ test('device names ignore supplied names and reject rename requests', async t =>
   const { wsBase } = await startServer(t);
   const ws = await openWs(wsBase);
   t.after(() => ws.close());
-  const payload = { type: 'register', deviceId: 'device_fixed_12345678', name: 'Trusted administrator' };
+  const payload = { type: 'register', discoverable: true, deviceId: 'device_fixed_12345678', name: 'Trusted administrator' };
   const registered = waitFor(ws, m => m.type === 'registered');
   ws.send(JSON.stringify(payload));
   const { self } = await registered;

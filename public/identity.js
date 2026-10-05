@@ -74,6 +74,11 @@ export async function fingerprintOf(rawPublicKey) {
 
 /** @returns {Promise<import('./types.js').Identity>} */
 export async function loadIdentity() {
+  // Serialize first-use key creation across tabs of the same browser profile.
+  if (navigator.locks) return navigator.locks.request('aria-drop-identity', loadIdentityRecord);
+  return loadIdentityRecord();
+}
+async function loadIdentityRecord() {
   const db = await openDb();
   let record = await withStore(db, 'readonly', store => store.get(RECORD));
   let dirty = false;
@@ -96,7 +101,25 @@ export async function loadIdentity() {
     dirty = true;
   }
 
-  if (dirty) await withStore(db, 'readwrite', store => store.put(record, RECORD));
+  if (dirty) {
+    // Compare-and-store in one transaction also covers browsers without Web Locks.
+    // A concurrent tab's complete identity wins over a newly generated candidate.
+    const candidate = record;
+    record = await new Promise((resolve, reject) => {
+      const tx = db.transaction(STORE, 'readwrite');
+      const store = tx.objectStore(STORE);
+      const request = store.get(RECORD);
+      let winner = candidate;
+      request.onsuccess = () => {
+        const existing = request.result;
+        if (existing?.privateKey && existing?.publicKey && existing?.sealPrivateKey && existing?.sealPublicKey) winner = existing;
+        else store.put(candidate, RECORD);
+      };
+      tx.oncomplete = () => resolve(winner);
+      tx.onabort = () => reject(tx.error);
+      tx.onerror = () => reject(tx.error);
+    });
+  }
 
   const raw = new Uint8Array(await crypto.subtle.exportKey('raw', record.publicKey));
   const sealRaw = new Uint8Array(await crypto.subtle.exportKey('raw', record.sealPublicKey));
@@ -260,7 +283,7 @@ export async function safetyCode(fingerprintA, fingerprintB) {
 // Held as a Map, never as an object indexed by fingerprint: device IDs come from
 // other devices, and one named `__proto__` must not reach an object's prototype
 // (which would also make deviceTrust() report a stranger as known).
-/** @returns {Map<string, {name: string, firstSeen: number, lastSeen: number, verifiedAt?: number, pairedAt?: number, blocked?: boolean}>} */
+/** @returns {Map<string, {name: string, firstSeen: number, lastSeen: number, verifiedAt?: number, pairedAt?: number, blocked?: boolean, hidden?: boolean}>} */
 function loadKnownDevices() {
   try {
     const parsed = JSON.parse(localStorage.getItem(KNOWN_DEVICES_KEY) || '{}');
@@ -367,4 +390,13 @@ export function blockDevice(fingerprint, blocked) {
   if (!record) return;
   devices.set(fingerprint, { ...record, blocked, verifiedAt: blocked ? undefined : record.verifiedAt });
   saveKnownDevices(devices);
+}
+
+/** Hiding affects the device list only; blocking controls exchanges.
+ * @param {string} fingerprint @param {string} name @param {boolean} hidden */
+export function hideDevice(fingerprint, name, hidden) {
+  rememberDevice(fingerprint, name);
+  const devices = loadKnownDevices();
+  const record = devices.get(fingerprint);
+  if (record) { devices.set(fingerprint, { ...record, hidden }); saveKnownDevices(devices); }
 }

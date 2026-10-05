@@ -32,6 +32,6 @@
     "resolveJsonModule": true,
     "verbatimModuleSyntax": false
   },
-  "include": ["server.js", "blobstore.js", "public/**/*.js", "tests/**/*.js", "e2e/**/*.js", "playwright.config.js", "eslint.config.js"],
-  "exclude": ["node_modules"]
+  "include": ["server.js", "blobstore.js", "accounts.js", "account-store.js", "public/**/*.js", "tests/**/*.js", "e2e/**/*.js", "playwright.config.js", "eslint.config.js"],
+  "exclude": ["node_modules", "public/vendor/jsqr.js"]
 }

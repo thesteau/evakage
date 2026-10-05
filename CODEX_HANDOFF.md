@@ -28,10 +28,10 @@ The MVP implements one-to-one sessions **and** small full-mesh rooms (up to six 
 
 ## Architecture
 
-- **Node 22+ (the image ships node:26-alpine), dependency-free WebSocket server:** static HTTP server, health/config endpoints, WebSocket presence/signaling.
+- **Node 22.13+ (the image ships node:26-alpine), dependency-free WebSocket server:** static HTTP server, health/config endpoints, WebSocket presence/signaling.
 - **Vanilla browser client:** no compile step/framework.
 - **Presence:** every registered browser is advertised to every other browser connected to the server. Rooms are advertised the same way.
-- **Identity:** long-lived non-extractable ECDSA P-256 key in IndexedDB; the device ID is the base64url SHA-256 fingerprint of its public half. Display name and remembered-device fingerprints live in localStorage. Payload state is never persisted anywhere.
+- **Identity:** long-lived non-extractable ECDSA P-256 key in IndexedDB; the device ID is the base64url SHA-256 fingerprint of its public half. Display name and remembered-device fingerprints live in localStorage. Direct payload state stays in browser memory; encrypted relay payloads are temporarily buffered on disk. Optional SQLite account storage contains credentials and selected preferences only.
 - **PWA:** installable on phones/tablets/desktop, offline app shell via a precaching service worker, a POST share target for files, text and links (caught by the service worker), foreground reconnection and a transfer-scoped screen wake lock for mobile.
 - **Fallback code:** deterministic short code from device UUID while registered; code lookup returns an online peer. Rooms get a separate random `ABCD-EFGH` code.
 - **Links vs. conversations:** the client keeps one *link* per peer device (`RTCPeerConnection` + ordered DataChannel + crypto) and separate *conversation* state per direct session or room. A single link carries every conversation shared with that device; frames name their scope (`direct` or `room:<id>`), and `direct` is resolved relative to the sender.
@@ -221,7 +221,7 @@ Renamed from the `drop-pak` working codename to `aria-drop`. The name is still c
 ## Deliberate non-goals in v0.1
 
 - No cloud/file database.
-- No account system.
+- Optional SQLite accounts provide preference sync and private automatic connections between online devices. Account trust is temporary; sign-out clears local chats and revokes relationships and room seats. Account direct chats do not restore peer history.
 - No durable chat history.
 - ~~No server-side payload relay fallback.~~ **Reversed:** messages and files now fall back to a sealed, signed server relay when a direct link cannot be made, and wait there, for as long as their conversation lives, for a recipient who has not collected them.
 - No guarantee of huge-file support on memory-constrained mobile browsers.

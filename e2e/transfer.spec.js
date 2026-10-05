@@ -1,6 +1,6 @@
 import { expect } from '@playwright/test';
 import fs from 'node:fs/promises';
-import { deviceNames, test, openPeer, chat, sendFile } from './helpers.js';
+import { deviceNames, test, openPeer, chat, sendFile, joinRoom } from './helpers.js';
 
 for (const relay of [false, true]) {
   test(`${relay ? 'forced relay' : 'direct'}: chat both ways, consent and exact file bytes`, async ({ devices }) => {
@@ -224,7 +224,7 @@ test('room history catches up after an away member reconnects', async ({ devices
   const { alice, bob } = devices;
   await alice.locator('#roomNameInput').fill('Catch-up room');
   await alice.locator('#createRoomForm').getByRole('button', { name: 'Create' }).click();
-  await bob.getByRole('button', { name: 'Open room Catch-up room', exact: true }).click();
+  await joinRoom(bob, alice, 'Catch-up room');
   await alice.getByRole('button', { name: 'Open room Catch-up room', exact: true }).click();
   await expect(bob.locator('#sessionTitle')).toHaveText('Catch-up room');
   await chat(alice, bob, 'Before going away');

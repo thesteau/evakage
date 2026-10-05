@@ -35,6 +35,8 @@
         <span id="themeIcon" aria-hidden="true">◐</span>
       </button>
       <button id="settingsBtn" class="ghost" type="button">Settings</button>
+      <button id="accountBtn" class="ghost" type="button">Account (optional)</button>
+      <button id="scanQrBtn" class="ghost" type="button">Scan QR</button>
       <button id="qrBtn" class="ghost" type="button">QR codes</button>
       <button id="devicesBtn" class="ghost" type="button">Known devices</button>
       <div class="identity-card">
@@ -58,6 +60,7 @@
           <input id="codeInput" autocomplete="off" autocapitalize="characters" spellcheck="false"
                  placeholder="ABCD-EFGH" maxlength="16" aria-describedby="codeFeedback">
           <button type="submit">Pair</button>
+          <button id="codeQrBtn" class="ghost" type="button">My pairing QR</button>
         </div>
         <span id="codeFeedback" class="form-feedback" role="status"></span>
       </form>
@@ -66,14 +69,14 @@
     <section class="card peers-card" id="peersSection" aria-labelledby="peersHeading">
       <div class="section-heading">
         <div>
-          <h2 id="peersHeading">Advertised devices</h2>
-          <p class="muted">Presence refreshes automatically. Drop a file on a device to send it.</p>
+          <h2 id="peersHeading">Devices</h2>
+          <p class="muted">Advertising is off by default. Pair by private code, or enable advertising in Settings. Hidden devices can be shown in Known devices.</p>
         </div>
         <button id="refreshBtn" class="ghost" type="button">Refresh view</button>
       </div>
       <div class="table-wrap">
         <table>
-          <caption class="visually-hidden">Devices advertised on this server, with connection state and actions</caption>
+          <caption class="visually-hidden">This browser, paired devices and advertised devices, with connection state and actions</caption>
           <thead>
             <tr>
               <th scope="col">Device</th>
@@ -96,7 +99,7 @@
       <div class="section-heading">
         <div>
           <h2 id="roomsHeading">Ephemeral rooms</h2>
-          <p class="muted">Small full-mesh groups. A room lives while at least one member is still connected.</p>
+          <p class="muted">Private groups. Only joined members can see a room and its membership. Share its code to invite others.</p>
         </div>
         <div class="room-forms">
           <form id="createRoomForm" class="inline-field">
@@ -115,7 +118,7 @@
       <span id="roomFeedback" class="form-feedback" role="status"></span>
       <div class="table-wrap">
         <table>
-          <caption class="visually-hidden">Rooms advertised on this server, with membership and actions</caption>
+          <caption class="visually-hidden">Your joined rooms, with membership and actions</caption>
           <thead>
             <tr>
               <th scope="col">Room</th>
@@ -130,7 +133,7 @@
         </table>
       </div>
       <div id="emptyRooms" class="empty-state hidden">
-        <strong>No active rooms.</strong>
+        <strong>No joined rooms.</strong>
         <span>Create one, then share its code with the other devices.</span>
       </div>
     </section>
@@ -172,9 +175,23 @@
     <div id="dropHint" class="drop-hint" aria-hidden="true">Drop to send</div>
   </aside>
 
+  <dialog id="accountDialog" class="dialog">
+    <h2>Optional account</h2>
+    <p>Your online devices connect privately when signed into the same account. You can also sync theme, incoming-file policy, verified-only mode and relay preferences. Messages and files are never saved to your account.</p>
+    <p>Signing out clears this device’s chats, received files and drafts, and disconnects it. Reconnecting requires signing in again or pairing by code or QR. Files you already saved outside the app remain on your device.</p>
+    <p id="accountStatus" role="status"></p>
+    <form id="accountForm">
+      <label for="accountUsername">Username</label><input id="accountUsername" autocomplete="username" pattern="[a-zA-Z0-9_\-]{3,40}" minlength="3" maxlength="40" required>
+      <label for="accountPassword">Password (at least 12 characters)</label><input id="accountPassword" type="password" autocomplete="current-password" minlength="12" maxlength="128" required>
+      <div class="dialog-actions"><button type="submit" value="login">Sign in</button><button type="submit" value="register">Create account</button></div>
+    </form>
+    <div class="dialog-actions"><button id="accountSave" type="button" disabled>Save preferences</button><button id="accountLoad" type="button" disabled>Load preferences and reload</button><button id="accountLogout" type="button" disabled>Sign out</button></div>
+    <form method="dialog"><button type="submit">Done</button></form>
+  </dialog>
   <dialog id="settingsDialog" class="dialog">
     <form method="dialog">
       <h2>Settings</h2>
+      <label class="setting-option"><input id="discoverableInput" type="checkbox"><span><strong>Advertise this device</strong><span class="muted"> — off by default. Pairing by private code works while hidden.</span></span></label>
       <label class="setting-option">
         <input id="verifiedOnlyInput" type="checkbox">
         <span><strong>Only exchange with verified devices</strong><span class="muted"> — compare safety codes in Known devices first. New room members require verification before sending.</span></span>
@@ -206,7 +223,7 @@
       <h2>Known devices</h2>
       <p class="muted">
         Devices are remembered by the fingerprint of their long-lived key the first
-        time you connect. Forgetting one means it shows as <em>new</em> again, and its
+        time you connect. Deleting its stored relationship means it shows as <em>new</em> again, and its
         safety code is worth re-checking. Verify by comparing codes outside this app. Blocking a device stops exchanges with it in this browser.
       </p>
       <div id="knownDeviceList" class="device-list"></div>
@@ -219,6 +236,7 @@
   <dialog id="qrDialog" class="dialog">
     <form method="dialog">
       <h2>Connect with QR codes</h2>
+      <p class="muted">Use Scan QR inside the installed app to stay in the app. External camera links may open the installed app depending on your browser and OS link preferences.</p>
       <p>Scan the server URL to open this app, then scan the device QR or enter its pairing code under Connect by code. Pairing is required for unknown devices. Codes rotate every three days; paired identities stay paired.</p>
       <h3>Server URL</h3>
       <canvas id="serverQr" class="qr-code" role="img" aria-label="Server URL QR code"></canvas>
@@ -231,9 +249,16 @@
     </form>
   </dialog>
 
+  <dialog id="scanQrDialog" class="dialog">
+    <h2>Scan a pairing QR</h2>
+    <video id="scanQrVideo" autoplay muted playsinline class="qr-preview"></video>
+    <p id="scanQrStatus" role="status">Starting camera…</p>
+    <form method="dialog"><button type="submit">Cancel</button></form>
+  </dialog>
   <dialog id="connectDialog" class="dialog">
     <form id="connectForm">
       <h2>Pair unknown device</h2>
+      <button id="connectQrBtn" class="ghost" type="button">Show my pairing QR</button>
       <p id="connectTarget"></p>
       <label for="connectCode">Code from the other device</label>
       <input id="connectCode" autocomplete="off" autocapitalize="characters" maxlength="16" required>
@@ -309,6 +334,7 @@
     </article>
   </template>
 
+  <script src="/vendor/jsqr.js"></script>
   <script type="module" src="/app.js"></script>
 </body>
 </html>

@@ -22,10 +22,14 @@ services:
     environment:
       PORT: "3000"
       MAX_FILE_BYTES: "536870912"
-    # Deliberately no `volumes:`. Buffered transfers live in /tmp inside the
-    # container's own writable layer, so they cannot outlive the container and are
-    # never exposed on the host. Do not add a volume for BLOB_DIR.
+      ACCOUNTS_DB: ${ACCOUNTS_DB-/home/node/evakage-accounts/accounts.sqlite}
+    volumes:
+      - account-data:/home/node/evakage-accounts
+    # Only accounts persist. Buffered transfers stay inside the container.
+    # Never mount BLOB_DIR.
     security_opt:
       - no-new-privileges:true
     cap_drop:
       - ALL
+volumes:
+  account-data:

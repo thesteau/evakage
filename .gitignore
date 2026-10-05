@@ -7,3 +7,12 @@ test-results/
 playwright-report/
 type-edit.tmp.mjs
 type-findings.tmp
+
+# Optional local account data contains password hashes and preferences.
+data/
+test-results-preferences/
+
+# Optional account databases may be configured outside data/.
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm

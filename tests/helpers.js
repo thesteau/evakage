@@ -89,6 +89,7 @@ export async function register(wsBase, deviceId, name = 'Device', extra = {}) {
     name,
     platform: 'Linux',
     browser: 'Firefox',
+    discoverable: true,
     ...extra
   }));
   await registered;

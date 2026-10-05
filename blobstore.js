@@ -242,10 +242,10 @@ export function createBlobStore(options = {}) {
    * server treats each box as opaque. A message is complete on arrival; a file
    * waits for its body to be uploaded.
    * @param {{senderId: string, conv: string, kind?: 'file' | 'message', bytes: number,
-   *   chunkSize: number, totalChunks: number, envelopes: Record<string, unknown>}} item
+   *   chunkSize: number, totalChunks: number, envelopes: Record<string, unknown>, authorized?: () => boolean}} item
    * @returns {Promise<{blob: BlobRecord, error?: undefined} | {error: string, blob?: undefined}>}
    */
-  async function offer({ senderId, conv, kind = 'file', bytes, chunkSize, totalChunks, envelopes }) {
+  async function offer({ senderId, conv, kind = 'file', bytes, chunkSize, totalChunks, envelopes, authorized = () => true }) {
     const isMessage = kind === 'message';
     if (isMessage) {
       if (bytes !== 0 || totalChunks !== 0) return { error: 'A relayed message carries no body.' };
@@ -318,6 +318,11 @@ export function createBlobStore(options = {}) {
       } catch (err) {
         if (err?.code !== 'ENOENT' || attempt >= 3) throw err;
       }
+    }
+    if (!authorized()) {
+      await fsp.rm(blob.envelopePath, { force: true });
+      await removeIfEmpty(convDir);
+      return { error: 'This connection is no longer authorized.' };
     }
     assess(blob, blob.createdAt);
     blobs.set(id, blob);
@@ -447,7 +452,7 @@ export function createBlobStore(options = {}) {
     if (!blob.participants.has(deviceId)) return { error: 'That transfer is not addressed to this device.' };
     if (!blob.complete) return { error: 'That transfer is still uploading.' };
     const envelope = await readEnvelope(blob, deviceId);
-    if (expired(blob) || !blobs.has(id)) return { error: 'That transfer is no longer available.' };
+    if (expired(blob) || !blobs.has(id) || !blob.participants.has(deviceId)) return { error: 'That transfer is no longer available.' };
     const issued = token();
     blob.downloadTokens.set(issued, deviceId);
     return { blob, downloadToken: issued, envelope };
@@ -484,6 +489,24 @@ export function createBlobStore(options = {}) {
       .sort((a, b) => a.createdAt - b.createdAt);
     return (await Promise.all(ready.map(blob => describe(blob, deviceId))))
       .filter(item => item !== null);
+  }
+
+  /** Revoke buffered content and download capabilities when a device signs out.
+   * Other room recipients can still collect their copies.
+   * @param {string} deviceId */
+  async function revokeDevice(deviceId) {
+    const removals = [];
+    for (const blob of blobs.values()) {
+      if (!blob.participants.has(deviceId)) continue;
+      if (blob.conv === 'direct' || blob.senderId === deviceId) {
+        removals.push(remove(blob.id));
+      } else {
+        blob.participants.delete(deviceId);
+        blob.recipients.delete(deviceId);
+        for (const [issued, owner] of blob.downloadTokens) if (owner === deviceId) blob.downloadTokens.delete(issued);
+      }
+    }
+    await Promise.all(removals);
   }
 
   /** @param {BlobRecord} blob @param {string} deviceId */
@@ -561,6 +584,7 @@ export function createBlobStore(options = {}) {
     release,
     remove,
     pendingFor,
+    revokeDevice,
     describe,
     sweepAged,
     refreshLiveness,
