@@ -201,6 +201,9 @@ const state = {
 const accountPeerIds = new Set();
 let accountGeneration = 0;
 let signingOut = false;
+/** Serialise SDP/ICE work per peer while allowing unrelated peers to negotiate.
+ * @type {Map<string, Promise<void>>} */
+const signalQueues = new Map();
 const accountEvents = typeof BroadcastChannel === 'undefined' ? null : new BroadcastChannel('evakage-account-session');
 accountEvents?.addEventListener('message', event => {
   if (event.data === 'sign-out') clearSignedOutDevice(false);
@@ -230,6 +233,7 @@ function clearSignedOutDevice(broadcast = true) {
     conv.messages.clear(); conv.files.clear();
   }
   for (const link of state.links.values()) {
+    clearTimeout(link.negotiationTimer ?? undefined);
     clearTimeout(link.reconnectTimer ?? undefined);
     clearTimeout(link.queueTimer ?? undefined);
     try { link.dc?.close(); link.pc?.close(); } catch {}
@@ -640,7 +644,7 @@ function connectWebSocket() {
     }
 
     if (msg.type === 'signal') {
-      await handleSignal(msg.from, msg.data);
+      await queueSignal(msg.from, msg.data);
       return;
     }
 
@@ -883,6 +887,7 @@ function releaseIdleLinks() {
   const needed = neededPeerIds();
   for (const [peerId, link] of state.links) {
     if (needed.has(peerId)) continue;
+    clearTimeout(link.negotiationTimer ?? undefined);
     clearTimeout(link.reconnectTimer ?? undefined);
     clearTimeout(link.queueTimer ?? undefined);
     try { link.dc?.close(); } catch {}
@@ -926,11 +931,8 @@ function attachPeerConnection(link) {
     if (state.links.get(peerId) !== link || link.pc !== pc) return;
     if (link.incompatible) return;
     link.status = pc.connectionState;
-    // A connection that actually came up clears the retry budget.
-    if (pc.connectionState === 'connected') {
-      link.reconnectAttempts = 0;
-      link.gaveUp = false;
-    }
+    // Keep the retry budget until the peer has proved its identity; an ICE
+    // connection alone must not reset stalled-handshake retries indefinitely.
     renderPeers();
     renderRooms();
     renderSession();
@@ -940,6 +942,22 @@ function attachPeerConnection(link) {
     if (state.links.get(peerId) !== link || link.pc !== pc) { event.channel.close(); return; }
     setupDataChannel(link, event.channel);
   };
+}
+
+/** ICE can remain "new"/"connecting" after an answer is lost or a reload
+ * abandons the negotiation. Bound the complete transport and identity handshake.
+ * @param {Link} link */
+function watchNegotiation(link) {
+  clearTimeout(link.negotiationTimer ?? undefined);
+  const pc = link.pc;
+  link.negotiationTimer = setTimeout(() => {
+    link.negotiationTimer = null;
+    if (state.links.get(link.peerId) !== link || link.pc !== pc || isSecure(link) || link.incompatible) return;
+    link.dc = null;
+    link.pc = null;
+    try { pc?.close(); } catch {}
+    if (state.peers.has(link.peerId) && neededPeerIds().has(link.peerId)) scheduleReconnect(link.peerId);
+  }, 5000);
 }
 
 // Joining a full room otherwise starts five negotiations at once, each with its
@@ -985,6 +1003,7 @@ async function ensureLink(peerId, force = false) {
   link.candidateQueue = [];
   resetCrypto(link);
   attachPeerConnection(link);
+  watchNegotiation(link);
   renderPeers();
   renderSession();
 
@@ -1043,6 +1062,20 @@ function retryLink(peerId) {
 
 /** @param {string} peerId */
 /** @param {string} peerId @param {any} data */
+function queueSignal(peerId, data) {
+  if (!deviceAllowed(peerId)) return;
+  const previous = signalQueues.get(peerId) || Promise.resolve();
+  const pending = previous.then(() => handleSignal(peerId, data)).catch(() => {
+    // The transport may have been replaced while an SDP operation was pending.
+    if (state.peers.has(peerId) && neededPeerIds().has(peerId)) scheduleReconnect(peerId);
+  }).finally(() => {
+    if (signalQueues.get(peerId) === pending) signalQueues.delete(peerId);
+  });
+  signalQueues.set(peerId, pending);
+  return pending;
+}
+
+/** @param {string} peerId @param {any} data */
 async function handleSignal(peerId, data) {
   if (!deviceAllowed(peerId)) return;
   if (deviceTrust(peerId)?.blocked) return;
@@ -1064,20 +1097,27 @@ async function handleSignal(peerId, data) {
     link.candidateQueue = [];
     resetCrypto(link);
     attachPeerConnection(link);
+    watchNegotiation(link);
   }
 
   const pc = link.pc;
+  const current = () => state.links.get(peerId) === link && link.pc === pc;
   if (data.type === 'offer') {
     await pc.setRemoteDescription(data.sdp);
+    if (!current()) return;
     for (const candidate of link.candidateQueue.splice(0)) await pc.addIceCandidate(candidate).catch(() => {});
+    if (!current()) return;
     const answer = await pc.createAnswer();
+    if (!current()) return;
     await pc.setLocalDescription(answer);
+    if (!current()) return;
     signal(peerId, { type: 'answer', sdp: pc.localDescription });
   } else if (data.type === 'answer') {
     // An answer to an offer this link has since abandoned (a reset crossed it in
     // flight) would throw "wrong state: stable". The live negotiation continues.
     if (pc.signalingState !== 'have-local-offer') return;
     await pc.setRemoteDescription(data.sdp);
+    if (!current()) return;
     for (const candidate of link.candidateQueue.splice(0)) await pc.addIceCandidate(candidate).catch(() => {});
   } else if (data.type === 'ice' && data.candidate) {
     if (pc.remoteDescription) await pc.addIceCandidate(data.candidate).catch(() => {});
@@ -1113,7 +1153,13 @@ function setupDataChannel(link, dc) {
   dc.binaryType = 'arraybuffer';
   dc.bufferedAmountLowThreshold = LOW_WATER;
   const current = () => state.links.get(link.peerId) === link && link.dc === dc;
-  dc.onopen = () => { if (current()) startCryptoHandshake(link); };
+  dc.onopen = () => {
+    if (current()) {
+      startCryptoHandshake(link).catch(() => {
+        if (current()) abortLink(link, `Could not start the secure exchange with ${displayName(link.peerId)}.`);
+      });
+    }
+  };
   dc.onclose = () => {
     if (!current()) return;
     if (state.peers.has(link.peerId) && neededPeerIds().has(link.peerId)) scheduleReconnect(link.peerId);
@@ -1122,37 +1168,47 @@ function setupDataChannel(link, dc) {
     renderRooms();
   };
   dc.onerror = () => { if (current()) toast(`Data channel error with ${displayName(link.peerId)}`); };
-  dc.onmessage = (event) => { if (current()) handleDataMessage(link, event.data); };
+  // WebRTC delivers frames in order, but asynchronous verification/decryption
+  // must finish before the next frame (especially hello -> ownership proof).
+  let incoming = Promise.resolve();
+  dc.onmessage = event => {
+    incoming = incoming.then(async () => { if (current()) await handleDataMessage(link, event.data); }).catch(() => {
+      if (current()) abortLink(link, `Could not complete the secure exchange with ${displayName(link.peerId)}.`);
+    });
+  };
 }
 
 /** @param {Link} link */
 async function startCryptoHandshake(link) {
-  if (!link.dc) return;
+  const dc = link.dc;
+  if (!dc) return;
   const identity = state.identity;
   if (!identity) throw new Error('Device identity is not ready. Reload and try again.');
-  if (link.incompatible || link.crypto.helloSent) return;
-  if (!link.crypto.keyPair) {
-    link.crypto.keyPair = await crypto.subtle.generateKey({ name: 'ECDH', namedCurve: 'P-256' }, true, ['deriveKey']);
-    const raw = new Uint8Array(await crypto.subtle.exportKey('raw', link.crypto.keyPair.publicKey));
-    link.crypto.ownPublic = bytesToBase64(raw);
-    link.crypto.ownNonce = bytesToBase64(crypto.getRandomValues(new Uint8Array(16)));
-  }
-  link.crypto.helloSent = true;
-  link.dc.send(JSON.stringify({
-    kind: 'crypto-hello',
-    publicKey: link.crypto.ownPublic,
-    identityKey: identity.identityKey,
-    nonce: link.crypto.ownNonce,
-    protocol: PROTOCOL_VERSION,
-    min: MIN_PROTOCOL,
-    max: PROTOCOL_VERSION
-  }));
-  renderSession();
+  const exchange = link.crypto;
+  if (exchange.helloPromise) return exchange.helloPromise;
+  if (link.incompatible || exchange.helloSent) return;
+  // onopen and an incoming hello may both arrive before generateKey resolves.
+  // Both must await the same keypair/hello, rather than publish different keys.
+  exchange.helloPromise = (async () => {
+    const keyPair = await crypto.subtle.generateKey({ name: 'ECDH', namedCurve: 'P-256' }, true, ['deriveKey']);
+    const raw = new Uint8Array(await crypto.subtle.exportKey('raw', keyPair.publicKey));
+    if (state.links.get(link.peerId) !== link || link.crypto !== exchange || link.dc !== dc || dc.readyState !== 'open') return;
+    exchange.keyPair = keyPair;
+    exchange.ownPublic = bytesToBase64(raw);
+    exchange.ownNonce = bytesToBase64(crypto.getRandomValues(new Uint8Array(16)));
+    exchange.helloSent = true;
+    dc.send(JSON.stringify({ kind: 'crypto-hello', publicKey: exchange.ownPublic,
+      identityKey: identity.identityKey, nonce: exchange.ownNonce,
+      protocol: PROTOCOL_VERSION, min: MIN_PROTOCOL, max: PROTOCOL_VERSION }));
+    renderSession();
+  })();
+  return exchange.helloPromise;
 }
 
 /** @param {Link} link
  * @param {string} message */
 function abortLink(link, message) {
+  clearTimeout(link.negotiationTimer ?? undefined);
   link.incompatible = true;
   link.status = 'untrusted';
   try { link.dc?.close(); } catch {}
@@ -1172,6 +1228,7 @@ function negotiateProtocol(link, hello) {
   const theirMax = Number.isInteger(hello.max) ? hello.max : Number(hello.protocol) || 0;
   const agreed = Math.min(PROTOCOL_VERSION, theirMax);
   if (!theirMax || theirMax < MIN_PROTOCOL || theirMin > PROTOCOL_VERSION) {
+    clearTimeout(link.negotiationTimer ?? undefined);
     link.incompatible = true;
     link.status = 'incompatible';
     link.protocol = null;
@@ -1193,6 +1250,9 @@ function negotiateProtocol(link, hello) {
 /** @param {Link} link */
 /** @param {Link} link @param {any} hello */
 async function handleCryptoHello(link, hello) {
+  const exchange = link.crypto;
+  const dc = link.dc;
+  const current = () => state.links.get(link.peerId) === link && link.crypto === exchange && link.dc === dc;
   const identity = state.identity;
   if (!identity) throw new Error('Device identity is not ready. Reload and try again.');
   if (link.incompatible) return;
@@ -1206,29 +1266,35 @@ async function handleCryptoHello(link, hello) {
   // misrepresenting who this is — refuse before deriving anything.
   const remoteIdentityRaw = base64ToBytes(hello.identityKey);
   const fingerprint = await fingerprintOf(remoteIdentityRaw);
+  if (!current()) return;
   if (fingerprint !== link.peerId) {
     abortLink(link, `${displayName(link.peerId)} presented an identity key that does not match its device ID. Refused.`);
     return;
   }
 
   if (!link.crypto.keyPair) await startCryptoHandshake(link);
-  if (!link.crypto.keyPair) return;
+  if (!current() || !link.crypto.keyPair) return;
 
   const remoteKey = await crypto.subtle.importKey(
     'raw', base64ToBytes(hello.publicKey), { name: 'ECDH', namedCurve: 'P-256' }, false, []
   );
+  if (!current()) return;
   link.crypto.remotePublic = hello.publicKey;
   link.crypto.remoteNonce = hello.nonce;
   link.crypto.remoteIdentity = remoteIdentityRaw;
-  link.crypto.key = await crypto.subtle.deriveKey(
+  const key = await crypto.subtle.deriveKey(
     { name: 'ECDH', public: remoteKey },
     link.crypto.keyPair.privateKey,
     { name: 'AES-GCM', length: 256 },
     false,
     ['encrypt', 'decrypt']
   );
+  if (!current()) return;
+  exchange.key = key;
   // Derived from the long-lived fingerprints, so it is stable across sessions.
-  link.crypto.safety = await safetyCode(identity.fingerprint, fingerprint);
+  const code = await safetyCode(identity.fingerprint, fingerprint);
+  if (!current()) return;
+  exchange.safety = code;
 
   await sendProof(link);
   renderSession();
@@ -1242,18 +1308,23 @@ async function sendProof(link) {
   if (!identity) throw new Error('Device identity is not ready. Reload and try again.');
   if (link.crypto.proofSent || !link.crypto.remoteNonce) return;
   link.crypto.proofSent = true;
+  const exchange = link.crypto;
+  const dc = link.dc;
   const signature = await signTranscript(identity.privateKey, transcriptFor({
     signerEcdh: link.crypto.ownPublic,
     peerEcdh: link.crypto.remotePublic,
     signerNonce: link.crypto.ownNonce,
     peerNonce: link.crypto.remoteNonce
   }));
-  link.dc.send(JSON.stringify({ kind: 'crypto-proof', signature }));
+  if (link.crypto !== exchange || link.dc !== dc || dc.readyState !== 'open') return;
+  dc.send(JSON.stringify({ kind: 'crypto-proof', signature }));
 }
 
 /** @param {Link} link */
 /** @param {Link} link @param {any} message */
 async function handleCryptoProof(link, message) {
+  const exchange = link.crypto;
+  const dc = link.dc;
   if (!link.crypto.ownPublic || !link.crypto.remotePublic || !link.crypto.ownNonce || !link.crypto.remoteNonce) return;
   if (link.incompatible || link.crypto.identityVerified) return;
   if (!link.crypto.key || !link.crypto.remoteIdentity) return;
@@ -1266,12 +1337,16 @@ async function handleCryptoProof(link, message) {
     signerNonce: link.crypto.remoteNonce,
     peerNonce: link.crypto.ownNonce
   }));
+  if (state.links.get(link.peerId) !== link || link.crypto !== exchange || link.dc !== dc) return;
   if (!ok) {
     abortLink(link, `${displayName(link.peerId)} failed to prove ownership of its device key. Refused.`);
     return;
   }
 
   link.crypto.identityVerified = true;
+  link.reconnectAttempts = 0;
+  link.gaveUp = false;
+  clearTimeout(link.negotiationTimer ?? undefined);
   const previous = deviceTrust(link.peerId);
   link.trust = {
     known: Boolean(previous),

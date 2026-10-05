@@ -109,6 +109,7 @@ export type Conversation = ConversationState & (
 );
 
 export interface LinkCrypto {
+  helloPromise?: Promise<void>;
   keyPair: CryptoKeyPair | null;
   ownPublic: string | null;
   ownNonce?: string | null;
@@ -123,6 +124,7 @@ export interface LinkCrypto {
 }
 
 export interface Link {
+  negotiationTimer?: ReturnType<typeof setTimeout> | null;
   /** Server registration timestamp of the peer this transport was created for. */
   peerConnectedAt?: number;
   peerId: string;

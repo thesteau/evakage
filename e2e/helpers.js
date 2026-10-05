@@ -27,7 +27,7 @@ export const test = base.extend(/** @type {import('@playwright/test').Fixtures<{
       for (const name of ['Alice', 'Bob']) {
         const context = await browser.newContext();
         contexts.push(context);
-        if (appPatch?.device === name) {
+        if (appPatch?.device === name || appPatch?.device === 'Both') {
           await context.route('**/app.js', async route => {
             const response = await route.fetch();
             // Normalise line endings: patches anchor on multi-line snippets and

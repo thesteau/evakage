@@ -3,6 +3,72 @@ import { test, deviceNames, openPeer, chat, pairDevices } from './helpers.js';
 import { startServer } from '../tests/helpers.js';
 import { PAIRING_CODE_MAX_AGE_MS } from '../server.js';
 
+test.describe('pairing restoration ordering', () => {
+  test.use({ appPatch: { device: 'Both', patch: source => source
+    .replace('for (const peer of msg.paired || []) {', `
+      if (sessionStorage.getItem('delay-pair-restore')) await new Promise(resolve => { window.releasePairRestore = resolve; });
+      for (const peer of msg.paired || []) {`)
+    .replace('document.title = `${msg.self.name} · Evakage`;', `
+      document.documentElement.dataset.pairRestoreDone = '1';
+      document.title = \`\${msg.self.name} · Evakage\`;`)
+    .replace("signal(peerId, { type: 'answer', sdp: pc.localDescription });", `
+      signal(peerId, { type: 'answer', sdp: pc.localDescription });
+      document.documentElement.dataset.answerSent = '1';`) } });
+
+  test('an incoming reconnect survives delayed pairing restoration before the chat is opened', async ({ devices }) => {
+    const { alice, bob, server } = devices;
+    await openPeer(alice, 'Bob'); await openPeer(bob, 'Alice');
+    const aliceId = await alice.locator('#selfCode').getAttribute('data-device-id') || '';
+    const bobId = await bob.locator('#selfCode').getAttribute('data-device-id') || '';
+    const reloadAlice = aliceId.localeCompare(bobId) > 0;
+    const reloading = reloadAlice ? alice : bob;
+    const survivor = reloadAlice ? bob : alice;
+    await chat(reloading, survivor, 'Before delayed pairing restore');
+    await reloading.evaluate(() => sessionStorage.setItem('delay-pair-restore', '1'));
+    const recipient = server.clients.get(reloadAlice ? bobId : aliceId);
+    if (!recipient) throw new Error('Surviving device is not registered');
+    const send = recipient.ws.send.bind(recipient.ws);
+    let droppedAnswer = false;
+    recipient.ws.send = (/** @type {string | Buffer} */ payload) => {
+      const message = JSON.parse(String(payload));
+      if (message.type === 'signal' && message.data.type === 'answer' && !droppedAnswer) {
+        droppedAnswer = true;
+        return;
+      }
+      send(payload);
+    };
+    await reloading.reload();
+    await expect(reloading.locator('html')).toHaveAttribute('data-answer-sent', '1');
+    await reloading.evaluate(() => {
+      const testWindow = /** @type {Window & {releasePairRestore: () => void}} */ (/** @type {unknown} */ (window));
+      testWindow.releasePairRestore();
+    });
+    await expect(reloading.locator('html')).toHaveAttribute('data-pair-restore-done', '1');
+    await openPeer(reloading, reloadAlice ? 'Bob' : 'Alice');
+    await chat(reloading, survivor, 'After delayed pairing restore');
+    expect(droppedAnswer).toBe(true);
+  });
+});
+
+test.describe('slow identity handshake', () => {
+  test.use({ appPatch: { device: 'Alice', patch: source => source
+    .replace("const keyPair = await crypto.subtle.generateKey({ name: 'ECDH'", `
+      document.documentElement.dataset.handshakeKeys = String(Number(document.documentElement.dataset.handshakeKeys || 0) + 1);
+      await new Promise(resolve => setTimeout(resolve, 300));
+      const keyPair = await crypto.subtle.generateKey({ name: 'ECDH'`)
+    .replace('const remoteKey = await crypto.subtle.importKey(', `
+      await new Promise(resolve => setTimeout(resolve, 350));
+      const remoteKey = await crypto.subtle.importKey(`) } });
+  test('a concurrent incoming hello uses one keypair and waits for verification before accepting its proof', async ({ devices }) => {
+    const { alice, bob } = devices;
+    await alice.evaluate(() => { document.documentElement.dataset.handshakeKeys = '0'; });
+    await openPeer(alice, 'Bob'); await openPeer(bob, 'Alice');
+    await chat(alice, bob, 'Ordered ownership proof');
+    await chat(bob, alice, 'Ordered return proof');
+    await expect(alice.locator('html')).toHaveAttribute('data-handshake-keys', '1');
+  });
+});
+
 test.describe('mandatory code pairing', () => {
   test.use({ autoPair: false });
 
