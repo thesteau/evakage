@@ -1,4 +1,4 @@
-import { test } from './helpers.js';
+import { test, deviceNames } from './helpers.js';
 import fs from 'node:fs/promises';
 import { expect } from '@playwright/test';
 
@@ -45,5 +45,35 @@ test('self notes require a server connection and retain the draft for retry', as
   await expect(alice.locator('#serverState')).toHaveText('Signaling connected');
   await alice.locator('#messageForm').getByRole('button', { name: 'Send', exact: true }).click();
   await expect(alice.locator('#timeline')).toContainText('Offline draft to myself');
+  await expect(alice.locator('#timeline')).toContainText('via server');
+});
+
+// The browser's online event reconnects at once while the close handler's
+// backoff timer is still pending. Only one socket may come of that: a second
+// would replace the first, which the server then closes with 4001.
+test('an online event during reconnect backoff opens a single socket', async ({ devices }) => {
+  const { alice, server } = devices;
+  await alice.evaluate(() => {
+    const Native = window.WebSocket;
+    /** @type {any} */ (window).socketsOpened = 0;
+    window.WebSocket = /** @type {any} */ (class extends Native {
+      /** @param {string | URL} url @param {string | string[]} [protocols] */
+      constructor(url, protocols) { super(url, protocols); /** @type {any} */ (window).socketsOpened++; }
+    });
+  });
+  await alice.getByRole('button', { name: 'Open conversation with yourself', exact: true }).click();
+  devices.disconnect('Alice');
+  await expect(alice.locator('#serverState')).toHaveText('Signaling disconnected');
+  await alice.evaluate(() => window.dispatchEvent(new Event('online')));
+  await expect(alice.locator('#serverState')).toHaveText('Signaling connected');
+  await expect(alice.locator('#selfCode')).not.toHaveText('----');
+  // Outlast the backoff timer the close handler scheduled.
+  await alice.waitForTimeout(1500);
+  expect(await alice.evaluate(() => /** @type {any} */ (window).socketsOpened)).toBe(1);
+  await expect(alice.locator('#serverState')).toHaveText('Signaling connected');
+  expect([...server.clients.values()].filter(client => client.name === deviceNames.get('Alice'))).toHaveLength(1);
+  await alice.locator('#messageInput').fill('After a double reconnect');
+  await alice.locator('#messageForm').getByRole('button', { name: 'Send', exact: true }).click();
+  await expect(alice.locator('#timeline')).toContainText('After a double reconnect');
   await expect(alice.locator('#timeline')).toContainText('via server');
 });
