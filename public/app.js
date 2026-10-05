@@ -250,7 +250,8 @@ async function updateAccountPeers(message) {
   const previous = new Set(accountPeerIds);
   accountPeerIds.clear();
   for (const peer of message.peers || []) {
-    if (!peer.identityKey || !peer.sealKey || !peer.sealKeySignature) continue;
+    // The verifier rejects absent/malformed fields and checks both proofs.
+    // Never let advertised fields decide whether verification runs.
     const verified = await verifyAdvertisedIdentity({ deviceId: peer.id, identityKey: peer.identityKey,
       sealKey: peer.sealKey, sealKeySignature: peer.sealKeySignature });
     if (generation !== accountGeneration || signingOut) return;
@@ -895,7 +896,8 @@ function reconcileLinks(previousOnline) {
   for (const peerId of neededPeerIds()) {
     const link = state.links.get(peerId);
     // A device that just came back online earns a fresh retry budget.
-    if (!previousOnline.has(peerId)) {
+    const connectedAt = state.peers.get(peerId)?.connectedAt;
+    if (!previousOnline.has(peerId) || (link?.peerConnectedAt != null && connectedAt != null && link.peerConnectedAt !== connectedAt)) {
       retryLink(peerId);
       continue;
     }
@@ -917,9 +919,11 @@ function attachPeerConnection(link) {
   const pc = link.pc;
   if (!pc) return;
   pc.onicecandidate = (event) => {
+    if (state.links.get(peerId) !== link || link.pc !== pc) return;
     if (event.candidate) signal(peerId, { type: 'ice', candidate: event.candidate });
   };
   pc.onconnectionstatechange = () => {
+    if (state.links.get(peerId) !== link || link.pc !== pc) return;
     if (link.incompatible) return;
     link.status = pc.connectionState;
     // A connection that actually came up clears the retry budget.
@@ -932,7 +936,10 @@ function attachPeerConnection(link) {
     renderSession();
     if (['failed', 'disconnected'].includes(pc.connectionState)) scheduleReconnect(peerId);
   };
-  pc.ondatachannel = (event) => setupDataChannel(link, event.channel);
+  pc.ondatachannel = (event) => {
+    if (state.links.get(peerId) !== link || link.pc !== pc) { event.channel.close(); return; }
+    setupDataChannel(link, event.channel);
+  };
 }
 
 // Joining a full room otherwise starts five negotiations at once, each with its
@@ -953,7 +960,7 @@ async function ensureLink(peerId, force = false) {
   if (!state.self || !state.peers.has(peerId)) return;
   const link = createLink(peerId);
   if (!force && (link.incompatible || link.gaveUp)) return;
-  if (!force && link.pc && ['new', 'connecting', 'connected'].includes(link.pc.connectionState)) return;
+  if (!force && link.pc && ['new', 'connecting', 'connected'].includes(link.pc.connectionState) && link.dc?.readyState !== 'closed') return;
 
   if (negotiatingCount() >= CAPS.concurrentNegotiations) {
     if (!link.queueTimer) {
@@ -968,10 +975,12 @@ async function ensureLink(peerId, force = false) {
     return;
   }
 
+  link.dc = null;
   if (link.pc) {
     try { link.pc.close(); } catch {}
   }
   link.pc = new RTCPeerConnection({ iceServers: state.config.iceServers || [] });
+  link.peerConnectedAt = state.peers.get(peerId)?.connectedAt;
   link.status = 'connecting';
   link.candidateQueue = [];
   resetCrypto(link);
@@ -982,11 +991,18 @@ async function ensureLink(peerId, force = false) {
   // Lexicographically smaller id offers; the other side knocks to ask for one.
   const initiator = state.self.id.localeCompare(peerId) < 0;
   if (initiator) {
-    const dc = link.pc.createDataChannel('aria-drop-v1', { ordered: true });
+    const pc = link.pc;
+    const dc = pc.createDataChannel('aria-drop-v1', { ordered: true });
     setupDataChannel(link, dc);
-    const offer = await link.pc.createOffer();
-    await link.pc.setLocalDescription(offer);
-    signal(peerId, { type: 'offer', sdp: link.pc.localDescription });
+    try {
+      const offer = await pc.createOffer();
+      if (link.pc !== pc) return;
+      await pc.setLocalDescription(offer);
+      if (link.pc !== pc) return;
+      signal(peerId, { type: 'offer', sdp: pc.localDescription });
+    } catch {
+      if (link.pc === pc) scheduleReconnect(peerId);
+    }
   } else {
     signal(peerId, { type: 'knock' });
   }
@@ -1041,7 +1057,9 @@ async function handleSignal(peerId, data) {
 
   const link = createLink(peerId);
   if (!link.pc || link.pc.connectionState === 'closed') {
+    link.dc = null;
     link.pc = new RTCPeerConnection({ iceServers: state.config.iceServers || [] });
+    link.peerConnectedAt = state.peers.get(peerId)?.connectedAt;
     link.status = 'connecting';
     link.candidateQueue = [];
     resetCrypto(link);
@@ -1094,14 +1112,17 @@ function setupDataChannel(link, dc) {
   link.dc = dc;
   dc.binaryType = 'arraybuffer';
   dc.bufferedAmountLowThreshold = LOW_WATER;
-  dc.onopen = () => startCryptoHandshake(link);
+  const current = () => state.links.get(link.peerId) === link && link.dc === dc;
+  dc.onopen = () => { if (current()) startCryptoHandshake(link); };
   dc.onclose = () => {
+    if (!current()) return;
+    if (state.peers.has(link.peerId) && neededPeerIds().has(link.peerId)) scheduleReconnect(link.peerId);
     renderSession();
     renderPeers();
     renderRooms();
   };
-  dc.onerror = () => toast(`Data channel error with ${displayName(link.peerId)}`);
-  dc.onmessage = (event) => handleDataMessage(link, event.data);
+  dc.onerror = () => { if (current()) toast(`Data channel error with ${displayName(link.peerId)}`); };
+  dc.onmessage = (event) => { if (current()) handleDataMessage(link, event.data); };
 }
 
 /** @param {Link} link */

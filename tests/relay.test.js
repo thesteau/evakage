@@ -3,7 +3,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
-import { fingerprintOf, bytesToBase64, signTranscript } from '../public/identity.js';
+import { fingerprintOf, bytesToBase64, signTranscript, verifyAdvertisedIdentity } from '../public/identity.js';
 import {
   buildEnvelope,
   openEnvelope,
@@ -40,6 +40,22 @@ async function makeIdentity() {
 /** @typedef {Awaited<ReturnType<typeof makeIdentity>>} TestIdentity */
 
 const sha256 = (/** @type {Uint8Array} */ bytes) => crypto.createHash('sha256').update(bytes).digest('hex');
+
+test('advertised identity verification rejects missing keys, key substitutions and forged signatures', async () => {
+  const owner = await makeIdentity();
+  const stranger = await makeIdentity();
+  const sealKey = bytesToBase64(owner.sealRaw);
+  const record = { deviceId: owner.deviceId, identityKey: owner.identityKey, sealKey,
+    sealKeySignature: await signTranscript(owner.privateKey, `aria-drop/sealkey/1|${sealKey}`) };
+  assert.ok(await verifyAdvertisedIdentity(record));
+  for (const field of ['identityKey', 'sealKey', 'sealKeySignature']) {
+    assert.equal(await verifyAdvertisedIdentity({ ...record, [field]: undefined }), null);
+    assert.equal(await verifyAdvertisedIdentity({ ...record, [field]: '' }), null);
+  }
+  assert.equal(await verifyAdvertisedIdentity({ ...record, identityKey: stranger.identityKey }), null);
+  assert.equal(await verifyAdvertisedIdentity({ ...record, sealKey: bytesToBase64(stranger.sealRaw) }), null);
+  assert.equal(await verifyAdvertisedIdentity({ ...record, sealKeySignature: bytesToBase64(new Uint8Array(64)) }), null);
+});
 
 /** @param {TestIdentity} sender @param {TestIdentity} recipient
  * @param {Uint8Array<ArrayBuffer>} bytes @param {number} [chunkSize] */

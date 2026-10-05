@@ -43,6 +43,38 @@ test('reload restores identity and history from the surviving peer', async ({ de
   expect(await fs.readFile(await download.path())).toEqual(bytes);
 });
 
+for (const role of ['offerer', 'answerer']) {
+  test(`reload with coalesced presence reconnects the ${role} and restores history`, async ({ devices }) => {
+    const { alice, bob, server } = devices;
+    await openPeer(alice, 'Bob'); await openPeer(bob, 'Alice');
+    const aliceId = await alice.locator('#selfCode').getAttribute('data-device-id') || '';
+    const bobId = await bob.locator('#selfCode').getAttribute('data-device-id') || '';
+    const reloadAlice = (aliceId.localeCompare(bobId) < 0) === (role === 'offerer');
+    const reloading = reloadAlice ? alice : bob;
+    const survivor = reloadAlice ? bob : alice;
+    const reloadingId = reloadAlice ? aliceId : bobId;
+    const survivorId = reloadAlice ? bobId : aliceId;
+    const targetName = reloadAlice ? 'Bob' : 'Alice';
+    await chat(reloading, survivor, `Retain history for the ${role}`);
+    const recipient = server.clients.get(survivorId);
+    if (!recipient) throw new Error('Surviving device is not registered');
+    const send = recipient.ws.send.bind(recipient.ws);
+    // A fast replacement may never produce an offline presence frame. Force
+    // that ordering rather than relying on browser/server scheduling luck.
+    recipient.ws.send = (/** @type {string | Buffer} */ payload) => {
+      const message = JSON.parse(String(payload));
+      if (message.type === 'presence' && !message.peers.some((/** @type {{id: string}} */ peer) => peer.id === reloadingId)) return;
+      send(payload);
+    };
+    await reloading.reload();
+    await expect(reloading.locator('#selfCode')).toHaveAttribute('data-device-id', reloadingId);
+    await openPeer(reloading, targetName);
+    await expect(reloading.locator('#timeline').getByText(`Retain history for the ${role}`, { exact: true })).toHaveCount(1);
+    await chat(reloading, survivor, `Fresh transport for the ${role}`);
+    await chat(survivor, reloading, `Return path for the ${role}`);
+  });
+}
+
 test('installed worker serves the app shell offline without caching config', async ({ devices }) => {
   const { alice } = devices;
   await alice.evaluate(async () => {

@@ -20,6 +20,7 @@ export interface SealOptions {
 }
 export interface OpenOptions { sealPrivateKey: CryptoKey; box: SealedBox; selfId: string; expectedFrom: string }
 export interface Device {
+  connectedAt?: number;
   id: string;
   name: string;
   code: string;
@@ -122,6 +123,8 @@ export interface LinkCrypto {
 }
 
 export interface Link {
+  /** Server registration timestamp of the peer this transport was created for. */
+  peerConnectedAt?: number;
   peerId: string;
   pc: RTCPeerConnection | null;
   dc: RTCDataChannel | null;

@@ -148,7 +148,7 @@ async function loadIdentityRecord() {
  * here comes from the signaling server, so none of it is trusted until both
  * checks pass.
 
- * @param {{deviceId: string, identityKey: string, sealKey: string, sealKeySignature: string}} record */
+ * @param {{deviceId: string, identityKey?: string, sealKey?: string, sealKeySignature?: string}} record */
 export async function verifyAdvertisedIdentity({ deviceId, identityKey, sealKey, sealKeySignature }) {
   if (typeof identityKey !== 'string' || typeof sealKey !== 'string' || typeof sealKeySignature !== 'string') return null;
   let identityRaw;
