@@ -76,7 +76,7 @@ test('a malformed or unknown message is rejected and repeated abuse closes the s
 });
 
 test('oversized SDP and malformed ICE candidates never reach the other peer', async t => {
-  const { wsBase } = await withServer(t);
+  const { wsBase, app } = await withServer(t);
   const a = await register(wsBase, 'device_A_12345678', 'A');
   const b = await register(wsBase, 'device_B_12345678', 'B');
 
@@ -108,10 +108,13 @@ test('oversized SDP and malformed ICE candidates never reach the other peer', as
   a.send(JSON.stringify({
     type: 'signal',
     to: 'device_B_12345678',
+    fromConnectedAt: 1,
     data: { type: 'offer', sdp: { type: 'offer', sdp: 'v=0', extra: 'smuggled' }, alsoExtra: 1 }
   }));
   const signal = await forwarded;
   assert.deepEqual(signal.data, { type: 'offer', sdp: { type: 'offer', sdp: 'v=0' } });
+  assert.equal(signal.fromConnectedAt, app.clients.get('device_A_12345678').connectedAt);
+  assert.notEqual(signal.fromConnectedAt, 1);
 
   a.close();
   b.close();

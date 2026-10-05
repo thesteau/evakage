@@ -204,6 +204,8 @@ let signingOut = false;
 /** Serialise SDP/ICE work per peer while allowing unrelated peers to negotiate.
  * @type {Map<string, Promise<void>>} */
 const signalQueues = new Map();
+/** @type {WeakMap<RTCPeerConnection, AbortController>} */
+const transportStops = new WeakMap();
 const accountEvents = typeof BroadcastChannel === 'undefined' ? null : new BroadcastChannel('evakage-account-session');
 accountEvents?.addEventListener('message', event => {
   if (event.data === 'sign-out') clearSignedOutDevice(false);
@@ -236,7 +238,7 @@ function clearSignedOutDevice(broadcast = true) {
     clearTimeout(link.negotiationTimer ?? undefined);
     clearTimeout(link.reconnectTimer ?? undefined);
     clearTimeout(link.queueTimer ?? undefined);
-    try { link.dc?.close(); link.pc?.close(); } catch {}
+    try { link.dc?.close(); closePeerConnection(link.pc); } catch {}
   }
   state.conversations.clear(); state.links.clear(); state.joinedRoomIds.clear();
   state.deviceRecords.clear(); state.consentedDevices.clear();
@@ -644,7 +646,7 @@ function connectWebSocket() {
     }
 
     if (msg.type === 'signal') {
-      await queueSignal(msg.from, msg.data);
+      await queueSignal(msg.from, msg.data, msg.fromConnectedAt);
       return;
     }
 
@@ -891,7 +893,7 @@ function releaseIdleLinks() {
     clearTimeout(link.reconnectTimer ?? undefined);
     clearTimeout(link.queueTimer ?? undefined);
     try { link.dc?.close(); } catch {}
-    try { link.pc?.close(); } catch {}
+    try { closePeerConnection(link.pc); } catch {}
     state.links.delete(peerId);
   }
 }
@@ -902,7 +904,7 @@ function reconcileLinks(previousOnline) {
     const link = state.links.get(peerId);
     // A device that just came back online earns a fresh retry budget.
     const connectedAt = state.peers.get(peerId)?.connectedAt;
-    if (!previousOnline.has(peerId) || (link?.peerConnectedAt != null && connectedAt != null && link.peerConnectedAt !== connectedAt)) {
+    if ((!previousOnline.has(peerId) && (!link?.pc || link.peerConnectedAt !== connectedAt)) || (link?.peerConnectedAt != null && connectedAt != null && link.peerConnectedAt !== connectedAt)) {
       retryLink(peerId);
       continue;
     }
@@ -923,6 +925,7 @@ function attachPeerConnection(link) {
   const peerId = link.peerId;
   const pc = link.pc;
   if (!pc) return;
+  transportStops.set(pc, new AbortController());
   pc.onicecandidate = (event) => {
     if (state.links.get(peerId) !== link || link.pc !== pc) return;
     if (event.candidate) signal(peerId, { type: 'ice', candidate: event.candidate });
@@ -944,6 +947,36 @@ function attachPeerConnection(link) {
   };
 }
 
+/** Closing a PC does not reliably settle its pending SDP promises in Chromium.
+ * Cancel our wait as well, so an abandoned operation cannot block signaling.
+ * @template T
+ * @param {RTCPeerConnection} pc
+ * @param {Promise<T>} task
+ * @returns {Promise<T>} */
+function transportTask(pc, task) {
+  const signal = transportStops.get(pc)?.signal;
+  if (!signal) return task;
+  return new Promise((resolve, reject) => {
+    const cancelled = () => reject(new DOMException('Transport was replaced.', 'AbortError'));
+    if (signal.aborted) cancelled();
+    else signal.addEventListener('abort', cancelled, { once: true });
+    task.then(value => {
+      signal.removeEventListener('abort', cancelled);
+      resolve(value);
+    }, error => {
+      signal.removeEventListener('abort', cancelled);
+      reject(error);
+    });
+  });
+}
+
+/** @param {RTCPeerConnection | null} pc */
+function closePeerConnection(pc) {
+  if (!pc) return;
+  transportStops.get(pc)?.abort();
+  pc.close();
+}
+
 /** ICE can remain "new"/"connecting" after an answer is lost or a reload
  * abandons the negotiation. Bound the complete transport and identity handshake.
  * @param {Link} link */
@@ -955,7 +988,7 @@ function watchNegotiation(link) {
     if (state.links.get(link.peerId) !== link || link.pc !== pc || isSecure(link) || link.incompatible) return;
     link.dc = null;
     link.pc = null;
-    try { pc?.close(); } catch {}
+    try { closePeerConnection(pc); } catch {}
     if (state.peers.has(link.peerId) && neededPeerIds().has(link.peerId)) scheduleReconnect(link.peerId);
   }, 5000);
 }
@@ -995,7 +1028,7 @@ async function ensureLink(peerId, force = false) {
 
   link.dc = null;
   if (link.pc) {
-    try { link.pc.close(); } catch {}
+    try { closePeerConnection(link.pc); } catch {}
   }
   link.pc = new RTCPeerConnection({ iceServers: state.config.iceServers || [] });
   link.peerConnectedAt = state.peers.get(peerId)?.connectedAt;
@@ -1014,9 +1047,9 @@ async function ensureLink(peerId, force = false) {
     const dc = pc.createDataChannel('aria-drop-v1', { ordered: true });
     setupDataChannel(link, dc);
     try {
-      const offer = await pc.createOffer();
+      const offer = await transportTask(pc, pc.createOffer());
       if (link.pc !== pc) return;
-      await pc.setLocalDescription(offer);
+      await transportTask(pc, pc.setLocalDescription(offer));
       if (link.pc !== pc) return;
       signal(peerId, { type: 'offer', sdp: pc.localDescription });
     } catch {
@@ -1061,11 +1094,11 @@ function retryLink(peerId) {
 }
 
 /** @param {string} peerId */
-/** @param {string} peerId @param {any} data */
-function queueSignal(peerId, data) {
+/** @param {string} peerId @param {any} data @param {number} [connectedAt] */
+function queueSignal(peerId, data, connectedAt) {
   if (!deviceAllowed(peerId)) return;
   const previous = signalQueues.get(peerId) || Promise.resolve();
-  const pending = previous.then(() => handleSignal(peerId, data)).catch(() => {
+  const pending = previous.then(() => handleSignal(peerId, data, connectedAt)).catch(() => {
     // The transport may have been replaced while an SDP operation was pending.
     if (state.peers.has(peerId) && neededPeerIds().has(peerId)) scheduleReconnect(peerId);
   }).finally(() => {
@@ -1075,13 +1108,38 @@ function queueSignal(peerId, data) {
   return pending;
 }
 
-/** @param {string} peerId @param {any} data */
-async function handleSignal(peerId, data) {
+/** @param {string} peerId @param {any} data @param {number} [connectedAt] */
+async function handleSignal(peerId, data, connectedAt) {
   if (!deviceAllowed(peerId)) return;
   if (deviceTrust(peerId)?.blocked) return;
   if (typeof RTCPeerConnection === 'undefined') return;
   if (!data || typeof data !== 'object') return;
   const known = state.links.get(peerId);
+  // Signaling may arrive before replacement presence. The server stamps the
+  // sender's registration so neither a knock nor an offer can reuse a previous
+  // browser session's transport and ownership proof.
+  if (typeof connectedAt === 'number' && Number.isSafeInteger(connectedAt)) {
+    const last = Math.max(known?.peerConnectedAt || 0, state.peers.get(peerId)?.connectedAt || 0);
+    if (connectedAt < last) return;
+    const peer = state.peers.get(peerId);
+    if (peer) peer.connectedAt = connectedAt;
+    if (known && known.peerConnectedAt !== connectedAt) {
+      clearTimeout(known.negotiationTimer ?? undefined);
+      clearTimeout(known.reconnectTimer ?? undefined);
+      known.reconnectTimer = null;
+      const oldPC = known.pc;
+      const oldDC = known.dc;
+      known.pc = null;
+      known.dc = null;
+      known.peerConnectedAt = connectedAt;
+      known.reconnectAttempts = 0;
+      known.gaveUp = false;
+      known.incompatible = false;
+      resetCrypto(known);
+      try { oldDC?.close(); } catch {}
+      try { closePeerConnection(oldPC); } catch {}
+    }
+  }
   if (known?.incompatible) return;
   if (data.type === 'knock') {
     await ensureLink(peerId);
@@ -1089,10 +1147,20 @@ async function handleSignal(peerId, data) {
   }
 
   const link = createLink(peerId);
+  // Every offer starts a fresh connection, not SDP renegotiation on the old
+  // channel. Preserve only ICE queued before the first offer on an empty PC.
+  if (data.type === 'offer' && link.pc?.remoteDescription) {
+    const oldPC = link.pc;
+    const oldDC = link.dc;
+    link.pc = null;
+    link.dc = null;
+    try { oldDC?.close(); } catch {}
+    try { closePeerConnection(oldPC); } catch {}
+  }
   if (!link.pc || link.pc.connectionState === 'closed') {
     link.dc = null;
     link.pc = new RTCPeerConnection({ iceServers: state.config.iceServers || [] });
-    link.peerConnectedAt = state.peers.get(peerId)?.connectedAt;
+    link.peerConnectedAt = connectedAt ?? state.peers.get(peerId)?.connectedAt;
     link.status = 'connecting';
     link.candidateQueue = [];
     resetCrypto(link);
@@ -1103,24 +1171,24 @@ async function handleSignal(peerId, data) {
   const pc = link.pc;
   const current = () => state.links.get(peerId) === link && link.pc === pc;
   if (data.type === 'offer') {
-    await pc.setRemoteDescription(data.sdp);
+    await transportTask(pc, pc.setRemoteDescription(data.sdp));
     if (!current()) return;
-    for (const candidate of link.candidateQueue.splice(0)) await pc.addIceCandidate(candidate).catch(() => {});
+    for (const candidate of link.candidateQueue.splice(0)) await transportTask(pc, pc.addIceCandidate(candidate)).catch(() => {});
     if (!current()) return;
-    const answer = await pc.createAnswer();
+    const answer = await transportTask(pc, pc.createAnswer());
     if (!current()) return;
-    await pc.setLocalDescription(answer);
+    await transportTask(pc, pc.setLocalDescription(answer));
     if (!current()) return;
     signal(peerId, { type: 'answer', sdp: pc.localDescription });
   } else if (data.type === 'answer') {
     // An answer to an offer this link has since abandoned (a reset crossed it in
     // flight) would throw "wrong state: stable". The live negotiation continues.
     if (pc.signalingState !== 'have-local-offer') return;
-    await pc.setRemoteDescription(data.sdp);
+    await transportTask(pc, pc.setRemoteDescription(data.sdp));
     if (!current()) return;
-    for (const candidate of link.candidateQueue.splice(0)) await pc.addIceCandidate(candidate).catch(() => {});
+    for (const candidate of link.candidateQueue.splice(0)) await transportTask(pc, pc.addIceCandidate(candidate)).catch(() => {});
   } else if (data.type === 'ice' && data.candidate) {
-    if (pc.remoteDescription) await pc.addIceCandidate(data.candidate).catch(() => {});
+    if (pc.remoteDescription) await transportTask(pc, pc.addIceCandidate(data.candidate)).catch(() => {});
     // Bounded queue: a peer that floods candidates before answering cannot make
     // this tab buffer them without limit.
     else if (link.candidateQueue.length < CAPS.queuedIceCandidates) link.candidateQueue.push(data.candidate);
@@ -1212,7 +1280,7 @@ function abortLink(link, message) {
   link.incompatible = true;
   link.status = 'untrusted';
   try { link.dc?.close(); } catch {}
-  try { link.pc?.close(); } catch {}
+  try { closePeerConnection(link.pc); } catch {}
   toast(message);
   renderPeers();
   renderRooms();
@@ -1237,7 +1305,7 @@ function negotiateProtocol(link, hello) {
       ? `${who} speaks Evakage protocol ${theirMin}–${theirMax}; this build speaks ${MIN_PROTOCOL}–${PROTOCOL_VERSION}.`
       : `${who} is running an older Evakage that cannot negotiate a protocol version. Both sides need a reload.`);
     try { link.dc?.close(); } catch {}
-    try { link.pc?.close(); } catch {}
+    try { closePeerConnection(link.pc); } catch {}
     renderPeers();
     renderRooms();
     renderSession();
@@ -3906,7 +3974,7 @@ $('#refreshBtn').addEventListener('click', () => {
 window.addEventListener('beforeunload', () => {
   for (const link of state.links.values()) {
     try { link.dc?.close(); } catch {}
-    try { link.pc?.close(); } catch {}
+    try { closePeerConnection(link.pc); } catch {}
   }
 });
 

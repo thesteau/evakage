@@ -50,6 +50,40 @@ test.describe('pairing restoration ordering', () => {
   });
 });
 
+test.describe('abandoned SDP negotiation', () => {
+  test.use({ appPatch: { device: 'Both', patch: source => source
+    .replace('for (const peer of msg.paired || []) {', `
+      if (sessionStorage.getItem('stall-offer-on-reload')) await new Promise(resolve => { window.releasePairRestore = resolve; });
+      for (const peer of msg.paired || []) {`)
+    .replace('const offer = await transportTask(pc, pc.createOffer());', `
+      const stall = sessionStorage.getItem('stall-offer-on-reload');
+      if (stall) {
+        sessionStorage.removeItem('stall-offer-on-reload');
+        document.documentElement.dataset.offerStalled = '1';
+      }
+      const offer = await transportTask(pc, stall ? new Promise(() => {}) : pc.createOffer());`) } });
+
+  test('closing a transport unblocks signaling even if its SDP promise never settles', async ({ devices }) => {
+    const { alice, bob } = devices;
+    await openPeer(alice, 'Bob'); await openPeer(bob, 'Alice');
+    const aliceId = await alice.locator('#selfCode').getAttribute('data-device-id') || '';
+    const bobId = await bob.locator('#selfCode').getAttribute('data-device-id') || '';
+    const reloadAlice = aliceId.localeCompare(bobId) < 0;
+    const reloading = reloadAlice ? alice : bob;
+    const survivor = reloadAlice ? bob : alice;
+    await reloading.evaluate(() => sessionStorage.setItem('stall-offer-on-reload', '1'));
+    await reloading.reload();
+    await expect(reloading.locator('html')).toHaveAttribute('data-offer-stalled', '1');
+    await reloading.evaluate(() => {
+      const testWindow = /** @type {Window & {releasePairRestore: () => void}} */ (/** @type {unknown} */ (window));
+      testWindow.releasePairRestore();
+    });
+    await openPeer(reloading, reloadAlice ? 'Bob' : 'Alice');
+    await chat(reloading, survivor, 'Recovered from abandoned SDP');
+    await chat(survivor, reloading, 'Signaling queue is available');
+  });
+});
+
 test.describe('slow identity handshake', () => {
   test.use({ appPatch: { device: 'Alice', patch: source => source
     .replace("const keyPair = await crypto.subtle.generateKey({ name: 'ECDH'", `

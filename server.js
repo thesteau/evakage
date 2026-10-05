@@ -1311,7 +1311,7 @@ export function createEvakageServer({
         return;
       }
 
-      if (!registeredId || !clients.has(registeredId)) return;
+      if (!registeredId || clients.get(registeredId)?.ws !== ws) return;
 
       if (msg.type === 'account-connect') {
         const client = clients.get(registeredId);
@@ -1568,7 +1568,7 @@ export function createEvakageServer({
           : msg.data.type === 'knock'
             ? { type: 'knock' }
             : { type: msg.data.type, sdp: { type: msg.data.sdp.type, sdp: msg.data.sdp.sdp } };
-        json(target.ws, { type: 'signal', from: registeredId, data });
+        json(target.ws, { type: 'signal', from: registeredId, fromConnectedAt: clients.get(registeredId).connectedAt, data });
       }
     }
 

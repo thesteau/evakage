@@ -43,6 +43,48 @@ test('reload restores identity and history from the surviving peer', async ({ de
   expect(await fs.readFile(await download.path())).toEqual(bytes);
 });
 
+test.describe('reconnect before presence', () => {
+  test.use({ appPatch: { device: 'Both', patch: source => source.replace(
+    'function scheduleReconnect(peerId) {',
+    `function scheduleReconnect(peerId) {
+      if (sessionStorage.getItem('hold-close-retry')) return;`
+  ) } });
+
+  for (const role of ['offerer', 'answerer']) {
+    test(`a reloaded ${role} reconnects before replacement presence reaches the survivor`, async ({ devices }) => {
+      const { alice, bob, server } = devices;
+      await openPeer(alice, 'Bob'); await openPeer(bob, 'Alice');
+      const aliceId = await alice.locator('#selfCode').getAttribute('data-device-id') || '';
+      const bobId = await bob.locator('#selfCode').getAttribute('data-device-id') || '';
+      const reloadAlice = (aliceId.localeCompare(bobId) < 0) === (role === 'offerer');
+      const reloading = reloadAlice ? alice : bob;
+      const survivor = reloadAlice ? bob : alice;
+      await chat(reloading, survivor, `Before early ${role} reconnect`);
+      // Isolate signaling recovery from the browser's independently timed
+      // notification that the previous data channel has closed.
+      await survivor.evaluate(() => sessionStorage.setItem('hold-close-retry', '1'));
+      const recipient = server.clients.get(reloadAlice ? bobId : aliceId);
+      if (!recipient) throw new Error('Surviving device is not registered');
+      const send = recipient.ws.send.bind(recipient.ws);
+      let delayedPresence = '';
+      recipient.ws.send = (/** @type {string | Buffer} */ payload) => {
+        const message = JSON.parse(String(payload));
+        if (message.type === 'presence') {
+          // Keep the latest online frame; deliver it after signaling succeeds.
+          if (message.peers.some((/** @type {{id: string}} */ peer) => peer.id === (reloadAlice ? aliceId : bobId))) delayedPresence = String(payload);
+        } else send(payload);
+      };
+      await reloading.reload();
+      await openPeer(reloading, reloadAlice ? 'Bob' : 'Alice');
+      await chat(reloading, survivor, `After early ${role} reconnect`);
+      expect(delayedPresence).not.toBe('');
+      send(delayedPresence);
+      await survivor.evaluate(() => sessionStorage.removeItem('hold-close-retry'));
+      await chat(survivor, reloading, `Return early ${role} reconnect`);
+    });
+  }
+});
+
 for (const role of ['offerer', 'answerer']) {
   test(`reload with coalesced presence reconnects the ${role} and restores history`, async ({ devices }) => {
     const { alice, bob, server } = devices;
