@@ -3,26 +3,15 @@
 #
 #   cd deploy
 #   docker compose pull && docker compose up -d
-#
-# The image is a placeholder until you pin a real release. The default is what
-# the GHCR workflow publishes from main; override without editing this file:
-#
-#   EVAKAGE_IMAGE=ghcr.io/thesteau/aria-drop:sha-abc1234 docker compose up -d
 
 services:
   evakage:
-    image: ${EVAKAGE_IMAGE:-${ARIA_DROP_IMAGE:-ghcr.io/thesteau/aria-drop:latest}}
+    image: ghcr.io/thesteau/aria-drop:latest
     container_name: evakage
     restart: unless-stopped
     ports:
       - "3712:3000"
-    env_file:
-      - path: .env
-        required: false
-    environment:
-      PORT: "3000"
-      MAX_FILE_BYTES: "536870912"
-      ACCOUNTS_DB: ${ACCOUNTS_DB-/home/node/evakage-accounts/accounts.sqlite}
+    env_file: .env
     volumes:
       - account-data:/home/node/evakage-accounts
     # Only accounts persist. Buffered transfers stay inside the container.

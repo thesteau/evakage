@@ -5,7 +5,7 @@ use `docker-compose.yml` at the repository root.
 
 ```bash
 cd deploy
-cp .env.example .env        # optional
+cp .env.example .env        # required
 docker compose pull
 docker compose up -d
 ```
@@ -16,13 +16,11 @@ service workers, and installing the app.
 
 ## The image
 
-`ghcr.io/thesteau/aria-drop:latest` is a placeholder default: it is what the
-GHCR workflow publishes from `main`. To pin a build, set `EVAKAGE_IMAGE` in
-`.env` to a `sha-…` or version tag.
+The compose file runs `ghcr.io/thesteau/aria-drop:latest`, which is what the
+GHCR workflow publishes from `main`.
 
 The app is named Evakage; the existing repository and published image still use
-`thesteau/aria-drop`. `ARIA_DROP_IMAGE` remains a compatible fallback for existing
-configuration; `EVAKAGE_IMAGE` takes precedence.
+`thesteau/aria-drop`.
 
 ## Accounts and preferences
 
