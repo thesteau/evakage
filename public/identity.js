@@ -13,14 +13,14 @@
 
 // Compatibility identifiers: the Evakage rename must preserve device keys,
 // pairing records and the existing cryptographic protocol.
-const DB_NAME = 'aria-drop-identity';
+const DB_NAME = 'evakage-identity';
 const DB_VERSION = 1;
 const STORE = 'identity';
 const RECORD = 'device';
-const KNOWN_DEVICES_KEY = 'aria-drop-known-devices';
-const TRANSCRIPT_PREFIX = 'aria-drop/2';
-const SEAL_KEY_CONTEXT = 'aria-drop/sealkey/1';
-const SEAL_INFO = 'aria-drop/seal/1';
+const KNOWN_DEVICES_KEY = 'evakage-known-devices';
+const TRANSCRIPT_PREFIX = 'evakage/2';
+const SEAL_KEY_CONTEXT = 'evakage/sealkey/1';
+const SEAL_INFO = 'evakage/seal/1';
 
 const encoder = new TextEncoder();
 
@@ -75,7 +75,7 @@ export async function fingerprintOf(rawPublicKey) {
 /** @returns {Promise<import('./types.js').Identity>} */
 export async function loadIdentity() {
   // Serialize first-use key creation across tabs of the same browser profile.
-  if (navigator.locks) return navigator.locks.request('aria-drop-identity', loadIdentityRecord);
+  if (navigator.locks) return navigator.locks.request('evakage-identity', loadIdentityRecord);
   return loadIdentityRecord();
 }
 async function loadIdentityRecord() {
@@ -328,7 +328,7 @@ export function rememberDevice(fingerprint, name) {
   return record;
 }
 
-const REVOKED_PAIRINGS_KEY = 'aria-drop-revoked-pairings';
+const REVOKED_PAIRINGS_KEY = 'evakage-revoked-pairings';
 /** @returns {Set<string>} */
 function revokedPairings() {
   try {

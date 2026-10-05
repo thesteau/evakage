@@ -18,7 +18,7 @@ import { createEvakageServer } from '../server.js';
  * @param {Parameters<typeof createEvakageServer>[0] & {blobs?: object}} [options]
  */
 export async function startServer(t, options = {}) {
-  const dir = path.join(os.tmpdir(), `aria-drop-test-${crypto.randomBytes(6).toString('hex')}`);
+  const dir = path.join(os.tmpdir(), `evakage-test-${crypto.randomBytes(6).toString('hex')}`);
   const app = createEvakageServer({
     port: 0,
     host: '127.0.0.1',

@@ -198,7 +198,7 @@ test('allowlist requires possession of the identity key and a fresh socket chall
   const ws = await openWs(wsBase);
   t.after(() => ws.close());
   const challenge = (await waitFor(ws, m => m.type === 'registration-challenge')).challenge;
-  const proof = await signTranscript(keys.privateKey, JSON.stringify(['aria-drop/register/1', challenge, id]));
+  const proof = await signTranscript(keys.privateKey, JSON.stringify(['evakage/register/1', challenge, id]));
   const registered = waitFor(ws, m => m.type === 'registered');
   ws.send(JSON.stringify({ type: 'register', deviceId: id, identityKey: bytesToBase64(raw), registrationProof: proof }));
   assert.equal((await registered).self.id, id);

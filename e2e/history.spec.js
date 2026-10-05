@@ -68,7 +68,7 @@ test.describe('a hostile room history relayer', () => {
       inner.text = impersonated.text;
       const forgedInner = JSON.stringify(inner);
       impersonated.proof = { inner: forgedInner, identityKey: state.identity.identityKey,
-        signature: await signTranscript(state.identity.privateKey, JSON.stringify(['aria-drop/message/1', forgedInner])) };
+        signature: await signTranscript(state.identity.privateKey, JSON.stringify(['evakage/message/1', forgedInner])) };
       const wrongRoom = await signMessage(state.identity, 'room:another-room', {
         id: 'wrong-room-history', text: 'Wrong room fake', from: state.self.id, fromName: state.self.name, at: Date.now()
       });

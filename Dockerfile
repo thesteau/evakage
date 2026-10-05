@@ -6,7 +6,7 @@ FROM node:26-alpine
 ENV NODE_ENV=production \
     PORT=3000 \
     HOST=0.0.0.0 \
-    BLOB_DIR=/tmp/aria-drop-blobs \
+    BLOB_DIR=/tmp/evakage-blobs \
     ACCOUNTS_DB=/home/node/evakage-accounts/accounts.sqlite
 
 WORKDIR /app

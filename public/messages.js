@@ -1,7 +1,7 @@
 // Portable authorship proofs for live chat and peer-synced history.
 // Sign exact, versioned JSON with a separate cryptographic context.
 import { signTranscript, verifyTranscript, fingerprintOf, base64ToBytes } from './identity.js';
-const CONTEXT = 'aria-drop/message/1';
+const CONTEXT = 'evakage/message/1';
 const DEVICE_ID = /^[A-Za-z0-9_-]{43}$/;
 const encoder = new TextEncoder();
 

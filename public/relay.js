@@ -26,7 +26,7 @@ import {
 } from './identity.js';
 import { Sha256 } from './sha256.js';
 
-const ENVELOPE_CONTEXT = 'aria-drop/envelope/1';
+const ENVELOPE_CONTEXT = 'evakage/envelope/1';
 const IV_BYTES = 12;
 const TAG_BYTES = 16;
 export const CHUNK_OVERHEAD = IV_BYTES + TAG_BYTES;
@@ -43,7 +43,7 @@ export function cipherLayout(size, chunkSize) {
 
 /** @param {string} fileId @param {number} index @param {number} totalChunks */
 function chunkAad(fileId, index, totalChunks) {
-  return encoder.encode(`aria-drop/blob/1|${fileId}|${index}|${totalChunks}`);
+  return encoder.encode(`evakage/blob/1|${fileId}|${index}|${totalChunks}`);
 }
 
 /**

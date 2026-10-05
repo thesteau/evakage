@@ -28,7 +28,7 @@ test('account discovery requires identity-bound one-use tickets; sign-out revoke
     const ws = await openWs(wsBase);
     t.after(() => ws.close());
     const challenge = (await waitFor(ws, message => message.type === 'registration-challenge')).challenge;
-    const proof = await signTranscript(keys.privateKey, JSON.stringify(['aria-drop/register/1', challenge, id]));
+    const proof = await signTranscript(keys.privateKey, JSON.stringify(['evakage/register/1', challenge, id]));
     const registered = waitFor(ws, message => message.type === 'registered');
     ws.send(JSON.stringify({ type: 'register', deviceId: id, identityKey: bytesToBase64(raw), registrationProof: proof }));
     await registered;
@@ -97,15 +97,15 @@ test('accounts are optional; durable preferences sync with conflict protection a
   const other = await request(base, 'login', credentials);
   assert.equal(other.status, 200);
   const otherCookie = other.headers.get('set-cookie')?.split(';')[0] || '';
-  const preferences = { 'aria-drop-theme': 'dark', 'aria-drop-incoming': 'always', 'aria-drop-verified-only': '1' };
+  const preferences = { 'evakage-theme': 'dark', 'evakage-incoming': 'always', 'evakage-verified-only': '1' };
   const saved = await request(base, 'preferences', { preferences, revision: 0 }, cookie, 'PUT');
   assert.equal(saved.status, 200);
   assert.equal((await saved.json()).revision, 1);
   const synced = await fetch(`${base}/account/session`, { headers: { cookie: otherCookie } }).then(r => r.json());
   assert.deepEqual(synced.preferences, preferences);
   assert.equal((await request(base, 'preferences', { preferences, revision: 0 }, otherCookie, 'PUT')).status, 409);
-  assert.equal((await request(base, 'preferences', { preferences: { 'aria-drop-known-devices': 'secret' }, revision: 1 }, cookie, 'PUT')).status, 400);
-  assert.equal((await request(base, 'preferences', { preferences: { 'aria-drop-discoverable': '1' }, revision: 1 }, cookie, 'PUT')).status, 400);
+  assert.equal((await request(base, 'preferences', { preferences: { 'evakage-known-devices': 'secret' }, revision: 1 }, cookie, 'PUT')).status, 400);
+  assert.equal((await request(base, 'preferences', { preferences: { 'evakage-discoverable': '1' }, revision: 1 }, cookie, 'PUT')).status, 400);
   assert.equal((await fetch(`${base}/account/preferences`, { method: 'PUT', headers: { origin: 'https://evil.example', 'content-type': 'application/json', cookie }, body: '{}' })).status, 403);
   assert.equal((await request(base, 'preferences', { preferences, revision: 1 }, '', 'PUT')).status, 401);
   await request(base, 'logout', {}, cookie);
@@ -136,8 +136,8 @@ test('SQLite coordinates independent connections without duplicate accounts or l
   const signedIn = await Promise.all([request(first.base, 'login', credentials), request(second.base, 'login', credentials)]);
   const cookies = signedIn.map(response => response.headers.get('set-cookie')?.split(';')[0] || '');
   const writes = await Promise.all([
-    request(first.base, 'preferences', { preferences: { 'aria-drop-theme': 'dark' }, revision: 0 }, cookies[0], 'PUT'),
-    request(second.base, 'preferences', { preferences: { 'aria-drop-theme': 'light' }, revision: 0 }, cookies[1], 'PUT')
+    request(first.base, 'preferences', { preferences: { 'evakage-theme': 'dark' }, revision: 0 }, cookies[0], 'PUT'),
+    request(second.base, 'preferences', { preferences: { 'evakage-theme': 'light' }, revision: 0 }, cookies[1], 'PUT')
   ]);
   assert.deepEqual(writes.map(response => response.status).sort(), [200, 409]);
   const winner = await writes.find(response => response.status === 200)?.json();

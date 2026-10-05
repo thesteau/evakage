@@ -50,7 +50,7 @@ test('account devices connect privately, exchange content, and sign-out destroys
     for (const page of [computer, phone]) {
       await expect(page.locator('#sessionPanel')).toBeVisible();
       await expect(page.locator('#peerRows')).toContainText('Your account');
-      expect(await page.evaluate(() => localStorage.getItem('aria-drop-discoverable'))).toBeNull();
+      expect(await page.evaluate(() => localStorage.getItem('evakage-discoverable'))).toBeNull();
       await expect(page.locator('#secureState')).toContainText('Encrypted');
     }
     await expect(outsider.locator('#peerRows tr')).toHaveCount(1);
@@ -120,7 +120,7 @@ test('optional account preferences sync between profiles without merging identit
       await page.getByRole('button', { name: page === first ? 'Create account' : 'Sign in', exact: true }).click();
       await expect(page.locator('#accountStatus')).toContainText('Signed in as sync_owner');
       if (page === first) {
-        await page.evaluate(() => { localStorage.setItem('aria-drop-theme', 'dark'); localStorage.setItem('aria-drop-incoming', 'always'); localStorage.setItem('aria-drop-discoverable', '1'); });
+        await page.evaluate(() => { localStorage.setItem('evakage-theme', 'dark'); localStorage.setItem('evakage-incoming', 'always'); localStorage.setItem('evakage-discoverable', '1'); });
         await page.locator('#accountSave').click();
         await expect(page.locator('#accountStatus')).toContainText('Preferences saved');
         await page.locator('#accountDialog').getByRole('button', { name: 'Done' }).click();
@@ -128,8 +128,8 @@ test('optional account preferences sync between profiles without merging identit
     }
     await Promise.all([second.waitForEvent('load'), second.locator('#accountLoad').click()]);
     await expect(second.locator('#selfCode')).toHaveAttribute('data-device-id', secondId || '');
-    await expect.poll(() => second.evaluate(() => localStorage.getItem('aria-drop-theme'))).toBe('dark');
-    expect(await second.evaluate(() => localStorage.getItem('aria-drop-discoverable'))).toBeNull();
+    await expect.poll(() => second.evaluate(() => localStorage.getItem('evakage-theme'))).toBe('dark');
+    expect(await second.evaluate(() => localStorage.getItem('evakage-discoverable'))).toBeNull();
     await expect(second.locator('#sessionPanel')).toBeVisible();
     await second.locator('#closeSession').click();
     await second.getByRole('button', { name: 'Settings', exact: true }).click();

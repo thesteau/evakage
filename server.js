@@ -134,7 +134,7 @@ function parseCookies(header) {
   return out;
 }
 
-const AUTH_COOKIE = 'aria_drop_auth';
+const AUTH_COOKIE = 'evakage_auth';
 
 // Applied to every response, not just static files, so an error or JSON reply is
 // not the one path without them. noindex because a homelab tool that ends up
@@ -586,13 +586,10 @@ function verifyRegistration(msg, challenge) {
         crypto.createHash('sha256').update(raw).digest('base64url') !== msg.deviceId) return false;
     const key = crypto.createPublicKey({ format: 'jwk', key: { kty: 'EC', crv: 'P-256',
       x: raw.subarray(1, 33).toString('base64url'), y: raw.subarray(33).toString('base64url') } });
-    return crypto.verify('sha256', Buffer.from(JSON.stringify(['aria-drop/register/1', challenge, msg.deviceId])),
+    return crypto.verify('sha256', Buffer.from(JSON.stringify(['evakage/register/1', challenge, msg.deviceId])),
       { key, dsaEncoding: 'ieee-p1363' }, signature);
   } catch { return false; }
 }
-
-// Retain the previous factory export for integrations using the original name.
-export { createEvakageServer as createAriaDropServer };
 
 export function createEvakageServer({
   port = Number(process.env.PORT || 3000),
@@ -637,7 +634,7 @@ export function createEvakageServer({
   // The cookie carries an HMAC of a constant, so holding it never reveals the
   // token, and it stays valid only while the server keeps the same secret.
   function authCookieValue() {
-    return crypto.createHmac('sha256', authToken).update('aria-drop-session-v1').digest('base64url');
+    return crypto.createHmac('sha256', authToken).update('evakage-session-v1').digest('base64url');
   }
 
   /** @param {import('node:http').IncomingMessage} req */

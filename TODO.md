@@ -80,7 +80,7 @@ This replaces historical backlog entries that no longer matched the checkout.
   **24/24** in Chromium; **21/21** in Firefox and in WebKit (the CDP-throttled
   revocation case is Chromium-only).
 - `npm audit --audit-level=high`: zero reported vulnerabilities.
-- Docker image `aria-drop-review:20261004` builds. The isolated non-root container
+- Docker image `evakage-review:20261004` builds. The isolated non-root container
   returns healthy status, protocol 3 configuration and correct module MIME;
   it was stopped afterward. Nothing was published or deployed.
 - Service-worker cache evakage-v19 includes signed-message, vendored QR modules, the foreground

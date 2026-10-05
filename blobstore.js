@@ -41,7 +41,7 @@ const HOUR_MS = 60 * MINUTE_MS;
 const DAY_MS = 24 * HOUR_MS;
 
 export const BLOB_DEFAULTS = {
-  dir: process.env.BLOB_DIR || path.join(os.tmpdir(), 'aria-drop-blobs'),
+  dir: process.env.BLOB_DIR || path.join(os.tmpdir(), 'evakage-blobs'),
   maxBlobBytes: Number(process.env.MAX_FILE_BYTES || 512 * 1024 * 1024),
   maxStoreBytes: Number(process.env.BLOB_STORE_BYTES || 4 * 1024 * 1024 * 1024),
   maxBlobsPerDevice: Number(process.env.BLOB_PER_DEVICE || 32),

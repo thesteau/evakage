@@ -172,7 +172,7 @@ Large files remain the weak spot on phones. Relayed files are verified and then 
 | `ALLOWED_ORIGINS` | *(same host)* | Comma-separated exact origins permitted to open the WebSocket. Unset means "must match the request's own host", which is what you want behind a normal reverse proxy. |
 | `TRUST_PROXY` | `0` | Set to `1` only when a proxy you control sits in front. It makes the server believe `X-Forwarded-Host` (for origin checks) and `X-Forwarded-For` (for per-address limits). Leave it off if clients can reach the port directly, or they can spoof both. |
 | `ACCOUNTS_DB` | `/home/node/evakage-accounts/accounts.sqlite` in Docker; unset for Node | Optional SQLite account database path. Use a separate persistent account volume; no text or files are stored here. |
-| `BLOB_DIR` | `/tmp/aria-drop-blobs` in the image | Where relayed messages and files wait, one subdirectory per conversation. Keep it inside the container; do not mount a volume here. |
+| `BLOB_DIR` | `/tmp/evakage-blobs` in the image | Where relayed messages and files wait, one subdirectory per conversation. Keep it inside the container; do not mount a volume here. |
 | `BLOB_IDLE_GRACE_MS` | `900000` (15 min) | How long an item outlives the moment every device party to it disconnected. |
 | `BLOB_SOLO_MAX_MS` | `10800000` (3h) | How long a one-to-one conversation may sit with only one device present before its items expire. Rooms are exempt. Also how long an offline device stays listed as reachable, and how long an away member keeps its room seat. |
 | `BLOB_MAX_AGE_MS` | `259200000` (3 days) | Absolute ceiling from offer creation, however alive the session is. |

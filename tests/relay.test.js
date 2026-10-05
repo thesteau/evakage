@@ -46,7 +46,7 @@ test('advertised identity verification rejects missing keys, key substitutions a
   const stranger = await makeIdentity();
   const sealKey = bytesToBase64(owner.sealRaw);
   const record = { deviceId: owner.deviceId, identityKey: owner.identityKey, sealKey,
-    sealKeySignature: await signTranscript(owner.privateKey, `aria-drop/sealkey/1|${sealKey}`) };
+    sealKeySignature: await signTranscript(owner.privateKey, `evakage/sealkey/1|${sealKey}`) };
   assert.ok(await verifyAdvertisedIdentity(record));
   for (const field of ['identityKey', 'sealKey', 'sealKeySignature']) {
     assert.equal(await verifyAdvertisedIdentity({ ...record, [field]: undefined }), null);
@@ -156,7 +156,7 @@ test('an envelope claiming a sender it was not signed by is refused', async () =
     sha256: '0'.repeat(64), chunkSize: 1024, totalChunks: 1, addedAt: 0, fromName: 'Victim',
     contentKey: bytesToBase64(crypto.randomBytes(32))
   });
-  const signature = await signTranscript(forger.privateKey, `aria-drop/envelope/1|${inner}`);
+  const signature = await signTranscript(forger.privateKey, `evakage/envelope/1|${inner}`);
   const { seal } = await import('../public/identity.js');
   const box = await seal(recipient.sealRaw, new TextEncoder().encode(JSON.stringify({ inner, signature })));
 
@@ -246,7 +246,7 @@ test('a relayed message claiming an author who did not sign it is refused', asyn
     senderIdentityKey: victim.identityKey, conv: 'direct',
     message: { id: crypto.randomUUID(), text: 'I am the victim', at: 1, fromName: 'Victim' }
   });
-  const signature = await signTranscript(forger.privateKey, `aria-drop/envelope/1|${inner}`);
+  const signature = await signTranscript(forger.privateKey, `evakage/envelope/1|${inner}`);
   const { seal } = await import('../public/identity.js');
   const box = await seal(recipient.sealRaw, new TextEncoder().encode(JSON.stringify({ inner, signature })));
 

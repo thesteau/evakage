@@ -211,7 +211,7 @@ accountEvents?.addEventListener('message', event => {
   if (event.data === 'sign-out') clearSignedOutDevice(false);
 });
 window.addEventListener('storage', event => {
-  if (event.key === 'aria-drop-account-signout' && event.newValue) clearSignedOutDevice(false);
+  if (event.key === 'evakage-account-signout' && event.newValue) clearSignedOutDevice(false);
 });
 
 /** @param {boolean} [broadcast] */
@@ -220,7 +220,7 @@ function clearSignedOutDevice(broadcast = true) {
   signingOut = true;
   if (broadcast) {
     accountEvents?.postMessage('sign-out');
-    try { localStorage.setItem('aria-drop-account-signout', crypto.randomUUID()); } catch {}
+    try { localStorage.setItem('evakage-account-signout', crypto.randomUUID()); } catch {}
   }
   accountGeneration++;
   accountPeerIds.clear();
@@ -228,7 +228,7 @@ function clearSignedOutDevice(broadcast = true) {
     if (record.blocked || record.hidden) revokePairing(id);
     else forgetDevice(id);
   }
-  try { localStorage.setItem('aria-drop-discoverable', '0'); } catch {}
+  try { localStorage.setItem('evakage-discoverable', '0'); } catch {}
   for (const send of state.activeSends.values()) send.cancelled = true;
   for (const conv of state.conversations.values()) {
     for (const file of conv.files.values()) file.relayAbort?.abort();
@@ -494,10 +494,10 @@ function connectWebSocket() {
       wsSend({
         type: 'register',
         deviceId: identity.deviceId,
-        registrationProof: await signTranscript(identity.privateKey, JSON.stringify(['aria-drop/register/1', msg.challenge, identity.deviceId])),
+        registrationProof: await signTranscript(identity.privateKey, JSON.stringify(['evakage/register/1', msg.challenge, identity.deviceId])),
         platform: detectPlatform(),
         browser: detectBrowser(),
-        discoverable: localStorage.getItem('aria-drop-discoverable') === '1',
+        discoverable: localStorage.getItem('evakage-discoverable') === '1',
         // Published so others can seal a relayed file to this device. The server
         // passes these through untouched; receivers verify them, not the server.
         identityKey: identity.identityKey,
@@ -1054,7 +1054,7 @@ async function ensureLink(peerId, force = false) {
   const initiator = state.self.id.localeCompare(peerId) < 0;
   if (initiator) {
     const pc = link.pc;
-    const dc = pc.createDataChannel('aria-drop-v1', { ordered: true });
+    const dc = pc.createDataChannel('evakage-v1', { ordered: true });
     setupDataChannel(link, dc);
     try {
       const offer = await transportTask(pc, pc.createOffer());
@@ -3898,24 +3898,24 @@ selfCode.addEventListener('click', async () => {
 function setupSettings() {
   const discoverable = document.querySelector('#discoverableInput');
   if (discoverable instanceof HTMLInputElement) {
-    discoverable.checked = localStorage.getItem('aria-drop-discoverable') === '1';
+    discoverable.checked = localStorage.getItem('evakage-discoverable') === '1';
     discoverable.addEventListener('change', () => {
-      localStorage.setItem('aria-drop-discoverable', discoverable.checked ? '1' : '0');
+      localStorage.setItem('evakage-discoverable', discoverable.checked ? '1' : '0');
       wsSend({ type: 'set-discoverable', enabled: discoverable.checked });
     });
   }
   const verifiedOnlyInput = $('#verifiedOnlyInput');
-  try { state.verifiedOnly = localStorage.getItem('aria-drop-verified-only') === '1'; } catch {}
+  try { state.verifiedOnly = localStorage.getItem('evakage-verified-only') === '1'; } catch {}
   verifiedOnlyInput.checked = state.verifiedOnly;
   verifiedOnlyInput.addEventListener('change', () => {
     state.verifiedOnly = verifiedOnlyInput.checked;
-    try { localStorage.setItem('aria-drop-verified-only', state.verifiedOnly ? '1' : '0'); } catch {}
+    try { localStorage.setItem('evakage-verified-only', state.verifiedOnly ? '1' : '0'); } catch {}
     renderSession();
   });
   const dialog = $('#settingsDialog');
   const radios = [...dialog.querySelectorAll('input[name="incomingPolicy"]')];
   try {
-    const stored = localStorage.getItem('aria-drop-incoming') || '';
+    const stored = localStorage.getItem('evakage-incoming') || '';
     if (INCOMING_POLICIES.includes(stored)) state.incomingPolicy = stored;
   } catch {}
   for (const radio of radios) {
@@ -3924,7 +3924,7 @@ function setupSettings() {
     radio.addEventListener('change', () => {
       if (!radio.checked) return;
       state.incomingPolicy = radio.value;
-      try { localStorage.setItem('aria-drop-incoming', radio.value); } catch {}
+      try { localStorage.setItem('evakage-incoming', radio.value); } catch {}
     });
   }
   $('#settingsBtn').addEventListener('click', () => {
@@ -3937,11 +3937,11 @@ function setupRelayToggle() {
   const input = $('#forceRelayInput');
   // Only offered when the server actually runs the relay.
   toggle.classList.toggle('hidden', !relayEnabled());
-  try { state.forceRelay = localStorage.getItem('aria-drop-force-relay') === '1'; } catch {}
+  try { state.forceRelay = localStorage.getItem('evakage-force-relay') === '1'; } catch {}
   input.checked = state.forceRelay;
   input.addEventListener('change', () => {
     state.forceRelay = input.checked;
-    try { localStorage.setItem('aria-drop-force-relay', input.checked ? '1' : '0'); } catch {}
+    try { localStorage.setItem('evakage-force-relay', input.checked ? '1' : '0'); } catch {}
   });
 }
 
@@ -4008,13 +4008,13 @@ function applyTheme(theme) {
   themeIcon.textContent = THEME_GLYPH[chosen];
   themeBtn.setAttribute('aria-label', THEME_LABEL[chosen]);
   themeBtn.title = `${THEME_LABEL[chosen]} (click to change)`;
-  try { localStorage.setItem('aria-drop-theme', chosen); } catch {}
+  try { localStorage.setItem('evakage-theme', chosen); } catch {}
   state.theme = chosen;
 }
 
 function setupTheme() {
   let stored = 'system';
-  try { stored = localStorage.getItem('aria-drop-theme') || 'system'; } catch {}
+  try { stored = localStorage.getItem('evakage-theme') || 'system'; } catch {}
   applyTheme(stored);
   themeBtn.addEventListener('click', () => {
     applyTheme(THEMES[(THEMES.indexOf(state.theme) + 1) % THEMES.length]);

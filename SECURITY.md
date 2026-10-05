@@ -79,7 +79,7 @@ send until verified. This is recipient approval, not a signed group-membership
 protocol; enabled policies protect only the browsers that enforce them.
 
 `DEVICE_ALLOWLIST` checks full fingerprints plus a P-256 possession proof bound
-to a random challenge for each socket (`aria-drop/register/1`). Copying an allowed
+to a random challenge for each socket (`evakage/register/1`). Copying an allowed
 fingerprint, presenting another public key or replaying a proof on a new socket
 is refused. Removing an entry and restarting revokes server access. An empty
 list intentionally preserves trusted-network access. A compromised server that

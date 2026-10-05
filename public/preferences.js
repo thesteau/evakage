@@ -1,6 +1,6 @@
 // Only preferences are synced. Identity keys, pairing/verification decisions,
 // advertising consent, messages, and files remain local to this browser.
-const KEYS = ['aria-drop-theme', 'aria-drop-incoming', 'aria-drop-verified-only', 'aria-drop-force-relay'];
+const KEYS = ['evakage-theme', 'evakage-incoming', 'evakage-verified-only', 'evakage-force-relay'];
 /** @param {string} route @param {object | undefined} [body] @param {string} [method] */
 async function request(route, body, method = 'POST') {
   const response = await fetch(`/account/${route}`, body ? { method, headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) } : { cache: 'no-store' });
@@ -47,7 +47,7 @@ export function setupAccounts(callbacks) {
     run(async () => update(await request(submitter?.value === 'register' ? 'register' : 'login', { username: username.value, password: password.value })));
   });
   save.addEventListener('click', () => run(async () => {
-    const preferences = Object.fromEntries(KEYS.map(key => [key, localStorage.getItem(key) || (key === 'aria-drop-theme' ? 'system' : key === 'aria-drop-incoming' ? 'new' : '0')]));
+    const preferences = Object.fromEntries(KEYS.map(key => [key, localStorage.getItem(key) || (key === 'evakage-theme' ? 'system' : key === 'evakage-incoming' ? 'new' : '0')]));
     const value = await request('preferences', { preferences, revision }, 'PUT');
     revision = value.revision;
     status.textContent = 'Preferences saved. Load them on your other signed-in browsers.';

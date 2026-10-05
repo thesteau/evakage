@@ -6,19 +6,17 @@
 
 services:
   evakage:
-    image: ghcr.io/thesteau/aria-drop:latest
+    image: ghcr.io/thesteau/evakage:latest
     container_name: evakage
     restart: unless-stopped
     ports:
       - "3712:3000"
     env_file: .env
     volumes:
-      - account-data:/home/node/evakage-accounts
+      - ./account-data:/home/node/evakage-accounts
     # Only accounts persist. Buffered transfers stay inside the container.
     # Never mount BLOB_DIR.
     security_opt:
       - no-new-privileges:true
     cap_drop:
       - ALL
-volumes:
-  account-data:

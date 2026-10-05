@@ -16,11 +16,8 @@ service workers, and installing the app.
 
 ## The image
 
-The compose file runs `ghcr.io/thesteau/aria-drop:latest`, which is what the
+The compose file runs `ghcr.io/thesteau/evakage:latest`, which is what the
 GHCR workflow publishes from `main`.
-
-The app is named Evakage; the existing repository and published image still use
-`thesteau/aria-drop`.
 
 ## Accounts and preferences
 
@@ -36,7 +33,7 @@ set `TRUST_PROXY=1` so account session cookies are Secure.
 
 Messages and files that cannot go directly between devices are held by the
 server, sealed so it cannot read them. They are stored **inside the container**
-(`/tmp/aria-drop-blobs`), one directory per conversation, and there is
+(`/tmp/evakage-blobs`), one directory per conversation, and there is
 intentionally no relay volume, so they are never exposed on the host and cannot
 outlive the container.
 

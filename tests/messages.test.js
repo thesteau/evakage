@@ -22,7 +22,7 @@ async function rawProof(value, conversation, signer) {
   const inner = JSON.stringify({ v: 1, scope: conversation, id: value.id, from: value.from,
     fromName: value.fromName, at: value.at, text: value.text });
   return { ...value, proof: { inner, identityKey: signer.identityKey,
-    signature: await signTranscript(signer.privateKey, JSON.stringify(['aria-drop/message/1', inner])) } };
+    signature: await signTranscript(signer.privateKey, JSON.stringify(['evakage/message/1', inner])) } };
 }
 
 test('portable message proof round-trips independent of relayer and ignores unsigned trust flags', async () => {

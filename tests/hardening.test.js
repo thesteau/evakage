@@ -161,7 +161,7 @@ test('AUTH_TOKEN gates the page and the upgrade, and the token can be traded for
   assert.equal(exchanged.status, 302);
   const setCookie = exchanged.headers.get('set-cookie');
   assert.ok(setCookie);
-  assert.match(setCookie, /^aria_drop_auth=/);
+  assert.match(setCookie, /^evakage_auth=/);
   assert.match(setCookie, /HttpOnly/);
   assert.match(setCookie, /SameSite=Strict/);
   // The redirect target must not carry the token onward.
@@ -172,7 +172,7 @@ test('AUTH_TOKEN gates the page and the upgrade, and the token can be traded for
 
   assert.equal(await rawUpgrade(port), 401);
   assert.equal(await rawUpgrade(port, { Cookie: cookie }), 101);
-  assert.equal(await rawUpgrade(port, { Cookie: 'aria_drop_auth=forged' }), 401);
+  assert.equal(await rawUpgrade(port, { Cookie: 'evakage_auth=forged' }), 401);
 });
 
 test('static serving refuses traversal and sends security headers everywhere', async t => {

@@ -4,10 +4,10 @@ import path from 'node:path';
 
 /** @typedef {{salt: string, hash: string, preferences: Record<string, string>, revision: number}} Account */
 const OPTIONS = {
-  'aria-drop-theme': ['system', 'light', 'dark'],
-  'aria-drop-incoming': ['new', 'always', 'auto'],
-  'aria-drop-verified-only': ['0', '1'],
-  'aria-drop-force-relay': ['0', '1']
+  'evakage-theme': ['system', 'light', 'dark'],
+  'evakage-incoming': ['new', 'always', 'auto'],
+  'evakage-verified-only': ['0', '1'],
+  'evakage-force-relay': ['0', '1']
 };
 /** @param {unknown} value @returns {Record<string, string> | null} */
 export function validatePreferences(value) {

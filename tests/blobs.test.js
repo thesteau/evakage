@@ -455,7 +455,7 @@ test('file and message quotas are separate, and the file size limit holds', asyn
 });
 
 test('starting the server erases everything a previous process left, directories included', async t => {
-  const dir = path.join(os.tmpdir(), `aria-drop-stale-${crypto.randomBytes(6).toString('hex')}`);
+  const dir = path.join(os.tmpdir(), `evakage-stale-${crypto.randomBytes(6).toString('hex')}`);
   await fsp.mkdir(path.join(dir, 'd-leftover'), { recursive: true });
   await fsp.writeFile(path.join(dir, 'd-leftover', 'item.bin'), 'orphaned bytes');
   await startServer(t, { blobs: { dir } });
@@ -463,7 +463,7 @@ test('starting the server erases everything a previous process left, directories
 });
 
 test('`node server.js --sweep-blobs` removes only items past the age, then emptied directories', async t => {
-  const dir = path.join(os.tmpdir(), `aria-drop-cron-${crypto.randomBytes(6).toString('hex')}`);
+  const dir = path.join(os.tmpdir(), `evakage-cron-${crypto.randomBytes(6).toString('hex')}`);
   t.after(() => fsp.rm(dir, { recursive: true, force: true }));
 
   // One conversation holding only old items, one holding a young item, and one

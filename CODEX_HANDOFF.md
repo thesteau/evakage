@@ -53,10 +53,10 @@ npm run lint
 npm run typecheck
 npm test
 
-docker build -t aria-drop:test .
-docker run --rm -d --name aria-drop-test -p 3712:3000 aria-drop:test
+docker build -t evakage:test .
+docker run --rm -d --name evakage-test -p 3712:3000 evakage:test
 curl -fsS http://127.0.0.1:3712/healthz   # {"ok":true,"peers":0,"rooms":0}
-docker stop aria-drop-test
+docker stop evakage-test
 ```
 
 The `node --test` suite covers:
@@ -102,7 +102,7 @@ Items 3, 4 and 5, and the zero-byte case in 7, were reproduced headlessly on loo
 
 - **Docker build/run verified**, including `/healthz` and `/config.json` from inside the container.
 - **Multi-party rooms implemented** — room IDs and server-side membership, full-mesh DataChannels for up to six devices, the room-survives-while-one-member-remains deletion rule (including restoring a room after a signaling blip), CRDT-style merge of message/file manifests by immutable ID instead of an elected survivor, and metadata-only rejoin with on-demand byte retrieval.
-- **Renamed to `aria-drop`.** The name now appears in `package.json`, `docker-compose.yml`, the manifest, the service-worker cache key, the `localStorage` keys, the DataChannel label (`aria-drop-v1`), and `createAriaDropServer`. Existing browsers will mint a new device identity once, because the `localStorage` keys changed.
+- **Renamed to `evakage`.** The name appears in `package.json`, `docker-compose.yml`, the manifest, the service-worker cache key, the `localStorage` and IndexedDB keys, the signing and sealing contexts, the DataChannel label (`evakage-v1`), and `createEvakageServer`. Existing browsers mint a new device identity once, because those keys changed.
 - **Server hardening done** — message schema validation, per-connection and per-address rate limiting, WebSocket origin checks with a proxy-aware allowlist, optional `AUTH_TOKEN` access control, and validated re-serialisation of signaling payloads. Dependency and container scanning wired into CI.
 - **Protocol and integrity done** — version negotiation, SHA-256 verification of every transfer, transfer IDs with cancel and chunk-level resume, bounded reconnect, and client-side memory caps.
 - **Signed device identity (protocol v2).** Device IDs are now SHA-256 fingerprints of a long-lived, non-extractable ECDSA P-256 key held in IndexedDB, and peers sign a transcript binding both ephemeral keys and both nonces. The signaling server is no longer trusted for identity. Safety codes are derived from the long-lived fingerprints, so they are stable across sessions; devices are remembered on first use and marked `new`/`known`.
@@ -216,7 +216,7 @@ Still open:
 
 ### Name / release housekeeping — done
 
-Renamed from the `drop-pak` working codename to `aria-drop`. The name is still confined to a small number of obvious files if it ever has to change again.
+Renamed from the earlier working codenames to `evakage`. The name is still confined to a small number of obvious files if it ever has to change again.
 
 ## Deliberate non-goals in v0.1
 

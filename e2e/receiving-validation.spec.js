@@ -74,8 +74,8 @@ engineTest('simulated phone verifies a 32 MiB relay file before Save', async ({ 
       const context = await browser.newContext(profiles['Pixel 7']);
       contexts.push(context);
       await context.addInitScript(() => {
-        localStorage.setItem('aria-drop-force-relay', '1');
-        localStorage.setItem('aria-drop-incoming', 'auto');
+        localStorage.setItem('evakage-force-relay', '1');
+        localStorage.setItem('evakage-incoming', 'auto');
       });
       const page = await context.newPage();
       page.on('pageerror', error => errors.push(error.message));

@@ -13,13 +13,13 @@ if (!Number.isInteger(repeat) || repeat < 1 || repeat > 10 ||
   throw new Error('Usage: node benchmarks/room-turn.mjs [--mobile] [--repeat=1..10]');
 }
 const root = fileURLToPath(new URL('../', import.meta.url));
-const name = `aria-drop-turn-${randomUUID()}`;
+const name = `evakage-turn-${randomUUID()}`;
 const credential = randomBytes(24).toString('hex');
 const image = 'coturn/coturn@sha256:bbefd3e1fdfdc0d58770fe01b581fd8b00d9f3a5580d00acb77cf719a6bc78e3';
 const output = path.join(os.tmpdir(), name);
 try {
   execFileSync('docker', ['run', '-d', '--name', name, '-p', '127.0.0.1::3478/tcp', image,
-    '--no-tls', '--fingerprint', '--lt-cred-mech', '--realm=aria-drop-local-test',
+    '--no-tls', '--fingerprint', '--lt-cred-mech', '--realm=evakage-local-test',
     `--user=aria-test:${credential}`, '--listening-ip=0.0.0.0', '--relay-ip=127.0.0.1',
     '--min-port=50000', '--max-port=50079', '--allow-loopback-peers',
     '--log-file=stdout', '--simple-log'], { cwd: root, timeout: 120000, stdio: ['ignore', 'pipe', 'pipe'] });
