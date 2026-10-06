@@ -4008,10 +4008,10 @@ function renderSessionNow() {
 
   sessionTitle.textContent = conversationTitle(conv);
   sessionKind.textContent = isSelfConversation(conv)
-    ? 'private notes'
+    ? 'temporary encrypted private notes'
     : conv.kind === 'room'
-      ? 'ephemeral room'
-      : 'ephemeral session';
+      ? 'temporary room · end-to-end encrypted'
+      : 'temporary session · end-to-end encrypted';
   leaveRoomBtn.classList.toggle('hidden', conv.kind !== 'room');
   // Only a room has a code worth sharing from here, and self-notes always go
   // through the server, so neither control means anything elsewhere.

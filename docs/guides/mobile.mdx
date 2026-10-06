@@ -1,29 +1,39 @@
 ---
 title: "Phones and tablets"
-description: "Install the app and understand mobile transfer limits."
+description: "Install Evakage and keep transfers running."
 ---
 
-Open the server URL and install it:
+## Install the app
 
-- **Android / Chrome / Edge** — open **Settings → Install app** and choose **Install Evakage** when available; the browser's own install prompt also works.
-- **iOS / Safari** — Share → *Add to Home Screen*. Settings explains the manual installation steps when the browser cannot offer an install prompt.
+Open your Evakage HTTPS URL, then:
 
-Once installed it runs full-screen with no browser chrome, respects display cutouts and home indicators, and the app shell opens offline (it will simply report signaling as disconnected until it can reach the server).
+| Device | Install |
+| --- | --- |
+| Android / Chrome / Edge | **Settings → Install app**, or use the browser's install prompt |
+| iPhone / iPad / Safari | **Share → Add to Home Screen** |
 
-Mobile-specific behaviour:
+Installation is optional. The browser page works too.
 
-Keep the app open and the screen unlocked on both devices until transfers finish.
-Switching apps or locking your phone can interrupt a transfer. Background transfers
-are not guaranteed, even when wake lock is available.
+## Keep transfers running
 
-- **Layout.** At 700px and below, device and room tables become labelled cards, with controls sized for touch.
-- **Backgrounding.** iOS tears down WebSockets and peer connections when you lock the screen or switch apps. Returning to the foreground re-checks signaling and rebuilds any dead links rather than waiting on a timer that was suspended too.
-- **Screen lock during transfers.** A screen wake lock is requested only while a transfer or hash is actually in flight, and released as soon as nothing is. Browser support and permission vary; keep the screen unlocked yourself if needed.
-- **Share target.** Once installed, Evakage appears in the share sheet of other apps. Shared text or a link is prefilled in the composer; shared files wait behind a banner until you pick a device or room — including a device that is offline, which gets them through the relay. The files are caught by the service worker and never reach the server unencrypted. (Android and desktop Chrome/Edge; iOS does not support web share targets.)
-- **Updates.** A new build never reloads the page underneath you; a banner offers the reload, so an in-flight transfer is not interrupted.
+Keep Evakage open and the screen unlocked on both devices until the transfer finishes. Switching apps or locking the screen can interrupt it. Background transfers are not guaranteed.
 
-The share-sheet path has a 16 MiB limit, including text and packaging. For larger
-files, open a conversation and use **Send file**; the configured per-file limit
-is 512 MiB by default.
+Evakage requests a screen wake lock during transfers when supported. On return, it reconnects and checks its connections.
 
-Large files remain the weak spot on phones. Relayed files are verified and then streamed to disk on Save without being held in memory, when the service worker is in control. Files received directly, and relayed files without the worker, are held in memory until saved, and a memory-constrained browser may evict the tab. Physical-phone memory has not been measured.
+Large direct downloads can use substantial browser memory. Streamed relay saves reduce memory use when available, but physical-phone memory limits have not been measured.
+
+## Share from another app
+
+On supported Android and desktop Chrome/Edge installations, choose Evakage in the share sheet. Select a device or room to send shared files; shared text is placed in the composer.
+
+- Share-sheet limit: **16 MiB**, including packaging.
+- For larger files, use **Send file** inside Evakage. The default file limit is **512 MiB**.
+- iOS does not support this web share-sheet integration.
+
+To scan an invitation without leaving the installed app, use **Connect → Scan QR Code**. External QR scans may open the browser instead.
+
+## Offline and updates
+
+The installed app can open its interface offline, but it needs the server for signaling and relay delivery.
+
+An update banner lets you choose when to reload. Finish transfers first: reloading clears in-memory conversations.

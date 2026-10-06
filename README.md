@@ -1,8 +1,8 @@
 # Evakage
 
-Self-hosted, browser-first encrypted chat and file sharing for trusted networks.
+Self-hosted, browser-first **temporary, end-to-end encrypted chat and file sharing** for trusted networks.
 Connect devices by private code or QR, send text and files directly, or invite a
-small group into an ephemeral room. Install it as a PWA or use it in your browser.
+small group into a temporary room. Install it as a PWA or use it in your browser.
 
 [Documentation](https://evakage.docs.thesteau.com) ·
 [Buy me a coffee](https://buymeacoffee.com/thesteau)
@@ -52,6 +52,7 @@ for more details.
 
 ## What to expect
 
+- Temporary conversations and end-to-end encrypted content are the core of Evakage. Only the participating devices decrypt messages and files; the server relays encrypted content for delivery.
 - Devices stay private until you opt into advertising. Private code/QR invitations authorize pairing.
 - Direct transfers use encrypted WebRTC channels; encrypted server relay covers unreachable peers.
 - Chat, files and joining rooms work without accounts. Creating rooms requires an account.

@@ -156,6 +156,7 @@ button { cursor: pointer; }
 }
 h1, h2, p { margin-top: 0; }
 h1 { margin-bottom: 0; font-size: clamp(1.8rem, 5vw, 2.8rem); letter-spacing: -.04em; }
+.app-tagline { margin: 4px 0 0; font-size: .8rem; }
 h2 { margin-bottom: 8px; letter-spacing: -.02em; }
 .eyebrow { text-transform: uppercase; letter-spacing: .16em; font-size: .68rem; color: var(--muted); font-weight: 700; }
 .muted { color: var(--muted); }

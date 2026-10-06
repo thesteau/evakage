@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="theme-color" content="#0b1020" media="(prefers-color-scheme: dark)">
   <meta name="theme-color" content="#f4f6fc" media="(prefers-color-scheme: light)">
-  <meta name="description" content="Ephemeral browser-to-browser chat and file transfer for trusted networks.">
+  <meta name="description" content="Temporary, end-to-end encrypted browser chat and file sharing for trusted networks.">
   <meta name="color-scheme" content="dark light">
   <link rel="manifest" href="/manifest.webmanifest">
   <link rel="icon" href="/icon.svg" type="image/svg+xml">
@@ -27,6 +27,7 @@
   <header class="topbar">
     <div>
       <h1><button id="appNameBtn" class="app-name-button" type="button" aria-haspopup="dialog" title="Why Evakage?">Evakage</button></h1>
+      <p class="app-tagline muted">Temporary · end-to-end encrypted</p>
     </div>
     <div class="topbar-actions">
       <span class="connection-status"><span class="muted">Status</span> <span id="serverState" class="header-status connecting" role="status">Connecting</span></span>
@@ -158,7 +159,7 @@
   <aside id="sessionPanel" class="session-panel" aria-label="Session" hidden>
     <div class="session-header">
       <div>
-        <div id="sessionKind" class="eyebrow">ephemeral session</div>
+        <div id="sessionKind" class="eyebrow">temporary session · end-to-end encrypted</div>
         <h2 id="sessionTitle">Peer</h2>
         <div id="sessionMeta" class="session-meta"></div>
         <div id="sessionMembers" class="session-members hidden"></div>
@@ -284,7 +285,7 @@
     </div>
     <div class="dialog-body">
       <p>The name combines <strong>Eva-</strong>, evoking evanescence — fading or disappearing — with <strong>kage (影)</strong>, Japanese for shadow.</p>
-      <p class="muted">It reflects the app’s temporary conversations and file sharing.</p>
+      <p class="muted">Evakage is built for <strong>temporary, end-to-end encrypted chat and file sharing</strong>. Messages and files are encrypted on your device; save files you want to keep.</p>
     </div>
   </dialog>
 
