@@ -131,7 +131,7 @@ test.describe('mandatory code pairing', () => {
     await alice.getByRole('button', { name: 'Known devices', exact: true }).click();
     const row = alice.locator('#knownDeviceList > div').filter({ hasText: deviceNames.get('Bob') });
     await row.getByRole('button', { name: 'Delete', exact: true }).click();
-    await alice.locator('#devicesDialog').getByRole('button', { name: 'Done', exact: true }).click();
+    await alice.locator('#devicesDialog').getByRole('button', { name: 'Close', exact: true }).click();
     await alice.reload();
     await expect(alice.locator('#selfCode')).not.toHaveText('----');
     await alice.getByRole('button', { name: `Open conversation with ${deviceNames.get('Bob')}`, exact: true }).click();
@@ -147,7 +147,7 @@ test.describe('mandatory code pairing', () => {
     const params = new URLSearchParams(new URL(invitation).hash.slice(1));
     expect(params.get('pair')).toBe(await alice.locator('#selfCode').innerText());
     expect(params.get('device')).toBe(await alice.locator('#selfCode').getAttribute('data-device-id'));
-    await alice.locator('#qrDialog').getByRole('button', { name: 'Done', exact: true }).click();
+    await alice.locator('#qrDialog').getByRole('button', { name: 'Close', exact: true }).click();
     await bob.goto(invitation);
     await expect(bob.locator('#codeFeedback')).toContainText('Paired with');
     expect(await bob.evaluate(() => location.hash)).toBe('');
@@ -216,7 +216,7 @@ test('server rotation updates the owner, rejects the old code and preserves esta
     await expect(alice.locator('#peerRows')).not.toContainText(newCode);
     await newcomer.locator('#addDeviceBtn').click();
     await newcomer.locator('#codeInput').fill(oldCode);
-    await newcomer.locator('#codeForm').getByRole('button', { name: 'Connect', exact: true }).click();
+    await newcomer.locator('#codeForm').getByRole('button', { name: 'Join', exact: true }).click();
     await expect(newcomer.locator('#codeFeedback')).toContainText('invalid, expired');
     await pairDevices(newcomer, bob);
     const bobName = await bob.locator('#selfCode').getAttribute('data-device-name');

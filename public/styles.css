@@ -16,6 +16,7 @@
   --accent: #88a8ff;
   --accent-ink: #081022;
   --accent-2: #6ee7c8;
+  --status-ready: #68df91;
   --warn: #ffd479;
   --danger: #ff9b9b;
   --card-grad-1: rgba(21, 30, 51, .9);
@@ -46,6 +47,7 @@
     --accent: #3358d4;
     --accent-ink: #ffffff;
     --accent-2: #0b7a62;
+    --status-ready: #147a3d;
     --warn: #8a5a00;
     --danger: #b3261e;
     --card-grad-1: #ffffff;
@@ -74,6 +76,7 @@
   --accent: #3358d4;
   --accent-ink: #ffffff;
   --accent-2: #0b7a62;
+  --status-ready: #147a3d;
   --warn: #8a5a00;
   --danger: #b3261e;
   --card-grad-1: #ffffff;
@@ -192,9 +195,10 @@ h2 { margin-bottom: 8px; letter-spacing: -.02em; }
   align-items: end;
 }
 .hero p { max-width: 720px; color: var(--muted); margin-bottom: 0; line-height: 1.55; }
-.status-dot { display: inline-flex; align-items: center; gap: 8px; font-size: .82rem; margin-bottom: 12px; color: var(--muted); }
-.status-dot::before { content: ''; width: 8px; height: 8px; border-radius: 999px; background: var(--danger); box-shadow: 0 0 0 4px rgba(255,155,155,.08); }
-.status-dot.online::before { background: var(--accent-2); box-shadow: 0 0 0 4px rgba(110,231,200,.08); }
+.connection-status { display: inline-flex; align-items: center; gap: 8px; font-size: .82rem; white-space: nowrap; }
+.header-status { font-weight: 700; color: var(--warn); }
+.header-status.online { color: var(--status-ready); }
+.header-status.offline { color: var(--danger); }
 
 .code-form label { display: block; font-size: .78rem; color: var(--muted); margin-bottom: 7px; font-weight: 700; }
 .code-form { min-width: 0; }
@@ -316,15 +320,20 @@ td.danger, .file-meta.danger { color: var(--danger); }
 .icon-button { background: transparent; color: var(--text); border-color: var(--line); font-size: 1.2rem; line-height: 1; padding: 8px 11px; }
 .session-toolbar { display: flex; align-items: center; gap: 8px; padding: 12px 16px; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
 .relay-toggle {
+  position: relative;
   display: inline-flex;
   align-items: center;
-  gap: 6px;
   font-size: .78rem;
-  color: var(--muted);
   cursor: pointer;
   user-select: none;
 }
-.relay-toggle input { width: auto; margin: 0; accent-color: var(--accent); }
+.relay-toggle input { position: absolute; inset: 0; z-index: 1; width: 100%; height: 100%; margin: 0; opacity: 0; cursor: pointer; }
+.relay-toggle span { display: inline-flex; align-items: center; gap: 8px; min-height: 44px; padding: 8px 13px; border: 1px solid var(--line); border-radius: 999px; background: var(--panel-2); color: var(--muted); font-weight: 700; }
+.relay-toggle span::before { content: ''; width: 8px; height: 8px; border-radius: 50%; background: currentColor; opacity: .45; }
+.relay-toggle input:checked + span { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+.relay-toggle input:checked + span::before { opacity: 1; }
+.relay-toggle input:focus-visible + span { outline: 2px solid var(--focus); outline-offset: 2px; }
+.relay-toggle:hover span { filter: brightness(1.06); }
 .secure-state { margin-left: auto; font-size: .75rem; color: var(--muted); font-variant-numeric: tabular-nums; }
 .secure-state.ready { color: var(--accent-2); }
 .secure-state.unverified { color: var(--warn); }
@@ -385,6 +394,9 @@ progress { width: 100%; accent-color: var(--accent-2); }
 .dialog::backdrop { background: rgba(4, 7, 14, .6); backdrop-filter: blur(2px); }
 .dialog form { padding: 22px; display: grid; gap: 12px; max-height: inherit; }
 .dialog h2 { margin: 0; }
+.dialog-header { position: sticky; top: 0; z-index: 1; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 14px 18px; background: var(--panel-solid); border-bottom: 1px solid var(--line); }
+.dialog-close { flex: 0 0 44px; width: 44px; height: 44px; padding: 0; font-size: 1.5rem; line-height: 1; }
+#scanQrDialog > video, #scanQrDialog > p { display: block; width: calc(100% - 36px); margin: 14px 18px; }
 .app-about { border-top: 1px solid var(--line); padding-top: 14px; }
 .app-about h3 { margin: 0 0 8px; font-size: .95rem; }
 .dialog p { margin: 0; font-size: .85rem; line-height: 1.5; }

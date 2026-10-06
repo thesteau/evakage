@@ -6,6 +6,21 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { createEvakageServer } from '../server.js';
 
+/** Legacy room unit tests use synthetic device IDs. Their HTTP account session
+ * is attached directly; identity-bound socket login is covered by account tests.
+ * @type {Map<string, Awaited<ReturnType<typeof startServer>>>} */
+const roomTestServers = new Map();
+
+/** @param {{after: (fn: () => any) => any}} t
+ * @param {Parameters<typeof startServer>[1]} [options] */
+export async function startRoomServer(t, options = {}) {
+  const accountDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'evakage-room-accounts-'));
+  const env = await startServer(t, { ...options, accountsDb: path.join(accountDir, 'accounts.sqlite') });
+  roomTestServers.set(env.wsBase, env);
+  t.after(async () => { roomTestServers.delete(env.wsBase); await fsp.rm(accountDir, { recursive: true, force: true }); });
+  return env;
+}
+
 /**
  * Starts a server on an ephemeral port with its own blob directory.
  *
@@ -93,5 +108,16 @@ export async function register(wsBase, deviceId, name = 'Device', extra = {}) {
     ...extra
   }));
   await registered;
+  const env = roomTestServers.get(wsBase);
+  if (env) {
+    const body = JSON.stringify({ username: deviceId.toLowerCase().slice(0, 40), password: 'test room account password' });
+    const options = { method: 'POST', headers: { origin: env.base, 'content-type': 'application/json' }, body };
+    let response = await fetch(`${env.base}/account/register`, options);
+    if (response.status === 409) response = await fetch(`${env.base}/account/login`, options);
+    if (!response.ok) throw new Error(`Room test sign-in failed: ${response.status}`);
+    const token = response.headers.get('set-cookie')?.split(';')[0].split('=')[1] || '';
+    const client = env.app.clients.get(deviceId);
+    if (client) client.accountSession = crypto.createHash('sha256').update(token).digest('hex');
+  }
   return ws;
 }

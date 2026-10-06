@@ -27,7 +27,7 @@ test('account deletion confirms the password and clears chats on all signed-in d
       await page.locator('#accountPassword').fill('correct horse battery staple');
       await page.getByRole('button', { name: index === 0 ? 'Create account' : 'Sign in', exact: true }).click();
       await expect(page.locator('#accountStatus')).toContainText('Signed in as temporary_owner');
-      await page.locator('#accountDialog').getByRole('button', { name: 'Done', exact: true }).click();
+      await page.locator('#accountDialog').getByRole('button', { name: 'Close', exact: true }).click();
     }
     for (const page of pages) await expect(page.locator('#secureState')).toContainText('Encrypted');
     await chat(first, second, 'Temporary account chat');
@@ -66,12 +66,12 @@ peerTest('hide and show control the list; blocked devices remain available for h
   await alice.getByRole('button', { name: 'Known devices', exact: true }).click();
   const record = alice.locator('#knownDeviceList > div').filter({ hasText: name });
   await record.getByRole('button', { name: 'Show', exact: true }).click();
-  await alice.locator('#devicesDialog').getByRole('button', { name: 'Done' }).click();
+  await alice.locator('#devicesDialog').getByRole('button', { name: 'Close' }).click();
   await expect(device).toHaveCount(1);
   await alice.getByRole('button', { name: 'Known devices', exact: true }).click();
   await record.getByRole('button', { name: `Block ${name}`, exact: true }).click();
   await expect(record).toContainText('Blocked');
-  await alice.locator('#devicesDialog').getByRole('button', { name: 'Done' }).click();
+  await alice.locator('#devicesDialog').getByRole('button', { name: 'Close' }).click();
   await expect(device).toHaveCount(1);
   await expect(device).toContainText('Blocked');
 });
@@ -96,7 +96,7 @@ test('account devices connect privately, exchange content, and sign-out destroys
       await page.locator('#accountPassword').fill('correct horse battery staple');
       await page.getByRole('button', { name: register ? 'Create account' : 'Sign in', exact: true }).click();
       await expect(page.locator('#accountStatus')).toContainText('Signed in as chat_owner');
-      await page.locator('#accountDialog').getByRole('button', { name: 'Done' }).click();
+      await page.locator('#accountDialog').getByRole('button', { name: 'Close' }).click();
     };
     await signIn(computer, true); await signIn(phone);
     for (const page of [computer, phone]) {
@@ -175,7 +175,7 @@ test('optional account preferences sync between profiles without merging identit
         await page.evaluate(() => { localStorage.setItem('evakage-theme', 'dark'); localStorage.setItem('evakage-incoming', 'always'); localStorage.setItem('evakage-discoverable', '1'); });
         await page.locator('#accountSave').click();
         await expect(page.locator('#accountStatus')).toContainText('Preferences saved');
-        await page.locator('#accountDialog').getByRole('button', { name: 'Done' }).click();
+        await page.locator('#accountDialog').getByRole('button', { name: 'Close' }).click();
       }
     }
     await Promise.all([second.waitForEvent('load'), second.locator('#accountLoad').click()]);
@@ -187,7 +187,7 @@ test('optional account preferences sync between profiles without merging identit
     await second.getByRole('button', { name: 'Settings', exact: true }).click();
     await expect(second.locator('input[value="always"]')).toBeChecked();
     await expect(second.locator('#discoverableInput')).not.toBeChecked();
-    await second.locator('#settingsDialog').getByRole('button', { name: 'Done' }).click();
+    await second.locator('#settingsDialog').getByRole('button', { name: 'Close' }).click();
     await openAccount(second);
     await expect(second.locator('#accountStatus')).toContainText('Signed in as sync_owner');
     await Promise.all([second.waitForEvent('load'), second.locator('#accountLogout').click()]);

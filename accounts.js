@@ -149,6 +149,12 @@ export function createAccounts({ file, secure, onRevoke = () => {} }) {
   }
   return {
     handle, sessionName, prune,
+    /** A recreated username is a different room owner.
+     * @param {string} key */
+    sessionOwner(key) {
+      const name = sessionName(key);
+      return name ? `${name}:${sessions.get(key)?.salt}` : null;
+    },
     /** @param {string} token @param {string} deviceId */
     consumeTicket(token, deviceId) {
       prune();

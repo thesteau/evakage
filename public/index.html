@@ -30,6 +30,7 @@
       <h1>Evakage</h1>
     </div>
     <div class="topbar-actions">
+      <span class="connection-status"><span class="muted">Status</span> <span id="serverState" class="header-status connecting" role="status">Connecting</span></span>
       <div class="identity-card">
         <span class="muted" id="selfCodeLabel">Your code</span>
         <button id="selfCode" class="code-button" type="button" aria-describedby="selfCodeLabel"
@@ -38,9 +39,9 @@
       <button id="themeBtn" class="icon-button" type="button" aria-label="Theme: follow system">
         <span id="themeIcon" aria-hidden="true">◐</span>
       </button>
+      <button id="refreshBtn" class="ghost" type="button">Refresh view</button>
       <button id="qrBtn" class="ghost" type="button">QR code</button>
       <button id="accountBtn" class="ghost" type="button">Login</button>
-      <button id="refreshBtn" class="ghost" type="button">Refresh view</button>
       <button id="settingsBtn" class="ghost" type="button">Settings</button>
     </div>
   </header>
@@ -48,20 +49,19 @@
   <main class="page-shell">
     <section class="hero card" aria-labelledby="heroHeading">
       <div>
-        <span id="serverState" class="status-dot offline" role="status">Connecting…</span>
         <h2 id="heroHeading">Send a file. Start a chat.</h2>
         <p>Open Evakage on your other device, then connect it here. Choose a connected device below to send a message or drop a file.</p>
       </div>
       <div class="connect-start">
-        <button id="addDeviceBtn" type="button">Add a device</button>
+        <button id="addDeviceBtn" type="button">Connect</button>
       </div>
     </section>
 
     <section class="card peers-card" id="peersSection" aria-labelledby="peersHeading">
       <div class="section-heading">
         <div>
-          <h2 id="peersHeading" title="Connect a device to chat or share files privately. Discovery in Settings lets nearby devices find you.">Devices</h2>
-          <p class="muted">Your connected devices appear here. Only devices you connect can reach you unless you turn on discovery in Settings.</p>
+          <h2 id="peersHeading" tabindex="0" aria-describedby="devicesHint" title="Your connected devices appear here. Only devices you connect can reach you unless you turn on discovery in Settings.">Devices</h2>
+          <span id="devicesHint" class="visually-hidden">Your connected devices appear here. Only devices you connect can reach you unless you turn on discovery in Settings.</span>
         </div>
         <div class="device-actions">
           <button id="devicesBtn" class="ghost" type="button">Known devices</button>
@@ -91,8 +91,8 @@
     <section class="card peers-card" aria-labelledby="roomsHeading">
       <div class="section-heading">
         <div>
-          <h2 id="roomsHeading" title="Private group chats for sharing messages and files. Create a room and share its code, or use an invitation code to join.">Rooms</h2>
-          <p class="muted">Share with a group. Create a private room and invite others with its code, or enter a code to join.</p>
+          <h2 id="roomsHeading" tabindex="0" aria-describedby="roomsHint" title="Share with a group. Create a private room and invite others with its code, or enter a code to join.">Rooms</h2>
+          <span id="roomsHint" class="visually-hidden">Share with a group. Create a private room and invite others with its code, or enter a code to join.</span>
         </div>
         <div class="room-forms">
           <form id="createRoomForm" class="inline-field">
@@ -150,7 +150,8 @@
       <button id="leaveRoomBtn" class="ghost hidden" type="button">Leave room</button>
       <label id="relayToggle" class="relay-toggle hidden"
              title="Send messages and files through the server instead of trying a direct connection first">
-        <input id="forceRelayInput" type="checkbox"> Via server
+        <input id="forceRelayInput" type="checkbox" role="switch">
+        <span>Via server</span>
       </label>
       <span id="secureState" class="secure-state" role="status">Connecting…</span>
     </div>
@@ -169,8 +170,11 @@
   </aside>
 
   <dialog id="accountDialog" class="dialog">
-    <div class="dialog-body">
+    <div class="dialog-header">
       <h2>Account <span class="muted">(optional)</span></h2>
+      <button class="ghost dialog-close" type="button" data-close-dialog aria-label="Close" title="Close">×</button>
+    </div>
+    <div class="dialog-body">
       <p class="muted">Signed-in devices find each other automatically and can share your settings. Messages and files are never stored in your account.</p>
       <p id="accountStatus" class="account-status" role="status"></p>
       <form id="accountForm" class="account-form">
@@ -200,12 +204,14 @@
           </form>
         </details>
       </div>
-      <form method="dialog" class="dialog-actions"><button type="submit" class="ghost">Done</button></form>
     </div>
   </dialog>
   <dialog id="settingsDialog" class="dialog">
-    <form method="dialog">
+    <div class="dialog-header">
       <h2>Settings</h2>
+      <button class="ghost dialog-close" type="button" data-close-dialog aria-label="Close" title="Close">×</button>
+    </div>
+    <form method="dialog">
       <button id="installBtn" class="ghost hidden" type="button">Install app</button>
       <label class="setting-option"><input id="discoverableInput" type="checkbox"><span><strong>Advertise this device</strong><span class="muted"> — off by default. Pairing by private code works while hidden.</span></span></label>
       <label class="setting-option">
@@ -232,30 +238,30 @@
         <h3 id="appNameHeading">Why Evakage?</h3>
         <p class="muted">The name combines <strong>Eva-</strong>, evoking evanescence — fading or disappearing — with <strong>kage (影)</strong>, Japanese for shadow. It reflects the app’s temporary conversations and file sharing.</p>
       </section>
-      <div class="dialog-actions">
-        <button value="close" type="submit">Done</button>
-      </div>
     </form>
   </dialog>
 
   <dialog id="devicesDialog" class="dialog wide">
-    <form method="dialog">
+    <div class="dialog-header">
       <h2>Known devices</h2>
+      <button class="ghost dialog-close" type="button" data-close-dialog aria-label="Close" title="Close">×</button>
+    </div>
+    <form method="dialog">
       <p class="muted">
         Devices are remembered by the fingerprint of their long-lived key the first
         time you connect. Deleting its stored relationship means it shows as <em>new</em> again, and its
         safety code is worth re-checking. Verify by comparing codes outside this app. Blocking a device stops exchanges with it in this browser.
       </p>
       <div id="knownDeviceList" class="device-list"></div>
-      <div class="dialog-actions">
-        <button value="close" type="submit">Done</button>
-      </div>
     </form>
   </dialog>
 
   <dialog id="addDeviceDialog" class="dialog">
+    <div class="dialog-header">
+      <h2>Connect</h2>
+      <button class="ghost dialog-close" type="button" data-close-dialog aria-label="Close" title="Close">×</button>
+    </div>
     <div class="dialog-body">
-      <h2>Add a device</h2>
       <p class="muted">Open Evakage on the other device too.</p>
       <button id="scanQrBtn" type="button">Scan a QR code</button>
       <form id="codeForm" class="code-form">
@@ -263,18 +269,20 @@
         <div class="inline-field">
           <input id="codeInput" autocomplete="off" autocapitalize="characters" spellcheck="false"
                  placeholder="ABCD-EFGH" maxlength="16" aria-describedby="codeFeedback">
-          <button type="submit">Connect</button>
+          <button type="submit">Join</button>
         </div>
         <span id="codeFeedback" class="form-feedback" role="status"></span>
       </form>
-      <form method="dialog" class="dialog-actions"><button type="submit" class="ghost">Done</button></form>
     </div>
   </dialog>
 
   <dialog id="qrDialog" class="dialog qr-dialog">
-    <form method="dialog">
+    <div class="dialog-header">
       <h2>Connect to this device</h2>
-      <p class="muted">On your other device, open Evakage, choose Add a device, then Scan a QR code.</p>
+      <button class="ghost dialog-close" type="button" data-close-dialog aria-label="Close" title="Close">×</button>
+    </div>
+    <form method="dialog">
+      <p class="muted">On your other device, open Evakage, choose Connect, then Scan a QR code.</p>
       <section class="qr-panel">
         <canvas id="deviceQr" class="qr-code" role="img" aria-label="Your device code QR code"></canvas>
         <p>Or enter this code: <strong id="qrPairingCode"></strong></p>
@@ -288,54 +296,59 @@
         <p class="muted">Pairing codes rotate every three days; paired devices stay paired. External camera links follow your browser and OS preferences.</p>
         <p>Your full device fingerprint: <code id="qrFingerprint" class="device-fingerprint"></code></p>
       </details>
-      <div class="dialog-actions"><button type="submit">Done</button></div>
     </form>
   </dialog>
 
   <dialog id="scanQrDialog" class="dialog">
-    <h2>Scan a pairing QR</h2>
+    <div class="dialog-header">
+      <h2>Scan a pairing QR</h2>
+      <button class="ghost dialog-close" type="button" data-close-dialog aria-label="Close" title="Close">×</button>
+    </div>
     <video id="scanQrVideo" autoplay muted playsinline class="qr-preview"></video>
     <p id="scanQrStatus" role="status">Starting camera…</p>
-    <form method="dialog"><button type="submit">Cancel</button></form>
   </dialog>
   <dialog id="connectDialog" class="dialog">
-    <form id="connectForm">
+    <div class="dialog-header">
       <h2>Pair unknown device</h2>
+      <button id="connectCancel" class="ghost dialog-close" type="button" data-close-dialog aria-label="Close" title="Close">×</button>
+    </div>
+    <form id="connectForm">
       <p id="connectTarget"></p>
       <label for="connectCode">Code from the other device</label>
       <input id="connectCode" autocomplete="off" autocapitalize="characters" maxlength="16" required>
       <p class="muted">Codes rotate every three days. Paired devices stay paired.</p>
       <p id="connectFeedback" role="status"></p>
       <div class="dialog-actions">
-        <button id="connectCancel" class="ghost" type="button">Cancel</button>
         <button type="submit">Pair</button>
       </div>
     </form>
   </dialog>
 
   <dialog id="pairingDialog" class="dialog">
-    <form id="pairingForm">
+    <div class="dialog-header">
       <h2>Verify device</h2>
+      <button id="pairingCancel" class="ghost dialog-close" type="button" data-close-dialog aria-label="Close" title="Close">×</button>
+    </div>
+    <form id="pairingForm">
       <p>Contact the device owner outside this app. Ask them to open Known devices, choose your device, and read its safety code. Enter the code they read to you.</p>
       <p>Your matching safety code: <strong id="pairingCode"></strong></p>
       <label for="pairingInput">Code from the other device</label>
       <input id="pairingInput" inputmode="numeric" autocomplete="off" maxlength="40" required>
       <p id="pairingFeedback" role="status"></p>
       <div class="dialog-actions">
-        <button id="pairingCancel" class="ghost" type="button">Cancel</button>
         <button type="submit">Verify</button>
       </div>
     </form>
   </dialog>
 
   <dialog id="pickTargetDialog" class="dialog">
-    <form method="dialog">
+    <div class="dialog-header">
       <h2 id="pickTargetTitle">Send to…</h2>
+      <button class="ghost dialog-close" type="button" data-close-dialog aria-label="Close" title="Close">×</button>
+    </div>
+    <form method="dialog">
       <p class="muted" id="pickTargetHint"></p>
       <div id="pickTargetList" class="device-list"></div>
-      <div class="dialog-actions">
-        <button value="cancel" class="ghost" type="submit">Cancel</button>
-      </div>
     </form>
   </dialog>
 

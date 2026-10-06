@@ -5,7 +5,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
-import { startServer, openWs } from './helpers.js';
+import { startRoomServer as startServer, openWs, register as registerRoomDevice } from './helpers.js';
 
 /** @param {string} wsBase @param {string} deviceId */
 async function register(wsBase, deviceId) {
@@ -216,7 +216,7 @@ test('random structured garbage is never forwarded and never takes the server do
 test('a prototype-polluting room name or device id cannot poison lookups', async t => {
   const { app, wsBase } = await startServer(t);
 
-  const ws = await register(wsBase, '__proto__polluter__');
+  const ws = await registerRoomDevice(wsBase, '__proto__polluter__');
   const joined = await new Promise((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error('no room')), 3000);
     ws.addEventListener('message', event => {

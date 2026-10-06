@@ -1,6 +1,6 @@
 import { test as base, expect } from '@playwright/test';
 import fs from 'node:fs/promises';
-import { startServer } from '../tests/helpers.js';
+import { startRoomServer as startServer } from '../tests/helpers.js';
 
 export const deviceNames = new Map();
 
@@ -50,7 +50,7 @@ export const test = base.extend(/** @type {import('@playwright/test').Fixtures<{
         await page.getByRole('button', { name: 'Settings', exact: true }).click();
         await page.locator('input[value="always"]').check();
         await page.locator('#discoverableInput').check();
-        await page.getByRole('button', { name: 'Done', exact: true }).click();
+        await page.getByRole('button', { name: 'Close', exact: true }).click();
         pages.push(page);
       }
       if (autoPair) await pairDevices(pages[0], pages[1]);
@@ -70,7 +70,7 @@ export const test = base.extend(/** @type {import('@playwright/test').Fixtures<{
 export async function pairDevices(first, second, closeConversations = true) {
   if (!await first.locator('#addDeviceDialog').isVisible()) await first.locator('#addDeviceBtn').click();
   await first.locator('#codeInput').fill(await second.locator('#selfCode').innerText());
-  await first.locator('#codeForm').getByRole('button', { name: 'Connect', exact: true }).click();
+  await first.locator('#codeForm').getByRole('button', { name: 'Join', exact: true }).click();
   await expect(first.locator('#codeFeedback')).toContainText('Paired with');
   await expect(first.locator('#sessionPanel')).toBeVisible();
   const id = await first.locator('#selfCode').getAttribute('data-device-id');
@@ -100,6 +100,20 @@ export async function openPeer(page, name) {
   await page.locator('#peerRows tr').filter({ hasText: name })
     .getByRole('button', { name: `Open conversation with ${name}`, exact: true }).click();
   await expect(page.locator('#secureState')).toContainText('Encrypted');
+}
+
+/** Sign in only the room creator; guests remain anonymous.
+ * @param {Page} page */
+export async function signInRoomOwner(page) {
+  if (await page.locator('#sessionPanel.open').count()) await page.locator('#closeSession').click();
+  await page.locator('#accountBtn').click();
+  if (await page.locator('#accountForm').isVisible()) {
+    await page.locator('#accountUsername').fill(`room_${crypto.randomUUID().replaceAll('-', '').slice(0, 20)}`);
+    await page.locator('#accountPassword').fill('test room account password');
+    await page.getByRole('button', { name: 'Create account', exact: true }).click();
+  }
+  await expect(page.locator('#accountStatus')).toContainText('Signed in as');
+  await page.locator('#accountDialog').getByRole('button', { name: 'Close', exact: true }).click();
 }
 
 /** Waits until the service worker controls the page, so relayed files are

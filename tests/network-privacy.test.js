@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { startServer, register, waitFor } from './helpers.js';
+import { startRoomServer as startServer, register, waitFor } from './helpers.js';
 import { pairingInvitation } from '../public/scanner.js';
 
 /** @param {WebSocket} ws @param {string} type */

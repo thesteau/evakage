@@ -28,7 +28,7 @@ const SHARE_DRAIN_LIMIT = 8 * 1024 * 1024;
 const ROOM_MEMBERS_CEILING = 64;
 const DEFAULT_ROOM_MAX_MEMBERS = 20;
 const MAX_ROOMS = 64;
-const MAX_ROOMS_PER_DEVICE = 8;
+const MAX_ROOMS_PER_ACCOUNT = 2;
 
 // Version of the peer-to-peer application protocol spoken over the DataChannel.
 // Published on /config.json for diagnostics; the browsers negotiate it directly.
@@ -74,6 +74,7 @@ const BLOB_CHUNK_SIZE = 256 * 1024;
  * @property {Set<string>} members connected now
  * @property {Map<string, number>} away device id -> when it dropped off
  * @property {string} [createdBy]
+ * @property {string} [ownerAccount]
  */
 
 const truthy = (/** @type {unknown} */ value) => /^(1|true|yes|on)$/i.test(String(value || ''));
@@ -470,7 +471,6 @@ function validEnvelopes(envelopes, kind) {
 
 const DEVICE_ID_PATTERN = /^[A-Za-z0-9_-]{8,128}$/;
 const ROOM_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-const ROOM_CODE_PATTERN = /^[A-Z0-9]{4}-[A-Z0-9]{4}$/;
 
 const isPlainObject = (/** @type {unknown} */ value) => typeof value === 'object' && value !== null && !Array.isArray(value);
 const optionalString = (/** @type {unknown} */ value, /** @type {number} */ max) => value == null || (typeof value === 'string' && value.length <= max);
@@ -1096,23 +1096,15 @@ export function createEvakageServer({
     return changed;
   }
 
-  /** @param {Inbound} msg */
-  function restoreRoom(msg) {
-    const id = String(msg.roomId || '');
-    if (!ROOM_ID_PATTERN.test(id) || rooms.size >= MAX_ROOMS) return null;
-    const requested = String(msg.code || '').trim().toUpperCase();
-    const taken = new Set([...rooms.values()].map(r => r.code));
-    const code = ROOM_CODE_PATTERN.test(requested) && !taken.has(requested) ? requested : makeRoomCode(taken);
-    const room = {
-      id,
-      code,
-      name: cleanName(msg.name || 'Room'),
-      createdAt: Date.now(),
-      members: new Set(),
-      away: new Map()
-    };
-    rooms.set(id, room);
-    return room;
+  /** @param {Room} room */
+  function destroyRoom(room) {
+    rooms.delete(room.id);
+    for (const id of new Set([...room.members, ...room.away.keys()])) {
+      const client = clients.get(id);
+      if (client) json(client.ws, { type: 'room-destroyed', roomId: room.id, name: room.name });
+    }
+    blobStore.revokeConversation(`room:${room.id}`).catch(() => {});
+    room.members.clear(); room.away.clear();
   }
 
   // A device may buffer a blob only for peers it could already talk to: the
@@ -1323,15 +1315,16 @@ export function createEvakageServer({
       }
 
       if (msg.type === 'create-room') {
-        if (rooms.size >= MAX_ROOMS) {
-          json(ws, { type: 'error', context: 'create-room', message: 'This server is already hosting the maximum number of rooms.' });
+        const client = clients.get(registeredId);
+        const ownerAccount = client.accountSession && accounts.sessionOwner(client.accountSession);
+        if (!ownerAccount) {
+          json(ws, { type: 'error', context: 'create-room', message: 'Log in to create a room. You can still join a room by code without logging in.' });
           return;
         }
-        // Without a per-device cap one client can claim every room slot and lock
-        // everyone else out for as long as it stays connected.
-        const owned = [...rooms.values()].filter(room => room.createdBy === registeredId).length;
-        if (owned >= MAX_ROOMS_PER_DEVICE) {
-          json(ws, { type: 'error', context: 'create-room', message: `Each device may host ${MAX_ROOMS_PER_DEVICE} rooms at a time.` });
+        const owned = [...rooms.values()].filter(room => room.ownerAccount === ownerAccount).sort((a, b) => a.createdAt - b.createdAt);
+        const oldest = owned.length >= MAX_ROOMS_PER_ACCOUNT ? owned[0] : null;
+        if (rooms.size >= MAX_ROOMS && !oldest) {
+          json(ws, { type: 'error', context: 'create-room', message: 'This server is already hosting the maximum number of rooms.' });
           return;
         }
         const room = {
@@ -1340,11 +1333,13 @@ export function createEvakageServer({
           name: cleanName(msg.name || 'Room'),
           createdAt: Date.now(),
           createdBy: registeredId,
+          ownerAccount,
           members: new Set([registeredId]),
           away: new Map()
         };
+        if (oldest) destroyRoom(oldest);
         rooms.set(room.id, room);
-        json(ws, { type: 'room-joined', room: roomPublic(room) });
+        json(ws, { type: 'room-joined', room: roomPublic(room), created: true, replacedRoomName: oldest?.name });
         broadcastRooms();
         return;
       }
@@ -1353,23 +1348,14 @@ export function createEvakageServer({
         const byCode = typeof msg.code === 'string' && msg.code.trim()
           ? [...rooms.values()].find(r => r.code === msg.code.trim().toUpperCase())
           : null;
-        let room = byCode || rooms.get(String(msg.roomId || ''));
-        // A browser that still holds the room's RAM state may outlive a signaling
-        // blip, so let it restore the same room rather than lose it to a reconnect.
-        let restoring = false;
-        if (!room && msg.recreate === true) {
-          room = restoreRoom(msg);
-          restoring = Boolean(room);
-        }
+        const room = byCode || rooms.get(String(msg.roomId || ''));
         if (!room) {
-          json(ws, { type: 'error', context: 'join-room', message: 'Unable to join with this invitation.' });
+          json(ws, { type: 'error', context: 'join-room', roomId: msg.recreate === true ? msg.roomId : undefined, message: 'Unable to join with this invitation.' });
           return;
         }
         // An away member is reclaiming its own seat, so it always fits; anyone
         // else needs a seat that is neither taken nor held for someone away.
-        // Restoring a room counts as returning to it: it has nobody connected
-        // yet, and the dormant-room rule below must not lock out its restorer.
-        const returning = restoring || room.members.has(registeredId) || room.away.has(registeredId);
+        const returning = room.members.has(registeredId) || room.away.has(registeredId);
         if (!returning && !byCode) {
           json(ws, { type: 'error', context: 'join-room', message: 'Unable to join with this invitation.' });
           return;

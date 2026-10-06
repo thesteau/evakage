@@ -1,11 +1,12 @@
+import { signInRoomOwner } from './helpers.js';
 import { test, expect } from '@playwright/test';
-import { startServer } from '../tests/helpers.js';
+import { startRoomServer as startServer } from '../tests/helpers.js';
 
 /** @param {import('@playwright/test').Page} page */
 async function advertise(page) {
   await page.getByRole('button', { name: 'Settings', exact: true }).click();
   await page.locator('#discoverableInput').check();
-  await page.locator('#settingsDialog').getByRole('button', { name: 'Done' }).click();
+  await page.locator('#settingsDialog').getByRole('button', { name: 'Close' }).click();
 }
 test('fresh profiles are private; room details appear only after code join', async ({ browser }) => {
   const cleanup = /** @type {(() => Promise<void>)[]} */ ([]);
@@ -24,8 +25,9 @@ test('fresh profiles are private; room details appear only after code join', asy
     await expect(first.locator('#peerRows tr')).toHaveCount(2);
     await second.getByRole('button', { name: 'Settings', exact: true }).click();
     await second.locator('#discoverableInput').uncheck();
-    await second.locator('#settingsDialog').getByRole('button', { name: 'Done' }).click();
+    await second.locator('#settingsDialog').getByRole('button', { name: 'Close' }).click();
     await expect(first.locator('#peerRows tr')).toHaveCount(1);
+    await signInRoomOwner(first);
     await first.locator('#roomNameInput').fill('Private room');
     await first.locator('#createRoomForm').getByRole('button', { name: 'Create' }).click();
     await expect(first.locator('#roomRows tr')).toHaveCount(1);
@@ -83,7 +85,7 @@ test('camera QR scanning pairs in the app and stops camera tracks', async ({ bro
       }, 100);
       Object.defineProperty(navigator.mediaDevices, 'getUserMedia', { configurable: true, value: async () => stream });
     }, `${base}/#${new URLSearchParams({ pair: code, device: device || '' })}`);
-    await first.getByRole('button', { name: 'Add a device', exact: true }).click();
+    await first.locator('#addDeviceBtn').click();
     await first.getByRole('button', { name: 'Scan a QR code', exact: true }).click();
     await expect(first.locator('#sessionPanel')).toBeVisible();
     await expect(first.locator('#scanQrDialog')).not.toBeVisible();

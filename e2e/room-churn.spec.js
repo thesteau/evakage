@@ -2,7 +2,8 @@ import { test, expect, devices } from '@playwright/test';
 import fs from 'node:fs/promises';
 import { pairDevices, joinRoom } from './helpers.js';
 import { performance } from 'node:perf_hooks';
-import { startServer } from '../tests/helpers.js';
+import { signInRoomOwner } from './helpers.js';
+import { startRoomServer as startServer } from '../tests/helpers.js';
 
 /** @typedef {import('@playwright/test').Page} Page */
 /** @typedef {{created: number, closed: number, connected: number}} Counters */
@@ -120,6 +121,7 @@ async function measureChurn(browser, info, transferChurn) {
     const incumbents = pages.slice(0, 6);
     const seventh = pages[6];
     const roomName = 'Boundary measurement';
+    await signInRoomOwner(owner);
     await owner.locator('#roomNameInput').fill(roomName);
     await owner.locator('#createRoomForm').getByRole('button', { name: 'Create' }).click();
     for (const page of incumbents) {

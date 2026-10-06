@@ -4,7 +4,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
-import { startServer, waitFor, register } from './helpers.js';
+import { startRoomServer as startServer, waitFor, register } from './helpers.js';
 
 const BOX = { v: 1, ephemeral: 'e', iv: 'i', ciphertext: 'c' };
 const KEYS = { identityKey: 'identity-key-b64', sealKey: 'seal-key-b64', sealKeySignature: 'sig-b64' };
@@ -239,14 +239,12 @@ test('away seats expire with the window, and a room with no seats left closes', 
   app.expireAway();
   assert.equal(app.rooms.has(room.id), false);
 
-  // A browser that still holds the room can restore it with the same id and
-  // code; without asking to, a vanished room stays gone.
+  // Reconnecting cannot resurrect an ended room or bypass the creator quota.
   const back = await register(wsBase, 'device_alice_00009', 'Alice');
-  const restored = waitFor(back, m => m.type === 'room-joined');
+  const restored = waitFor(back, m => m.type === 'error' && m.context === 'join-room');
   back.send(JSON.stringify({ type: 'join-room', roomId: room.id, recreate: true, name: 'Short-lived', code: room.code }));
-  const again = (await restored).room;
-  assert.equal(again.id, room.id);
-  assert.equal(again.code, room.code);
+  assert.match((await restored).message, /Unable to join with this invitation/);
+  assert.equal(app.rooms.has(room.id), false);
 
   const refused = waitFor(back, m => m.type === 'error' && m.context === 'join-room');
   back.send(JSON.stringify({ type: 'join-room', roomId: '11111111-2222-3333-4444-555555555555' }));

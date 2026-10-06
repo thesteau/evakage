@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { fingerprintOf, bytesToBase64, signTranscript } from '../public/identity.js';
-import { startServer, openWs, waitFor, register } from './helpers.js';
+import { startRoomServer as startServer, openWs, waitFor, register } from './helpers.js';
 
 test('health, presence, stable codes, and code lookup work', async t => {
   const env = await startServer(t);
@@ -104,7 +104,7 @@ test('rooms keep membership private, cap size, and close when their last member 
   for (const ws of [a, b, overflow, ...extras]) ws.close();
 });
 
-test('one device cannot claim every room slot', async t => {
+test('a room owner keeps two rooms and each new room replaces the oldest', async t => {
   const { app, ...env } = await startServer(t);
   const wsBase = env.wsBase;
 
@@ -114,17 +114,15 @@ test('one device cannot claim every room slot', async t => {
     hog.send(JSON.stringify({ type: 'create-room', name: `Room ${i}` }));
     await created;
   }
-  const refused = waitFor(hog, m => m.type === 'error' && m.context === 'create-room');
-  hog.send(JSON.stringify({ type: 'create-room', name: 'One too many' }));
-  assert.match((await refused).message, /8 rooms at a time/);
-  assert.equal(app.rooms.size, 8);
+  assert.equal(app.rooms.size, 2);
+  assert.deepEqual([...app.rooms.values()].map(room => room.name), ['Room 6', 'Room 7']);
 
   // Another device is unaffected.
   const other = await register(wsBase, 'device_other_1234567', 'Other');
   const ok = waitFor(other, m => m.type === 'room-joined');
   other.send(JSON.stringify({ type: 'create-room', name: 'Mine' }));
   await ok;
-  assert.equal(app.rooms.size, 9);
+  assert.equal(app.rooms.size, 3);
 
   hog.close();
   other.close();

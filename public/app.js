@@ -477,13 +477,15 @@ function connectWebSocket() {
   const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
   const ws = new WebSocket(`${protocol}//${location.host}`);
   state.ws = ws;
-  serverState.textContent = 'Connecting…';
-  serverState.classList.remove('online');
+  serverState.textContent = 'Connecting';
+  serverState.title = 'Connecting to the server';
+  serverState.classList.remove('online', 'offline');
 
   ws.addEventListener('open', () => {
     if (state.ws !== ws) return;
     state.wsBackoff = 500;
-    serverState.textContent = 'Ready to connect';
+    serverState.textContent = 'Ready';
+    serverState.title = 'Connected to the server';
     serverState.classList.add('online');
   });
 
@@ -595,7 +597,13 @@ function connectWebSocket() {
       const conv = ensureConversation(roomConvId(msg.room.id), 'room', msg.room.id);
       conv.lastKnownName = msg.room.name;
       conv.lastKnownCode = msg.room.code;
-      roomFeedback.textContent = `Joined ${msg.room.name} · ${msg.room.code}`;
+      roomFeedback.textContent = msg.created ? '' : `Joined ${msg.room.name} · ${msg.room.code}`;
+      if (msg.created) {
+        $('#roomNameInput').value = '';
+        toast(msg.replacedRoomName
+        ? `Created ${msg.room.name}. Your oldest room, ${msg.replacedRoomName}, was destroyed. You can have two rooms per account.`
+          : `Created ${msg.room.name}. You can have two rooms per account; creating another replaces the oldest.`);
+      }
       renderRooms();
       ensureConversationLinks(conv);
       renderSession();
@@ -608,6 +616,15 @@ function connectWebSocket() {
       // items set aside because they arrived before this rejoin landed.
       wsSend({ type: 'blobs-request' });
       requestRoomHistory(msg.room.id);
+      return;
+    }
+
+    if (msg.type === 'room-destroyed') {
+      state.rooms.delete(msg.roomId);
+      state.joinedRoomIds.delete(msg.roomId);
+      forgetConversation(roomConvId(msg.roomId));
+      toast(`${msg.name} was destroyed because its owner created a newer room.`);
+      renderRooms();
       return;
     }
 
@@ -688,7 +705,14 @@ function connectWebSocket() {
         settleRequest(`claim:${msg.blobId}`, null, new Error(msg.message));
         return;
       }
-      if (msg.context === 'join-room' || msg.context === 'create-room') roomFeedback.textContent = msg.message;
+      if (msg.context === 'join-room' && msg.roomId) {
+        state.rooms.delete(msg.roomId);
+        state.joinedRoomIds.delete(msg.roomId);
+        forgetConversation(roomConvId(msg.roomId));
+        renderRooms();
+      }
+      if (msg.context === 'join-room') roomFeedback.textContent = msg.message;
+      if (msg.context === 'create-room') roomFeedback.textContent = '';
       toast(msg.message || 'Server error');
     }
   });
@@ -699,15 +723,18 @@ function connectWebSocket() {
     accountGeneration++;
     accountPeerIds.clear();
     releaseIdleLinks();
-    serverState.textContent = event.code === 1008 ? 'Access denied — reload after access is restored' : 'Connection lost — reconnecting…';
+    serverState.textContent = event.code === 1008 ? 'Access denied' : 'Not Ready';
+    serverState.title = event.code === 1008 ? 'Access denied — reload after access is restored' : 'Connection lost — reconnecting';
     serverState.classList.remove('online');
+    serverState.classList.add('offline');
     state.peers.clear();
     state.rooms.clear();
     renderPeers();
     renderRooms();
     renderSession();
     if (event.code === 4001) {
-      serverState.textContent = 'This device is active in another tab. Close that tab and reload here to reconnect.';
+      serverState.textContent = 'Not Ready (another tab)';
+      serverState.title = 'This device is active in another tab. Close that tab and reload here to reconnect.';
       return;
     }
     if (event.code === 1008) return;
@@ -718,8 +745,7 @@ function connectWebSocket() {
   ws.addEventListener('error', () => ws.close());
 }
 
-// A signaling blip must not destroy a room this browser still holds state for,
-// so rejoin asks the server to restore the same room id/code if it dropped it.
+// Reclaim held seats after a signaling blip. Ended rooms cannot be recreated.
 function rejoinRooms() {
   for (const roomId of state.joinedRoomIds) {
     const conv = state.conversations.get(roomConvId(roomId));
@@ -3831,9 +3857,8 @@ $('#createRoomForm').addEventListener('submit', (/** @type {Event} */ event) => 
   event.preventDefault();
   const input = $('#roomNameInput');
   const name = input.value.trim() || `${state.self?.name || 'New'} room`;
-  roomFeedback.textContent = 'Creating room…';
+  roomFeedback.textContent = '';
   wsSend({ type: 'create-room', name });
-  input.value = '';
 });
 
 $('#joinRoomForm').addEventListener('submit', (/** @type {Event} */ event) => {
@@ -4029,6 +4054,13 @@ function setupTheme() {
 
 /* ---------- dialogs ---------- */
 
+document.querySelectorAll('[data-close-dialog]').forEach(button => {
+  button.addEventListener('click', () => {
+    const dialog = button.closest('dialog');
+    if (dialog instanceof HTMLDialogElement) dialog.close('cancel');
+  });
+});
+
 // <dialog> gives a real modal with focus trapping and Escape for free; this only
 // has to remember where focus came from and put it back.
 /** @param {HTMLDialogElement} dialog @param {Element | null} [focusTarget] */
@@ -4066,7 +4098,6 @@ function openCodePairing(id) {
   $('#connectFeedback').textContent = '';
   openDialog($('#connectDialog'), $('#connectCode'));
 }
-$('#connectCancel').addEventListener('click', () => $('#connectDialog').close());
 $('#connectForm').addEventListener('submit', async event => {
   event.preventDefault();
   const peer = await resolveCode($('#connectCode').value.trim().toUpperCase(), connectTargetId);
@@ -4103,7 +4134,6 @@ async function openPairing(fingerprint) {
   $('#pairingFeedback').textContent = '';
   openDialog($('#pairingDialog'), $('#pairingInput'));
 }
-$('#pairingCancel').addEventListener('click', () => $('#pairingDialog').close());
 $('#pairingForm').addEventListener('submit', async event => {
   event.preventDefault();
   if (!state.self || !await verifyDevice(pairingDevice, state.self.id, $('#pairingInput').value)) {
@@ -4647,7 +4677,9 @@ async function boot() {
   try {
     state.identity = await loadIdentity();
   } catch (err) {
-    serverState.textContent = 'Device identity unavailable';
+    serverState.textContent = 'Not Ready';
+    serverState.title = 'Device identity unavailable';
+    serverState.classList.add('offline');
     toast('This browser could not create a device identity. Private browsing with storage disabled will not work.');
     return;
   }

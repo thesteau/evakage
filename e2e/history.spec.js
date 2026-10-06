@@ -1,4 +1,5 @@
 import { expect } from '@playwright/test';
+import { signInRoomOwner } from './helpers.js';
 import { test, chat, deviceNames, openPeer, pairDevices, joinRoom } from './helpers.js';
 
 /** @typedef {import('@playwright/test').Page} Page */
@@ -8,6 +9,7 @@ import { test, chat, deviceNames, openPeer, pairDevices, joinRoom } from './help
 async function recoverFromSurvivingPeer(devices, browser, inspect) {
   const { alice, bob } = devices;
   const room = 'Signed history room';
+  await signInRoomOwner(alice);
   await alice.locator('#roomNameInput').fill(room);
   await alice.locator('#createRoomForm').getByRole('button', { name: 'Create' }).click();
   await alice.getByRole('button', { name: `Open room ${room}`, exact: true }).click();

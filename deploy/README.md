@@ -23,7 +23,8 @@ GHCR workflow publishes from `main`.
 
 SQLite accounts are enabled by default. The Docker-managed `account-data` volume
 stores the database at `/home/node/evakage-accounts/accounts.sqlite`, preserving
-accounts and preferences across container replacement. Signing up is optional. Text, files
+accounts and preferences across container replacement. An account is required
+to create rooms; chat, files and joining by code work without one. Text, files
 and device private keys never enter this database.
 
 If you previously used the `./account-data` bind mount, stop the app and copy

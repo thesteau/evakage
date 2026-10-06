@@ -585,6 +585,14 @@ export function createBlobStore(options = {}) {
     remove,
     pendingFor,
     revokeDevice,
+    /** Immediately revoke the items and tokens of an ended room.
+     * @param {string} conv */
+    revokeConversation(conv) {
+      return Promise.all([...blobs.values()].filter(blob => blob.conv === conv).map(blob => {
+        blob.createdAt = 0;
+        return remove(blob.id);
+      }));
+    },
     describe,
     sweepAged,
     refreshLiveness,

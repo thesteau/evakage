@@ -21,7 +21,7 @@ The name combines **Eva-**, evoking evanescence — fading or disappearing — w
 - Allows a returned peer to request an in-memory file again from whichever peer still holds the bytes.
 - Falls back to a **server relay** for messages and files when a direct connection cannot be made — sealed so the server cannot read them, deleted once delivered, and otherwise living only as long as the conversation they belong to.
 - Asks before receiving files from a device you have not met (configurable).
-- Works without accounts; optional SQLite accounts connect your online devices privately and sync selected preferences.
+- Chat, files and joining rooms work without accounts. An account is required to create rooms and can also connect your online devices privately and sync selected preferences.
 - Verifies every device's long-lived identity key and shows a stable safety code.
 - Works as an ordinary browser page too — installing is optional.
 
@@ -105,6 +105,12 @@ host. See `deploy/README.md` for an optional host cron.
 ## Ephemeral rooms
 
 Rooms extend the same model to a small group. Create one from the rooms table, then share its `ABCD-EFGH` code with the other devices. Only joined members receive room details, codes, names, membership and transport state. Outsiders see an empty room list. Joining requires the invitation code; a room ID alone does not authorize a new member. All unsuccessful invitation attempts return the same generic response.
+
+Creating a room requires login. Each account can own two active rooms across
+all its devices; creating a third destroys the oldest room and its buffered
+content. The Create button stays visible and explains login requirements and
+replacement through toasts. Joining by code never requires an account.
+An ended room cannot be recreated by reconnecting or reusing its invitation.
 
 - **Up to six members, transport is a full mesh.** Every member holds one DataChannel per other member, each with its own ECDH/AES-GCM key and its own safety code (hover a member chip to read it). Nothing is relayed through other peers; a member a direct link cannot reach gets its copy through the server relay instead, sealed to it.
 - **Past six, a room runs through the server.** A mesh costs O(n²) connections and a sender uploads each file once per recipient, so a bigger room opens no direct links at all: every message and file goes through the relay, sealed separately to each member, and a file is uploaded once however many members there are. The room says `Large room · sealed to each member via server`. There are no per-link safety codes in this mode — authenticity rests on each item's signature. The cap is `ROOM_MAX_MEMBERS` (default 20, at most 64).
@@ -388,7 +394,7 @@ Scanning inside the installed app is the dependable way to remain in it.
 Docker enables accounts by default with a SQLite database at
 `/home/node/evakage-accounts/accounts.sqlite`. Both Compose configurations mount
 an `account-data` volume so accounts and preferences survive container replacement.
-Signing up remains optional; the app works without an account.
+Signing up is optional for chat, files and joining rooms; creating rooms requires an account.
 
 When running Node locally, set `ACCOUNTS_DB=./data/accounts.sqlite` to enable
 accounts. Without that setting, local Node accounts are disabled. Set

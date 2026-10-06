@@ -42,7 +42,7 @@ test('self notes require a server connection and retain the draft for retry', as
   await expect(alice.locator('#timeline')).not.toContainText('Offline draft to myself');
   await expect(alice.locator('#messageInput')).toHaveValue('Offline draft to myself');
   await alice.context().setOffline(false);
-  await expect(alice.locator('#serverState')).toHaveText('Ready to connect');
+  await expect(alice.locator('#serverState')).toHaveText('Ready');
   await alice.locator('#messageForm').getByRole('button', { name: 'Send', exact: true }).click();
   await expect(alice.locator('#timeline')).toContainText('Offline draft to myself');
   await expect(alice.locator('#timeline')).toContainText('via server');
@@ -63,14 +63,14 @@ test('an online event during reconnect backoff opens a single socket', async ({ 
   });
   await alice.getByRole('button', { name: 'Open conversation with yourself', exact: true }).click();
   devices.disconnect('Alice');
-  await expect(alice.locator('#serverState')).toHaveText('Connection lost — reconnecting…');
+  await expect(alice.locator('#serverState')).toHaveText('Not Ready');
   await alice.evaluate(() => window.dispatchEvent(new Event('online')));
-  await expect(alice.locator('#serverState')).toHaveText('Ready to connect');
+  await expect(alice.locator('#serverState')).toHaveText('Ready');
   await expect(alice.locator('#selfCode')).not.toHaveText('----');
   // Outlast the backoff timer the close handler scheduled.
   await alice.waitForTimeout(1500);
   expect(await alice.evaluate(() => /** @type {any} */ (window).socketsOpened)).toBe(1);
-  await expect(alice.locator('#serverState')).toHaveText('Ready to connect');
+  await expect(alice.locator('#serverState')).toHaveText('Ready');
   expect([...server.clients.values()].filter(client => client.name === deviceNames.get('Alice'))).toHaveLength(1);
   await alice.locator('#messageInput').fill('After a double reconnect');
   await alice.locator('#messageForm').getByRole('button', { name: 'Send', exact: true }).click();

@@ -26,7 +26,7 @@ for (const action of ['Block', 'Delete']) {
       await bob.getByRole('button', { name: 'Known devices', exact: true }).click();
       const deviceRow = bob.locator('#knownDeviceList .device-row').filter({ hasText: deviceNames.get('Alice') });
       await deviceRow.getByRole('button', { name: action === 'Delete' ? action : `${action} ${deviceNames.get('Alice')}`, exact: true }).click();
-      await bob.locator('#devicesDialog').getByRole('button', { name: 'Done', exact: true }).click();
+      await bob.locator('#devicesDialog').getByRole('button', { name: 'Close', exact: true }).click();
       release();
       await expect(bob.locator('#toastRegion')).toContainText('Sender authorization was revoked');
       const row = bob.locator('#timeline .file-item').filter({ hasText: 'revoked.bin' });

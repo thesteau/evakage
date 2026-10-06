@@ -15,7 +15,7 @@ async function verify(page, name) {
   await page.locator('#pairingForm').getByRole('button', { name: 'Verify', exact: true }).click();
   await expect(page.locator('#pairingDialog')).not.toBeVisible();
   await expect(page.locator('#knownDeviceList')).toContainText('Verified');
-  await page.locator('#devicesDialog').getByRole('button', { name: 'Done', exact: true }).click();
+  await page.locator('#devicesDialog').getByRole('button', { name: 'Close', exact: true }).click();
   await page.getByRole('button', { name: `Open conversation with ${name}`, exact: true }).click();
   return code;
 }
@@ -26,7 +26,7 @@ test('verification gates sending, compares matching codes, persists, and blockin
   await alice.locator('#closeSession').click();
   await alice.getByRole('button', { name: 'Settings', exact: true }).click();
   await alice.locator('#verifiedOnlyInput').check();
-  await alice.locator('#settingsDialog').getByRole('button', { name: 'Done', exact: true }).click();
+  await alice.locator('#settingsDialog').getByRole('button', { name: 'Close', exact: true }).click();
   await openPeer(alice, 'Bob');
   await alice.locator('#messageInput').fill('Blocked until verified');
   await alice.locator('#messageForm').getByRole('button', { name: 'Send', exact: true }).click();
@@ -46,7 +46,7 @@ test('verification gates sending, compares matching codes, persists, and blockin
   await expect(alice.locator('#knownDeviceList')).toContainText('Verified');
   await alice.getByRole('button', { name: `Block ${deviceNames.get('Bob')}`, exact: true }).click();
   await expect(alice.locator('#knownDeviceList')).toContainText('Blocked');
-  await alice.locator('#devicesDialog').getByRole('button', { name: 'Done', exact: true }).click();
+  await alice.locator('#devicesDialog').getByRole('button', { name: 'Close', exact: true }).click();
   await alice.getByRole('button', { name: `Open conversation with ${deviceNames.get('Bob')}`, exact: true }).click();
   await alice.locator('#messageInput').fill('Blocked device cannot receive');
   await alice.locator('#messageForm').getByRole('button', { name: 'Send', exact: true }).click();

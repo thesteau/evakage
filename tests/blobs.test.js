@@ -11,7 +11,7 @@ import crypto from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { PassThrough } from 'node:stream';
-import { startServer, waitFor, register } from './helpers.js';
+import { startRoomServer as startServer, waitFor, register } from './helpers.js';
 
 const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const BOX = { v: 1, ephemeral: 'e', iv: 'i', ciphertext: 'c' };

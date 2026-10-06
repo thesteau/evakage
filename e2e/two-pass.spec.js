@@ -146,7 +146,7 @@ test('two-pass: blocking the sender between the passes refuses Save', async ({ d
   await bob.getByRole('button', { name: 'Known devices', exact: true }).click();
   await bob.locator('#knownDeviceList .device-row').filter({ hasText: deviceNames.get('Alice') })
     .getByRole('button', { name: `Block ${deviceNames.get('Alice')}`, exact: true }).click();
-  await bob.locator('#devicesDialog').getByRole('button', { name: 'Done', exact: true }).click();
+  await bob.locator('#devicesDialog').getByRole('button', { name: 'Close', exact: true }).click();
   let downloads = 0;
   bob.on('download', () => downloads++);
   // The conversation, and its verified row, can still be reopened after blocking.
@@ -175,7 +175,7 @@ test('two-pass: blocking the sender during the save pass fails the download', as
   await bob.getByRole('button', { name: 'Known devices', exact: true }).click();
   await bob.locator('#knownDeviceList .device-row').filter({ hasText: deviceNames.get('Alice') })
     .getByRole('button', { name: `Block ${deviceNames.get('Alice')}`, exact: true }).click();
-  await bob.locator('#devicesDialog').getByRole('button', { name: 'Done', exact: true }).click();
+  await bob.locator('#devicesDialog').getByRole('button', { name: 'Close', exact: true }).click();
   await expect.poll(toasts).toContain('Sender authorization was revoked');
   expect(await outcome(download)).not.toBeNull();
   expect(storedFiles(devices.server)).toHaveLength(1);

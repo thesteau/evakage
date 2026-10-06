@@ -1,4 +1,5 @@
 import { expect } from '@playwright/test';
+import { signInRoomOwner } from './helpers.js';
 import fs from 'node:fs/promises';
 import { deviceNames, test, openPeer, chat, sendFile, joinRoom } from './helpers.js';
 
@@ -297,6 +298,7 @@ test.describe('a transfer with a gap in the chunks', () => {
 test('room history catches up after an away member reconnects', async ({ devices }) => {
   const { alice, bob } = devices;
   await alice.locator('#roomNameInput').fill('Catch-up room');
+  await signInRoomOwner(alice);
   await alice.locator('#createRoomForm').getByRole('button', { name: 'Create' }).click();
   await joinRoom(bob, alice, 'Catch-up room');
   await alice.getByRole('button', { name: 'Open room Catch-up room', exact: true }).click();
