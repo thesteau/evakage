@@ -1352,8 +1352,16 @@ function negotiateProtocol(link, hello) {
     toast(theirMax
       ? `${who} speaks Evakage protocol ${theirMin}–${theirMax}; this build speaks ${MIN_PROTOCOL}–${PROTOCOL_VERSION}.`
       : `${who} is running an older Evakage that cannot negotiate a protocol version. Both sides need a reload.`);
-    try { link.dc?.close(); } catch {}
-    try { closePeerConnection(link.pc); } catch {}
+    const close = () => {
+      try { link.dc?.close(); } catch {}
+      try { closePeerConnection(link.pc); } catch {}
+    };
+    // The peer learns of the mismatch only from our hello, which carries our
+    // range. If it is still being prepared, let it go out before closing, or
+    // the peer is left with nothing to report.
+    const pendingHello = link.crypto.helloSent ? null : link.crypto.helloPromise;
+    if (pendingHello) pendingHello.catch(() => {}).finally(close);
+    else close();
     renderPeers();
     renderRooms();
     renderSession();

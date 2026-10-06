@@ -131,3 +131,24 @@ test.describe('legacy unsigned-chat protocol', () => {
     await expect(alice.locator('#secureState')).not.toContainText('Encrypted');
   });
 });
+
+// The refusing side may read the other hello before its own is ready (slow key
+// generation on a busy machine). It must still send its hello, which carries its
+// version range, or the other side has nothing to report and waits in silence.
+test.describe('legacy peer slow to prepare its hello', () => {
+  test.use({ autoPair: false, appPatch: { device: 'Bob', patch: source => source
+    .replace('const PROTOCOL_VERSION = 3;', 'const PROTOCOL_VERSION = 2;')
+    .replace('const MIN_PROTOCOL = 3;', 'const MIN_PROTOCOL = 2;')
+    .replace(
+      "const keyPair = await crypto.subtle.generateKey({ name: 'ECDH', namedCurve: 'P-256' }, true, ['deriveKey']);",
+      "await new Promise(resolve => setTimeout(resolve, 1500));\n    const keyPair = await crypto.subtle.generateKey({ name: 'ECDH', namedCurve: 'P-256' }, true, ['deriveKey']);") } });
+  test('both sides still report the mismatch', async ({ devices }) => {
+    const { alice, bob } = devices;
+    await Promise.all([
+      expect(alice.locator('#toastRegion')).toContainText('this build speaks 3–3'),
+      expect(bob.locator('#toastRegion')).toContainText('this build speaks 2–2'),
+      pairDevices(alice, bob, false)
+    ]);
+    await expect(alice.locator('#peerRows')).toContainText('Version mismatch');
+  });
+});
