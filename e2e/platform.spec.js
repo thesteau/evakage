@@ -23,7 +23,8 @@ for (const twoPass of [false, true]) {
         });
         const page = await context.newPage();
         page.on('pageerror', error => errors.push(error.message));
-        await page.goto(base);
+        // Test app readiness below rather than waiting for every page resource.
+        await page.goto(base, { waitUntil: 'domcontentloaded', timeout: 15000 });
         await expect(page.locator('#selfCode')).not.toHaveText('----');
         pages.push(page);
       }
