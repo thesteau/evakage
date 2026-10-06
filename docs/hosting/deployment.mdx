@@ -4,8 +4,7 @@ description: "Run published images, retain account data and monitor the server."
 ---
 
 The repository's `deploy/` folder runs a **published image**. It never builds
-from source; for that, use `app/compose.yaml`. Evakage
-is currently in prerelease development.
+from source; for that, use `app/compose.yaml`.
 
 ```bash
 cd deploy
@@ -23,7 +22,6 @@ service workers, and installing the app.
 The compose file runs `ghcr.io/thesteau/evakage:latest`, which is what the
 main image workflow publishes from tested `main` commits. To pin
 a stable deployment, edit the Compose image tag to a published `vX.Y.Z` tag.
-The pipeline is prepared for `v1.0.0`, but no stable release is implied by this setup.
 
 ## Accounts and preferences
 

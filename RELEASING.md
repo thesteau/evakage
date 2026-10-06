@@ -1,8 +1,8 @@
 # Releasing Evakage
 
 Workflow YAML lives in `.github/workflows/`; dependency updates are configured
-in `.github/dependabot.yml`. GitHub runs this automation after the configuration
-is pushed to the relevant branches.
+in `.github/dependabot.yml`. GitHub runs the automation on the configured
+push, pull request, release and scheduled events.
 
 ## Release model
 
@@ -53,20 +53,16 @@ Existing stable image tags are skipped on retry. A stable release never updates
 ## Repository setup
 
 1. Ensure the workflow configuration is on the default `main` branch, then create `prod` from
-   `main` or promote the activation commit into an existing `prod` branch.
+   `main` or promote workflow changes into an existing `prod` branch.
 2. Configure GitHub settings and rules below. Allow Actions to create PRs.
 3. Run **Release: Plan and publish** on `prod` with `plan`. This bootstraps the
    orphan `release-state` branch. At least one releasable Conventional Commit
-   must be present to generate the first release PR.
+   must be present to generate a release PR.
 4. Protect `release-state`, review the recorded SHA/version/notes, then merge the
-   release PR only when ready for the public release.
+   release PR to publish the approved version.
 5. After publishing, set GHCR package visibility and access as intended. Use
    a published `vX.Y.Z` image tag in the deployment Compose file to pin a stable
    release. The provided Compose file uses the literal `latest` tag.
-
-Activating the workflows starts push/PR/scheduled automation. No GitHub branch,
-ruleset, release, package permission or Mintlify hosting change is made by the
-local file changes themselves.
 
 ## GitHub settings and branch rules
 

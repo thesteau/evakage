@@ -7,8 +7,6 @@ small group into an ephemeral room. Install it as a PWA or use it in your browse
 [Documentation](https://github.com/thesteau/evakage/tree/main/docs) ·
 [Buy me a coffee](https://buymeacoffee.com/thesteau)
 
-Evakage is currently in prerelease development.
-
 ![Evakage device list and private rooms](docs/images/devices-and-rooms.png)
 
 ## Quick start
@@ -68,8 +66,7 @@ independent security audit; see [SECURITY.md](SECURITY.md).
 
 ## Documentation
 
-The hosted documentation site is coming soon. Until then, read the
-[documentation in this repository](https://github.com/thesteau/evakage/tree/main/docs):
+Read the [documentation in this repository](https://github.com/thesteau/evakage/tree/main/docs):
 
 - [Quick start](docs/quickstart.mdx)
 - [Pairing devices](docs/guides/devices.mdx), [rooms](docs/guides/rooms.mdx), and [transfers](docs/guides/transfers.mdx)
