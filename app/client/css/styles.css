@@ -732,6 +732,11 @@ tbody tr.offline td.expiring {
 .toolbar-group .icon-button { display: inline-flex; align-items: center; justify-content: center; width: 40px; height: 40px; }
 .toolbar-group .icon-button svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
 
+.table-filter-button.is-active {
+  color: var(--warn);
+  font-weight: 700;
+}
+
 /* Sorting and searching share each column heading. */
 .table-filters {
   width: min(360px, calc(100vw - 32px));

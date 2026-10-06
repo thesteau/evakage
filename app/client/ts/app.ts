@@ -3680,7 +3680,8 @@ function applyTableView(
   }
   const filtering = filters.length > 0 || extraActive || Boolean(search);
   const filterButton = section.querySelector('.table-filter-button') as HTMLButtonElement;
-  filterButton.textContent = filtering ? 'Filter · active' : 'Filter';
+  filterButton.classList.toggle('is-active', filtering);
+  filterButton.setAttribute('aria-label', filtering ? 'Filter (active)' : 'Filter');
   return visible;
 }
 

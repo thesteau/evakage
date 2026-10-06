@@ -16,7 +16,7 @@ on:
 permissions:
   contents: read
 
-# Every branch push runs; obsolete PR runs can be cancelled.
+# Every branch push runs; obsolete PR runs can be canceled.
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
