@@ -220,9 +220,9 @@ button.ghost:hover { background: var(--panel-2); filter: none; }
 .peers-card { margin-top: 18px; padding: 18px; }
 .section-heading { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 14px; padding: 4px 4px 14px; }
 .section-heading p { margin: 0; }
-/* Both rows share one column grid so the inputs and buttons line up. */
-.room-forms { display: grid; grid-template-columns: 1fr auto; gap: 8px; min-width: min(360px, 100%); }
-.room-forms .inline-field { grid-column: 1 / -1; grid-template-columns: subgrid; }
+/* Keep each input with its action; wrap whole forms when space runs out. */
+.room-forms { display: flex; flex-wrap: wrap; gap: 8px 16px; width: 100%; }
+.room-forms .inline-field { flex: 1 1 320px; min-width: 0; grid-template-columns: minmax(0, 1fr) auto; }
 .room-forms button { width: 100%; }
 #roomFeedback:empty { display: none; }
 
@@ -590,6 +590,19 @@ tbody tr.offline td.expiring {
 .self-badge { color: var(--accent); white-space: nowrap; }
 
 .qr-code { display: block; width: min(100%, 240px); height: auto; image-rendering: pixelated; }
+.qr-dialog { width: min(720px, calc(100vw - 24px)); max-height: calc(100dvh - 24px); }
+.qr-panels { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(220px, 100%), 1fr)); gap: 16px; }
+.qr-panel { display: grid; justify-items: center; align-content: start; gap: 8px; min-width: 0; text-align: center; }
+.qr-panel h3 { margin: 0; font-size: .95rem; }
+.qr-dialog .qr-code { width: min(100%, 220px); }
+.qr-details { font-size: .85rem; overflow-wrap: anywhere; }
+.qr-details summary { cursor: pointer; color: var(--muted); }
+.qr-details p { margin-top: 8px; }
+@media (max-width: 520px) {
+  .qr-dialog form { gap: 8px; padding: 14px; }
+  .qr-panels { gap: 12px; }
+  .qr-dialog .qr-code { width: min(100%, 160px); }
+}
 #qrServerUrl { overflow-wrap: anywhere; }
 
 .qr-preview { width: 100%; max-height: 50vh; }

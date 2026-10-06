@@ -246,18 +246,27 @@
     </form>
   </dialog>
 
-  <dialog id="qrDialog" class="dialog">
+  <dialog id="qrDialog" class="dialog qr-dialog">
     <form method="dialog">
       <h2>Connect with QR codes</h2>
-      <p class="muted">Use Scan QR inside the installed app to stay in the app. External camera links may open the installed app depending on your browser and OS link preferences.</p>
-      <p>Scan the server URL to open this app, then scan the device QR or enter its pairing code under Connect by code. Pairing is required for unknown devices. Codes rotate every three days; paired identities stay paired.</p>
+      <p class="muted">Scan the server QR to open this app, then the device QR to pair. Use Scan QR inside the installed app to stay in it.</p>
+      <div class="qr-panels">
+      <section class="qr-panel">
       <h3>Server URL</h3>
       <canvas id="serverQr" class="qr-code" role="img" aria-label="Server URL QR code"></canvas>
       <p id="qrServerUrl"></p>
+      </section>
+      <section class="qr-panel">
       <h3>Your device code</h3>
       <canvas id="deviceQr" class="qr-code" role="img" aria-label="Your device code QR code"></canvas>
       <p id="qrDeviceCode"></p>
-      <p>Your full device fingerprint: <code id="qrFingerprint" class="device-fingerprint"></code></p>
+      </section>
+      </div>
+      <details class="qr-details">
+        <summary>Pairing details</summary>
+        <p class="muted">Pairing codes rotate every three days; paired devices stay paired. External camera links follow your browser and OS preferences.</p>
+        <p>Your full device fingerprint: <code id="qrFingerprint" class="device-fingerprint"></code></p>
+      </details>
       <div class="dialog-actions"><button type="submit">Done</button></div>
     </form>
   </dialog>
