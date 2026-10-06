@@ -1,7 +1,7 @@
 # Release preparation
 
 - [ ] Complete the [independent protocol/security review](maintainer/security-review.md) against an identified revision and resolve its findings.
-- [ ] Review the [release setup](RELEASING.md), configure GitHub branch rules and package visibility, and enable the prepared workflows when ready.
+- [ ] Review the [release setup](RELEASING.md), configure GitHub branch rules and package visibility.
 - [ ] Connect Mintlify to this repository with `docs/` as its documentation directory, preview the pages, and choose the public documentation URL.
 - [ ] Review and publish the first stable `v1.0.0` release once the app is ready.
 

@@ -1,9 +1,8 @@
 # Releasing Evakage
 
-All automation is prepared but dormant. Workflow YAML lives in
-`.github/workflows-disabled/`; Dependabot lives in `.github/dependabot.disabled.yml`.
-GitHub will discover them only after they are moved to the active paths below.
-Existing hosted images are unaffected by this local preparation.
+Workflow YAML lives in `.github/workflows/`; dependency updates are configured
+in `.github/dependabot.yml`. GitHub runs this automation after the configuration
+is pushed to the relevant branches.
 
 ## Release model
 
@@ -30,7 +29,7 @@ The bridge and release workflow policies were adapted from
 [3to1go](https://github.com/thesteau/3to1go/tree/ced2c19368182079d347acce757893795afb812a)
 under its MIT license.
 
-## Prepared workflows
+## Workflows
 
 | File | Purpose |
 | --- | --- |
@@ -51,28 +50,23 @@ Privileged metadata workflows check out trusted `prod` code, never PR code.
 Existing stable image tags are skipped on retry. A stable release never updates
 `latest`; that tag belongs to `main`.
 
-## Enable when ready
+## Repository setup
 
-1. Move every `.yml` file from `.github/workflows-disabled/` into `.github/workflows/`
-   in one commit. Their reusable workflow references intentionally point to the
-   final active paths. Do not leave duplicate copies.
-2. Rename `.github/dependabot.disabled.yml` to `.github/dependabot.yml` if dependency
-   update PRs should also start. Its npm, Actions and Docker updates are grouped.
-3. Ensure that commit is on the default `main` branch, then create `prod` from
+1. Ensure the workflow configuration is on the default `main` branch, then create `prod` from
    `main` or promote the activation commit into an existing `prod` branch.
-4. Configure GitHub settings and rules below. Allow Actions to create PRs.
-5. Run **Release: Plan and publish** on `prod` with `plan`. This bootstraps the
+2. Configure GitHub settings and rules below. Allow Actions to create PRs.
+3. Run **Release: Plan and publish** on `prod` with `plan`. This bootstraps the
    orphan `release-state` branch. At least one releasable Conventional Commit
    must be present to generate the first release PR.
-6. Protect `release-state`, review the recorded SHA/version/notes, then merge the
+4. Protect `release-state`, review the recorded SHA/version/notes, then merge the
    release PR only when ready for the public release.
-7. After publishing, set GHCR package visibility and access as intended. Use
+5. After publishing, set GHCR package visibility and access as intended. Use
    a published `vX.Y.Z` image tag in the deployment Compose file to pin a stable
    release. The provided Compose file uses the literal `latest` tag.
 
 Activating the workflows starts push/PR/scheduled automation. No GitHub branch,
 ruleset, release, package permission or Mintlify hosting change is made by the
-local preparation itself.
+local file changes themselves.
 
 ## GitHub settings and branch rules
 

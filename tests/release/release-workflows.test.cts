@@ -1,13 +1,10 @@
 // Adapted from thesteau/3to1go (MIT); executes workflow scripts with mocked APIs.
 const { test } = require("node:test");
 const assert = require("node:assert/strict");
-const { readFileSync, existsSync } = require("node:fs");
+const { readFileSync } = require("node:fs");
 const { resolve } = require("node:path");
 const AsyncFunction = Object.getPrototypeOf(async () => {}).constructor;
-const activeWorkflows = resolve(__dirname, "..", "..", ".github/workflows");
-const workflowDirectory = existsSync(resolve(activeWorkflows, "release-please.yml"))
-  ? activeWorkflows
-  : resolve(__dirname, "..", "..", ".github/workflows-disabled");
+const workflowDirectory = resolve(__dirname, "..", "..", ".github/workflows");
 
 function scripts(name: string): string[] {
   const source = readFileSync(resolve(workflowDirectory, `${name}.yml`), "utf8");

@@ -28,7 +28,7 @@ updates:
   # Picks up new node:26-alpine base images, which is where container CVEs
   # usually arrive for this project.
   - package-ecosystem: docker
-    directory: /
+    directory: /app
     schedule:
       interval: weekly
     open-pull-requests-limit: 5

@@ -3,8 +3,7 @@ title: "Releases"
 description: "How main builds become reviewed, tagged stable releases."
 ---
 
-The release pipeline is prepared but disabled while Evakage is in prerelease
-development. `latest` belongs to `main`; stable releases use immutable `vX.Y.Z` tags.
+`latest` belongs to `main`; stable releases use immutable `vX.Y.Z` tags.
 
 ```mermaid
 flowchart LR
@@ -50,5 +49,5 @@ container smoke and vulnerability checks. Stable image retries skip existing tag
 Edit the image tag in the [deployment Compose file](/hosting/deployment) to pin
 a published stable release. Stable releases do not move `latest`.
 
-Maintainers: activation, GitHub settings, retries and metadata recovery are covered
+Maintainers: GitHub settings, retries and metadata recovery are covered
 in [RELEASING.md](https://github.com/thesteau/aria-drop/blob/main/RELEASING.md).
