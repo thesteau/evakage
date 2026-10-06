@@ -187,14 +187,6 @@ h2 { margin-bottom: 8px; letter-spacing: -.02em; }
   border-radius: 22px;
   box-shadow: var(--shadow);
 }
-.hero {
-  padding: 28px;
-  display: grid;
-  grid-template-columns: 1.3fr .7fr;
-  gap: 30px;
-  align-items: center;
-}
-.hero p { max-width: 720px; color: var(--muted); margin-bottom: 0; line-height: 1.55; }
 .connection-status { display: inline-flex; align-items: center; gap: 8px; padding: 10px 13px; border: 1px solid var(--line); border-radius: 999px; background: var(--panel-2); font-size: .82rem; white-space: nowrap; }
 .header-status { font-weight: 700; color: var(--warn); }
 .header-status.online { color: var(--status-ready); }
@@ -202,7 +194,6 @@ h2 { margin-bottom: 8px; letter-spacing: -.02em; }
 
 .code-form label { display: block; font-size: .78rem; color: var(--muted); margin-bottom: 7px; font-weight: 700; }
 .code-form { min-width: 0; }
-.connect-start { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
 #peersHeading, #roomsHeading { cursor: help; }
 .topbar-actions .identity-card { font-size: .85rem; white-space: nowrap; }
 .device-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
@@ -497,7 +488,6 @@ tbody tr.offline td.expiring {
 
 @media (max-width: 760px) {
   .topbar { align-items: flex-start; }
-  .hero { grid-template-columns: 1fr; }
   .session-panel { inset: var(--topbar-height, 120px) 0 0; width: 100vw; border-radius: 0; }
   .drop-hint { border-radius: 0; }
   .message-form { grid-template-columns: 1fr; }
@@ -518,7 +508,6 @@ tbody tr.offline td.expiring {
   .topbar { padding: calc(18px + env(safe-area-inset-top)) 16px 10px; flex-direction: column; align-items: stretch; gap: 12px; }
   .topbar-actions { justify-content: flex-start; gap: 8px; }
   .page-shell { padding: 8px 16px calc(40px + env(safe-area-inset-bottom)); }
-  .hero { padding: 20px; gap: 22px; }
   .card { border-radius: 18px; }
   .peers-card { padding: 14px; }
   .section-heading { flex-direction: column; align-items: stretch; }
@@ -634,7 +623,102 @@ tbody tr.offline td.expiring {
 
 .qr-preview { width: 100%; max-height: 50vh; }
 
-.list-controls { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
-.list-controls label { min-width: 0; }
-.list-controls label:first-child { flex: 1 1 180px; }
-.list-controls select { max-width: 100%; padding: 11px 12px; border: 1px solid var(--line); border-radius: 12px; background: var(--field); color: var(--text); }
+/* Header actions read as one quiet segmented control, so they sit at the same
+   height and weight as the status and code pills beside them instead of
+   competing with the page's primary buttons. */
+.topbar-actions .identity-card { border-radius: 999px; }
+.toolbar-group {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px;
+  padding: 3px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--panel-2);
+}
+.toolbar-group button {
+  border: 0;
+  border-radius: 999px;
+  padding: 7px 13px;
+  background: transparent;
+  color: var(--muted);
+  font-size: .85rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.toolbar-group button:hover { background: var(--panel); color: var(--text); filter: none; }
+.toolbar-group .icon-button { font-size: 1rem; padding: 7px 10px; }
+
+/* Sorting and filtering sit in the table header, one control per column. */
+th[aria-sort] { padding: 0; }
+.sort-button {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 13px 14px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-weight: 700;
+  letter-spacing: inherit;
+  text-transform: inherit;
+  text-align: left;
+}
+.sort-button:hover { color: var(--text); filter: none; }
+.sort-button::after { content: '↕'; content: '↕' / ''; opacity: 0; font-size: .9em; }
+.sort-button:hover::after, .sort-button:focus-visible::after { opacity: .5; }
+th[aria-sort="ascending"] .sort-button,
+th[aria-sort="descending"] .sort-button { color: var(--text); }
+th[aria-sort="ascending"] .sort-button::after { content: '↑'; content: '↑' / ''; opacity: 1; color: var(--accent); }
+th[aria-sort="descending"] .sort-button::after { content: '↓'; content: '↓' / ''; opacity: 1; color: var(--accent); }
+
+.filter-row td { padding: 8px 10px; background: var(--panel-3); }
+.filter-row input,
+.filter-row select {
+  width: 100%;
+  min-width: 0;
+  padding: 7px 10px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--field);
+  color: var(--text);
+  font: inherit;
+  font-size: .82rem;
+}
+.filter-row .clear-filters { padding: 6px 10px; font-size: .78rem; }
+
+/* Phones: rows are cards and the column headers are gone, so the sort buttons
+   become a row of chips and the filters a compact grid above the cards. */
+@media (max-width: 700px) {
+  thead { display: block; margin-bottom: 12px; }
+  thead tr { display: flex; flex-wrap: wrap; gap: 6px; }
+  thead th, thead td { display: block; width: auto; padding: 0; border: 0; background: none; }
+  thead .actions-col:empty, thead th.actions-col { display: none; }
+  .sort-row { margin-bottom: 8px; }
+  .sort-button {
+    min-height: 36px;
+    padding: 6px 12px;
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    font-size: .72rem;
+  }
+  .sort-button::after { opacity: .5; }
+  .filter-row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .filter-row td,
+  .filter-row td:first-child { margin: 0; padding: 0; border: 0; background: none; font-size: inherit; }
+  .filter-row td:empty { display: none; }
+  .filter-row input, .filter-row select { padding: 10px 12px; font-size: 1rem; }
+  .filter-row .clear-filters { width: 100%; }
+  .filter-row td.actions-col:has(.clear-filters[hidden]) { display: none; }
+  .toolbar-group button { min-height: 40px; }
+  .identity-card .code-button { min-height: 0; }
+
+  /* The heading takes its own line; its buttons share the next one rather
+     than leaving one stranded on a row of its own. */
+  .device-actions { flex-wrap: nowrap; }
+  .device-actions button { flex: 1 1 auto; min-width: 0; padding-inline: 10px; font-size: .88rem; white-space: nowrap; }
+}

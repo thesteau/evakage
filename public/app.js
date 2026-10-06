@@ -49,11 +49,8 @@ import { TransferStats, bufferLimit } from './transfer-stats.js';
  * '#qrBtn': HTMLButtonElement,
  * '#addDeviceDialog': HTMLDialogElement,
  * '#addDeviceBtn': HTMLButtonElement,
- * '#deviceFilter': HTMLInputElement,
  * '#deviceScope': HTMLSelectElement,
- * '#deviceSort': HTMLSelectElement,
- * '#roomFilter': HTMLInputElement,
- * '#roomSort': HTMLSelectElement,
+ * '#noRoomMatches': HTMLElement,
  * '#usageBtn': HTMLButtonElement,
  * '#usageDialog': HTMLDialogElement,
  * '#qrPairingCode': HTMLElement,
@@ -116,6 +113,7 @@ import { TransferStats, bufferLimit } from './transfer-stats.js';
  * '#devicesBtn': HTMLElementTagNameMap['button'],
  * '#refreshBtn': HTMLElementTagNameMap['button'],
  * '#installBtn': HTMLElementTagNameMap['button'],
+ * '#installStatus': HTMLElementTagNameMap['p'],
  * '#updateBanner': HTMLElementTagNameMap['div'],
  * '#reloadBtn': HTMLElementTagNameMap['button'],
  * '#shareBanner': HTMLElementTagNameMap['div'],
@@ -3126,6 +3124,8 @@ function renderPeersNow() {
     const name = document.createElement('span');
     name.textContent = peer.name;
     nameWrap.append(pip, name);
+    // Sort by the name alone, not the badges that follow it.
+    nameTd.dataset.sort = peer.name;
     if (isSelf) {
       tr.classList.add('self-device');
       const badge = document.createElement('strong');
@@ -3188,24 +3188,85 @@ function renderPeersNow() {
 
   const offline = offlineDevicesToList();
   for (const record of offline) peerRows.append(renderOfflineRow(record));
-  const query = $('#deviceFilter').value.trim().toLowerCase();
+  // Status is a few fixed states rather than free text, so its column filter
+  // is a select.
   const scope = $('#deviceScope').value;
-  const sort = $('#deviceSort').value;
-  const rows = [...peerRows.rows];
-  rows.sort((a, b) => {
-    const column = sort === 'platform' ? 2 : sort === 'status' ? 3 : 0;
-    const nameOf = (/** @type {HTMLTableRowElement} */ row) => column === 0 ? row.querySelector('.device-name > span:nth-child(2)')?.textContent || row.cells[0].textContent || '' : row.cells[column].textContent || '';
-    return nameOf(a).localeCompare(nameOf(b)) * (sort === 'name-desc' ? -1 : 1);
-  });
-  for (const row of rows) {
+  const visible = applyTableView(peerRows, row => {
     const id = row.dataset.dropTarget;
-    const own = id === state.self?.id || accountPeerIds.has(id);
-    row.hidden = !(row.textContent || '').toLowerCase().includes(query)
-      || (scope === 'yours' && !own) || (scope === 'online' && row.classList.contains('offline'))
-      || (scope === 'offline' && !row.classList.contains('offline'));
-    peerRows.append(row);
+    const own = id === state.self?.id || accountPeerIds.has(id || '');
+    const offline = row.classList.contains('offline');
+    return scope === 'all' || (scope === 'yours' && own) || (scope === 'online' && !offline) || (scope === 'offline' && offline);
+  }, scope !== 'all');
+  emptyPeers.classList.toggle('hidden', !peerRows.rows.length || visible > 0);
+}
+
+/**
+ * Sorting and filtering live in each table's header: a sort button per column
+ * and a filter field under it. Rows are rebuilt on every render, so this only
+ * reorders and hides whatever is in the tbody, reading the current choices
+ * straight from the header. With no column sorted, rows keep the order they
+ * were rendered in.
+ * @param {HTMLTableSectionElement} tbody
+ * @param {(row: HTMLTableRowElement) => boolean} [keep] extra, table-specific filter
+ * @param {boolean} [extraActive] whether that extra filter is narrowing anything
+ * @returns {number} rows left visible
+ */
+function applyTableView(tbody, keep = () => true, extraActive = false) {
+  const table = /** @type {HTMLTableElement} */ (tbody.closest('table'));
+  const filters = [...table.querySelectorAll('input[data-col]')]
+    .map(input => /** @type {const} */ ([Number(/** @type {HTMLInputElement} */ (input).dataset.col), /** @type {HTMLInputElement} */ (input).value.trim().toLowerCase()]))
+    .filter(([, query]) => query);
+  const rows = [...tbody.rows];
+  const sorted = table.querySelector('th[aria-sort="ascending"], th[aria-sort="descending"]');
+  if (sorted instanceof HTMLTableCellElement) {
+    const column = sorted.cellIndex;
+    const direction = sorted.getAttribute('aria-sort') === 'descending' ? -1 : 1;
+    const valueOf = (/** @type {HTMLTableRowElement} */ row) => row.cells[column]?.dataset.sort ?? row.cells[column]?.textContent ?? '';
+    rows.sort((a, b) => valueOf(a).localeCompare(valueOf(b), undefined, { numeric: true, sensitivity: 'base' }) * direction);
   }
-  emptyPeers.classList.toggle('hidden', rows.some(row => !row.hidden));
+  let visible = 0;
+  for (const row of rows) {
+    row.hidden = !keep(row) || filters.some(([column, query]) => !(row.cells[column]?.textContent || '').toLowerCase().includes(query));
+    if (!row.hidden) visible++;
+    tbody.append(row);
+  }
+  const filtering = filters.length > 0 || extraActive;
+  // An empty table has nothing to filter; keep the row while a filter is set
+  // so the person can still undo it.
+  table.querySelector('.filter-row')?.classList.toggle('hidden', !rows.length && !filtering);
+  const clear = table.querySelector('.clear-filters');
+  if (clear instanceof HTMLButtonElement) clear.hidden = !filtering;
+  return visible;
+}
+
+/** @param {HTMLTableElement} table */
+function renderTable(table) {
+  if (table.contains(peerRows)) renderPeers();
+  else renderRooms();
+}
+
+for (const table of document.querySelectorAll('.peers-card table')) {
+  if (!(table instanceof HTMLTableElement)) continue;
+  table.tHead?.addEventListener('click', event => {
+    const target = /** @type {Element} */ (event.target);
+    const sortButton = target.closest('.sort-button');
+    if (sortButton) {
+      // Ascending, descending, then back to the table's natural order.
+      const th = /** @type {HTMLTableCellElement} */ (sortButton.closest('th'));
+      const next = { none: 'ascending', ascending: 'descending', descending: 'none' }[th.getAttribute('aria-sort') || 'none'] || 'none';
+      for (const other of table.querySelectorAll('th[aria-sort]')) other.setAttribute('aria-sort', 'none');
+      th.setAttribute('aria-sort', next);
+      renderTable(table);
+    } else if (target.closest('.clear-filters')) {
+      for (const field of table.querySelectorAll('.filter-row input, .filter-row select')) {
+        if (field instanceof HTMLInputElement) field.value = '';
+        if (field instanceof HTMLSelectElement) field.selectedIndex = 0;
+      }
+      renderTable(table);
+      /** @type {HTMLInputElement | null} */ (table.querySelector('.filter-row input'))?.focus();
+    }
+  });
+  table.tHead?.addEventListener('input', () => renderTable(table));
 }
 
 // Offline devices worth listing: seen within the window, and ones this browser
@@ -3324,12 +3385,8 @@ function renderRooms() {
 
 function renderRoomsNow() {
   roomRows.textContent = '';
-  const query = $('#roomFilter').value.trim().toLowerCase();
-  const sort = $('#roomSort').value;
-  const rooms = [...state.rooms.values()].filter(room => `${room.name} ${room.code}`.toLowerCase().includes(query))
-    .sort((a, b) => sort === 'name' || sort === 'name-desc'
-      ? a.name.localeCompare(b.name) * (sort === 'name-desc' ? -1 : 1)
-      : (a.createdAt - b.createdAt) * (sort === 'newest' ? -1 : 1));
+  // Oldest first is the natural order; the column headers sort from there.
+  const rooms = [...state.rooms.values()].sort((a, b) => a.createdAt - b.createdAt);
   emptyRooms.classList.toggle('hidden', rooms.length > 0);
   for (const room of rooms) {
     const joined = state.joinedRoomIds.has(room.id);
@@ -3425,6 +3482,8 @@ function renderRoomsNow() {
     tr.append(nameTd, codeTd, membersTd, countTd, statusTd, actionsTd);
     roomRows.append(tr);
   }
+  const visible = applyTableView(roomRows);
+  $('#noRoomMatches').classList.toggle('hidden', !rooms.length || visible > 0);
 }
 
 // Rebuilding the timeline is O(messages + files). Chunk progress arrives many
@@ -4060,11 +4119,6 @@ function renderQrCodes() {
   $('#qrFingerprint').textContent = state.self.id;
   $('#qrPairingCode').textContent = state.self.pairingCode;
 }
-$('#deviceFilter').addEventListener('input', renderPeers);
-$('#deviceScope').addEventListener('change', renderPeers);
-$('#deviceSort').addEventListener('change', renderPeers);
-$('#roomFilter').addEventListener('input', renderRooms);
-$('#roomSort').addEventListener('change', renderRooms);
 $('#usageBtn').addEventListener('click', () => openDialog($('#usageDialog')));
 $('#addDeviceBtn').addEventListener('click', () => openDialog($('#addDeviceDialog')));
 $('#qrBtn').addEventListener('click', () => {
@@ -4565,16 +4619,48 @@ async function updateWakeLock() {
   }
 }
 
+/**
+ * The Settings install section always says something useful: a button when the
+ * browser offers a prompt, the manual steps where it never will, and why not
+ * when installing is impossible here.
+ */
 function setupInstallPrompt() {
   const installBtn = $('#installBtn');
+  const status = $('#installStatus');
   /** @type {any} */
   let deferred = null;
+
+  // navigator.standalone is iOS-only and not in the standard Navigator type.
+  const iosStandalone = /** @type {{ standalone?: boolean }} */ (navigator).standalone === true;
+  const ios = /iPhone|iPad|iPod/i.test(navigator.userAgent)
+    || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+
+  /** @param {string} text @param {boolean} [offer] */
+  const show = (text, offer = false) => {
+    status.textContent = text;
+    installBtn.hidden = !offer;
+  };
+
+  const fallback = () => {
+    if (matchMedia('(display-mode: standalone)').matches || iosStandalone) {
+      show('Evakage is installed and running as an app.');
+    } else if (!window.isSecureContext) {
+      // Service workers, and with them installing, need HTTPS or localhost.
+      show('Installing needs a secure (HTTPS) connection to this server.');
+    } else if (ios) {
+      // iOS has no install prompt API; Add to Home Screen is manual.
+      show('In Safari, tap Share, then “Add to Home Screen”.');
+    } else {
+      show('Use your browser menu’s “Install app” or “Add to Home screen”. If it is missing, Evakage may already be installed on this device.');
+    }
+  };
+  fallback();
 
   window.addEventListener('beforeinstallprompt', event => {
     // Chrome/Edge/Android: take over the prompt so it can be offered in context.
     event.preventDefault();
     deferred = event;
-    installBtn.classList.remove('hidden');
+    show('Install Evakage to open it from your home screen or app list, in its own window.', true);
   });
 
   installBtn.addEventListener('click', async () => {
@@ -4583,27 +4669,14 @@ function setupInstallPrompt() {
     deferred.prompt();
     await deferred.userChoice.catch(() => {});
     deferred = null;
-    installBtn.classList.add('hidden');
     installBtn.disabled = false;
+    fallback();
   });
 
   window.addEventListener('appinstalled', () => {
     deferred = null;
-    installBtn.classList.add('hidden');
+    show('Installed. Open Evakage from your home screen or app list.');
   });
-
-  // iOS has no install prompt API; Add to Home Screen is manual, so say so once
-  // instead of showing a button that cannot work.
-  // navigator.standalone is iOS-only and not in the standard Navigator type.
-  const iosStandalone = /** @type {{ standalone?: boolean }} */ (navigator).standalone === true;
-  const standalone = matchMedia('(display-mode: standalone)').matches || iosStandalone;
-  if (!standalone && /iPhone|iPad|iPod/i.test(navigator.userAgent)) {
-    installBtn.classList.remove('hidden');
-    installBtn.textContent = 'Install';
-    installBtn.addEventListener('click', () => {
-      toast('In Safari, tap Share then "Add to Home Screen" to install Evakage.');
-    });
-  }
 }
 
 async function setupServiceWorker() {

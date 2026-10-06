@@ -36,27 +36,19 @@
         <button id="selfCode" class="code-button" type="button" aria-describedby="selfCodeLabel"
                 aria-label="Your device code, activate to copy" title="Copy your code to connect from another device">----</button>
       </div>
-      <button id="themeBtn" class="icon-button" type="button" aria-label="Theme: follow system">
-        <span id="themeIcon" aria-hidden="true">◐</span>
-      </button>
-      <button id="refreshBtn" class="ghost" type="button">Refresh view</button>
-      <button id="qrBtn" class="ghost" type="button">QR code</button>
-      <button id="accountBtn" class="ghost" type="button">Login</button>
-      <button id="settingsBtn" class="ghost" type="button">Settings</button>
+      <div class="toolbar-group" role="group" aria-label="App">
+        <button id="themeBtn" class="icon-button" type="button" aria-label="Theme: follow system">
+          <span id="themeIcon" aria-hidden="true">◐</span>
+        </button>
+        <button id="refreshBtn" class="ghost" type="button">Refresh</button>
+        <button id="qrBtn" class="ghost" type="button">QR code</button>
+        <button id="accountBtn" class="ghost" type="button">Login</button>
+        <button id="settingsBtn" class="ghost" type="button">Settings</button>
+      </div>
     </div>
   </header>
 
   <main class="page-shell">
-    <section class="hero card" aria-labelledby="heroHeading">
-      <div>
-        <h2 id="heroHeading">Start a chat</h2>
-      </div>
-      <div class="connect-start">
-        <button id="usageBtn" class="ghost" type="button" aria-haspopup="dialog">Usage</button>
-        <button id="addDeviceBtn" type="button">Connect</button>
-      </div>
-    </section>
-
     <section class="card peers-card" id="peersSection" aria-labelledby="peersHeading">
       <div class="section-heading">
         <div>
@@ -64,32 +56,36 @@
           <span id="devicesHint" class="visually-hidden">Your connected devices appear here. Only devices you connect can reach you unless you turn on discovery in Settings.</span>
         </div>
         <div class="device-actions">
+          <button id="usageBtn" class="ghost" type="button" aria-haspopup="dialog">Usage</button>
           <button id="devicesBtn" class="ghost" type="button">Known devices</button>
+          <button id="addDeviceBtn" type="button" aria-haspopup="dialog">Connect</button>
         </div>
-      </div>
-      <div class="list-controls">
-        <label><span class="visually-hidden">Filter devices</span><input id="deviceFilter" type="search" placeholder="Filter devices"></label>
-        <label><span class="visually-hidden">Device scope</span><select id="deviceScope"><option value="all">All devices</option><option value="yours">Your devices</option><option value="online">Online</option><option value="offline">Offline</option></select></label>
-        <label><span class="visually-hidden">Sort devices</span><select id="deviceSort"><option value="name">Name A–Z</option><option value="name-desc">Name Z–A</option><option value="platform">Platform</option><option value="status">Status</option></select></label>
       </div>
       <div class="table-wrap">
         <table>
-          <caption class="visually-hidden">This browser, paired devices and advertised devices, with connection state and actions</caption>
+          <caption class="visually-hidden">This browser, paired devices and advertised devices, with connection state and actions. Column headers sort the table.</caption>
           <thead>
-            <tr>
-              <th scope="col">Device</th>
-              <th scope="col">Code</th>
-              <th scope="col">Platform</th>
-              <th scope="col">Status</th>
+            <tr class="sort-row">
+              <th scope="col" aria-sort="none"><button class="sort-button" type="button">Device</button></th>
+              <th scope="col" aria-sort="none"><button class="sort-button" type="button">Code</button></th>
+              <th scope="col" aria-sort="none"><button class="sort-button" type="button">Platform</button></th>
+              <th scope="col" aria-sort="none"><button class="sort-button" type="button">Status</button></th>
               <th scope="col" class="actions-col">Actions</th>
+            </tr>
+            <tr class="filter-row">
+              <td><input id="deviceFilter" data-col="0" type="search" placeholder="Filter device" aria-label="Filter by device name"></td>
+              <td><input data-col="1" type="search" placeholder="Filter code" aria-label="Filter by code"></td>
+              <td><input data-col="2" type="search" placeholder="Filter platform" aria-label="Filter by platform"></td>
+              <td><select id="deviceScope" aria-label="Filter by status"><option value="all">All</option><option value="online">Online</option><option value="offline">Offline</option><option value="yours">Yours</option></select></td>
+              <td class="actions-col"><button class="ghost clear-filters" type="button" hidden>Clear</button></td>
             </tr>
           </thead>
           <tbody id="peerRows"></tbody>
         </table>
       </div>
       <div id="emptyPeers" class="empty-state hidden">
-        <strong>No other devices yet.</strong>
-        <span>Open this page on another browser connected to the same Evakage server.</span>
+        <strong>No devices match these filters.</strong>
+        <span>Clear the column filters to see every device.</span>
       </div>
     </section>
 
@@ -114,21 +110,25 @@
         </div>
       </div>
       <span id="roomFeedback" class="form-feedback" role="status"></span>
-      <div class="list-controls">
-        <label><span class="visually-hidden">Filter rooms</span><input id="roomFilter" type="search" placeholder="Filter rooms"></label>
-        <label><span class="visually-hidden">Sort rooms</span><select id="roomSort"><option value="oldest">Oldest first</option><option value="newest">Newest first</option><option value="name">Name A–Z</option><option value="name-desc">Name Z–A</option></select></label>
-      </div>
       <div class="table-wrap">
         <table>
-          <caption class="visually-hidden">Your joined rooms, with membership and actions</caption>
+          <caption class="visually-hidden">Your joined rooms, with membership and actions. Column headers sort the table; unsorted, rooms are listed oldest first.</caption>
           <thead>
-            <tr>
-              <th scope="col">Room</th>
-              <th scope="col">Code</th>
-              <th scope="col">Members</th>
-              <th scope="col">Size</th>
-              <th scope="col">Links</th>
+            <tr class="sort-row">
+              <th scope="col" aria-sort="none"><button class="sort-button" type="button">Room</button></th>
+              <th scope="col" aria-sort="none"><button class="sort-button" type="button">Code</button></th>
+              <th scope="col" aria-sort="none"><button class="sort-button" type="button">Members</button></th>
+              <th scope="col" aria-sort="none"><button class="sort-button" type="button">Size</button></th>
+              <th scope="col" aria-sort="none"><button class="sort-button" type="button">Links</button></th>
               <th scope="col" class="actions-col">Actions</th>
+            </tr>
+            <tr class="filter-row">
+              <td><input id="roomFilter" data-col="0" type="search" placeholder="Filter room" aria-label="Filter by room name"></td>
+              <td><input data-col="1" type="search" placeholder="Filter code" aria-label="Filter by code"></td>
+              <td><input data-col="2" type="search" placeholder="Filter members" aria-label="Filter by member"></td>
+              <td></td>
+              <td><input data-col="4" type="search" placeholder="Filter links" aria-label="Filter by links"></td>
+              <td class="actions-col"><button class="ghost clear-filters" type="button" hidden>Clear</button></td>
             </tr>
           </thead>
           <tbody id="roomRows"></tbody>
@@ -137,6 +137,10 @@
       <div id="emptyRooms" class="empty-state hidden">
         <strong>No joined rooms.</strong>
         <span>Create one, then share its code with the other devices.</span>
+      </div>
+      <div id="noRoomMatches" class="empty-state hidden">
+        <strong>No rooms match these filters.</strong>
+        <span>Clear the column filters to see every room.</span>
       </div>
     </section>
   </main>
@@ -221,7 +225,11 @@
       <button class="ghost dialog-close" type="button" data-close-dialog aria-label="Close" title="Close">×</button>
     </div>
     <form method="dialog">
-      <button id="installBtn" class="ghost hidden" type="button">Install app</button>
+      <fieldset class="setting-group install-group">
+        <legend>Install app</legend>
+        <p id="installStatus" class="muted">Install Evakage to open it from your home screen or app list, in its own window.</p>
+        <button id="installBtn" type="button" hidden>Install Evakage</button>
+      </fieldset>
       <label class="setting-option"><input id="discoverableInput" type="checkbox"><span><strong>Advertise this device</strong><span class="muted"> — off by default. Pairing by private code works while hidden.</span></span></label>
       <label class="setting-option">
         <input id="verifiedOnlyInput" type="checkbox">
