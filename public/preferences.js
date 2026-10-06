@@ -19,6 +19,10 @@ export function setupAccounts(callbacks) {
   const load = /** @type {HTMLButtonElement} */ (document.querySelector('#accountLoad'));
   const logout = /** @type {HTMLButtonElement} */ (document.querySelector('#accountLogout'));
   const signedInPanel = /** @type {HTMLElement} */ (document.querySelector('#accountSignedIn'));
+  const deleteForm = /** @type {HTMLFormElement} */ (document.querySelector('#accountDeleteForm'));
+  const deletePassword = /** @type {HTMLInputElement} */ (document.querySelector('#accountDeletePassword'));
+  const deleteButton = /** @type {HTMLButtonElement} */ (document.querySelector('#accountDelete'));
+  const deleteDetails = /** @type {HTMLDetailsElement} */ (document.querySelector('#accountDeleteDetails'));
   let revision = 0;
   let signedIn = false;
   let busy = false;
@@ -26,7 +30,7 @@ export function setupAccounts(callbacks) {
     const wasSignedIn = signedIn;
     signedIn = !!value.username;
     revision = value.revision || 0;
-    save.disabled = load.disabled = logout.disabled = !signedIn;
+    save.disabled = load.disabled = logout.disabled = deleteButton.disabled = !signedIn;
     status.textContent = signedIn ? `Signed in as ${value.username}. Save your settings here, then load them on your other devices.` : '';
     form.hidden = signedIn;
     signedInPanel.hidden = !signedIn;
@@ -40,6 +44,7 @@ export function setupAccounts(callbacks) {
     finally { busy = false; password.value = ''; }
   };
   document.querySelector('#accountBtn')?.addEventListener('click', () => {
+    /** @type {HTMLDialogElement} */ (document.querySelector('#settingsDialog')).close();
     dialog.showModal();
     run(async () => update(await request('session')));
   });
@@ -64,7 +69,20 @@ export function setupAccounts(callbacks) {
     await request('logout', {});
     callbacks.onSignOut();
   }));
-  dialog.addEventListener('close', () => { password.value = ''; });
+  deleteForm.addEventListener('submit', event => {
+    event.preventDefault();
+    run(async () => {
+      deleteButton.disabled = true;
+      try {
+        await request('delete', { password: deletePassword.value }, 'DELETE');
+        callbacks.onSignOut();
+      } finally { deletePassword.value = ''; deleteButton.disabled = !signedIn; }
+    });
+  });
+  dialog.addEventListener('close', () => {
+    password.value = ''; deletePassword.value = ''; deleteDetails.open = false;
+    /** @type {HTMLButtonElement} */ (document.querySelector('#settingsBtn')).focus();
+  });
   update({ username: null });
   return { refresh: () => run(async () => update(await request('session'))) };
 }

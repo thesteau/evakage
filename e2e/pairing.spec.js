@@ -141,12 +141,15 @@ test.describe('mandatory code pairing', () => {
 
   test('a device QR link uses the same code pairing flow and removes the secret fragment', async ({ devices }) => {
     const { alice, bob } = devices;
-    await alice.getByRole('button', { name: 'QR codes', exact: true }).click();
+    await alice.locator('#addDeviceBtn').click();
+    await alice.getByRole('button', { name: 'Show my QR code', exact: true }).click();
+    await alice.locator('#qrDialog summary').click();
     const invitation = await alice.locator('#qrDeviceCode').innerText();
     const params = new URLSearchParams(new URL(invitation).hash.slice(1));
     expect(params.get('pair')).toBe(await alice.locator('#selfCode').innerText());
     expect(params.get('device')).toBe(await alice.locator('#selfCode').getAttribute('data-device-id'));
     await alice.locator('#qrDialog').getByRole('button', { name: 'Done', exact: true }).click();
+    await alice.locator('#addDeviceDialog').getByRole('button', { name: 'Done', exact: true }).click();
     await bob.goto(invitation);
     await expect(bob.locator('#codeFeedback')).toContainText('Paired with');
     expect(await bob.evaluate(() => location.hash)).toBe('');
@@ -213,8 +216,9 @@ test('server rotation updates the owner, rejects the old code and preserves esta
     await expect(bob.locator('#selfCode')).not.toHaveText(oldCode);
     const newCode = await bob.locator('#selfCode').innerText();
     await expect(alice.locator('#peerRows')).not.toContainText(newCode);
+    await newcomer.locator('#addDeviceBtn').click();
     await newcomer.locator('#codeInput').fill(oldCode);
-    await newcomer.locator('#codeForm').getByRole('button', { name: 'Pair', exact: true }).click();
+    await newcomer.locator('#codeForm').getByRole('button', { name: 'Connect', exact: true }).click();
     await expect(newcomer.locator('#codeFeedback')).toContainText('invalid, expired');
     await pairDevices(newcomer, bob);
     const bobName = await bob.locator('#selfCode').getAttribute('data-device-name');

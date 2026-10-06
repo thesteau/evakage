@@ -10,7 +10,7 @@ const DAY = 86400000;
 export function createAccounts({ file, secure, onRevoke = () => {} }) {
   const accounts = file ? createAccountStore(file) : null;
   let closed = false;
-  /** @type {Map<string, {name: string, expires: number}>} */
+  /** @type {Map<string, {name: string, salt: string, expires: number}>} */
   const sessions = new Map();
   /** One-use, short-lived socket tickets; cookies stay HttpOnly.
    * @type {Map<string, {session: string, deviceId: string, expires: number}>} */
@@ -23,7 +23,7 @@ export function createAccounts({ file, secure, onRevoke = () => {} }) {
   }
   function prune() {
     const now = Date.now();
-    for (const [key, session] of sessions) if (session.expires <= now) revoke(key);
+    for (const [key, session] of sessions) if (session.expires <= now || accounts?.get(session.name)?.salt !== session.salt) revoke(key);
     for (const [key, ticket] of tickets) if (ticket.expires <= now) tickets.delete(key);
   }
   /** @param {string} key */
@@ -77,6 +77,30 @@ export function createAccounts({ file, secure, onRevoke = () => {} }) {
     if (req.method === 'POST' && url.pathname === '/account/logout') {
       revoke(sessionKey); setCookie('', 0); reply(200, { username: null }); return;
     }
+    if (req.method === 'DELETE' && url.pathname === '/account/delete') {
+      if (!account || !session) { reply(401, { error: 'Sign in first.' }); return; }
+      if (typeof body.password !== 'string' || body.password.length < 12 || body.password.length > 128) {
+        reply(400, { error: 'Enter your current password to delete your account.' }); return;
+      }
+      if (hashing >= 4) { reply(429, { error: 'Try again later.' }); return; }
+      hashing++;
+      let hash;
+      try { hash = /** @type {Buffer} */ (await scrypt(body.password, account.salt, 64)); }
+      finally { hashing--; }
+      if (!crypto.timingSafeEqual(hash, Buffer.from(account.hash, 'hex'))) {
+        reply(401, { error: 'Incorrect password. Your account was not deleted.' }); return;
+      }
+      if (sessions.get(sessionKey) !== session) {
+        reply(401, { error: 'Account session changed. Sign in again.' }); return;
+      }
+      try {
+        if (!accounts.delete(session.name, account.salt, account.hash)) {
+          reply(401, { error: 'Account session changed. Sign in again.' }); return;
+        }
+      } catch { reply(503, { error: 'Could not delete account. Please try again.' }); return; }
+      for (const [key, active] of sessions) if (active.name === session.name) revoke(key);
+      setCookie('', 0); reply(200, { username: null }); return;
+    }
     if (req.method === 'POST' && url.pathname === '/account/connect') {
       if (!account) { reply(401, { error: 'Sign in first.' }); return; }
       if (typeof body.deviceId !== 'string' || !/^[A-Za-z0-9_-]{43}$/.test(body.deviceId)) { reply(400, { error: 'Invalid device.' }); return; }
@@ -113,12 +137,12 @@ export function createAccounts({ file, secure, onRevoke = () => {} }) {
         if (result === 'exists') { reply(409, { error: 'Choose another username.' }); return; }
         if (result === 'full') { reply(429, { error: 'Try again later.' }); return; }
       } catch { reply(503, { error: 'Could not create account.' }); return; }
-    } else if (!existing || !crypto.timingSafeEqual(hash, Buffer.from(existing.hash, 'hex'))) {
+    } else if (!existing || accounts.get(name)?.hash !== existing.hash || accounts.get(name)?.salt !== existing.salt || !crypto.timingSafeEqual(hash, Buffer.from(existing.hash, 'hex'))) {
       reply(401, { error: 'Invalid username or password.' }); return;
     }
     revoke(sessionKey);
     const token = crypto.randomBytes(32).toString('base64url');
-    sessions.set(crypto.createHash('sha256').update(token).digest('hex'), { name, expires: now + 30 * DAY });
+    sessions.set(crypto.createHash('sha256').update(token).digest('hex'), { name, salt, expires: now + 30 * DAY });
     setCookie(token, 30 * 86400);
     const current = accounts.get(name);
     reply(200, { username: name, preferences: current?.preferences, revision: current?.revision });

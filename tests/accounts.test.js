@@ -124,6 +124,65 @@ test('disabled accounts leave ordinary anonymous app access available', async t 
   assert.equal((await fetch(`${base}/account/session`)).status, 503);
 });
 
+test('deleting an account requires its password, removes saved data and revokes every session and ticket', async t => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'evakage-delete-account-'));
+  const file = path.join(dir, 'accounts.sqlite');
+  const { base, wsBase, app } = await startServer(t, { accountsDb: file });
+  t.after(() => fs.rm(dir, { recursive: true, force: true }));
+  const credentials = { username: 'delete_owner', password: 'correct horse battery staple' };
+  const registered = await request(base, 'register', credentials);
+  const loggedIn = await request(base, 'login', credentials);
+  const cookies = [registered, loggedIn].map(response => response.headers.get('set-cookie')?.split(';')[0] || '');
+  await request(base, 'preferences', { preferences: { 'evakage-theme': 'dark' }, revision: 0 }, cookies[0], 'PUT');
+  const devices = [];
+  for (const cookie of cookies) {
+    const keys = await crypto.subtle.generateKey({ name: 'ECDSA', namedCurve: 'P-256' }, true, ['sign', 'verify']);
+    const raw = new Uint8Array(await crypto.subtle.exportKey('raw', keys.publicKey));
+    const id = await fingerprintOf(raw);
+    const ws = await openWs(wsBase);
+    t.after(() => ws.close());
+    const challenge = (await waitFor(ws, message => message.type === 'registration-challenge')).challenge;
+    const registeredDevice = waitFor(ws, message => message.type === 'registered');
+    ws.send(JSON.stringify({ type: 'register', deviceId: id, identityKey: bytesToBase64(raw),
+      registrationProof: await signTranscript(keys.privateKey, JSON.stringify(['evakage/register/1', challenge, id])) }));
+    await registeredDevice;
+    const { token } = await request(base, 'connect', { deviceId: id }, cookie).then(response => response.json());
+    const connected = waitFor(ws, message => message.type === 'account-peers' && message.signedIn);
+    ws.send(JSON.stringify({ type: 'account-connect', token }));
+    await connected;
+    const unused = await request(base, 'connect', { deviceId: id }, cookie).then(response => response.json());
+    devices.push({ id, ws, unused: unused.token });
+  }
+  assert.equal((await request(base, 'delete', { password: credentials.password }, '', 'DELETE')).status, 401);
+  assert.equal((await request(base, 'delete', { password: 'wrong password value' }, cookies[0], 'DELETE')).status, 401);
+  assert.equal((await fetch(`${base}/account/delete`, { method: 'DELETE', headers: {
+    origin: 'https://other.example', 'content-type': 'application/json', cookie: cookies[0]
+  }, body: JSON.stringify({ password: credentials.password }) })).status, 403);
+  assert.equal((await fetch(`${base}/account/session`, { headers: { cookie: cookies[0] } }).then(response => response.json())).username, credentials.username);
+  const resets = devices.map(device => waitFor(device.ws, message => message.type === 'account-reset'));
+  const deleted = await request(base, 'delete', { password: credentials.password }, cookies[0], 'DELETE');
+  assert.equal(deleted.status, 200);
+  assert.match(deleted.headers.get('set-cookie') || '', /Max-Age=0/);
+  await Promise.all(resets);
+  for (const [index, device] of devices.entries()) {
+    assert.equal((await fetch(`${base}/account/session`, { headers: { cookie: cookies[index] } }).then(response => response.json())).username, null);
+    const rejected = waitFor(device.ws, message => message.type === 'error' && message.context === 'account-connect');
+    device.ws.send(JSON.stringify({ type: 'account-connect', token: device.unused }));
+    await rejected;
+  }
+  assert.equal((await request(base, 'login', credentials)).status, 401);
+  await app.stop();
+  const db = new DatabaseSync(file, { readOnly: true });
+  try { assert.equal(db.prepare('SELECT count(*) AS count FROM accounts').get()?.count, 0); }
+  finally { db.close(); }
+  const restarted = await startServer(t, { accountsDb: file });
+  assert.equal((await request(restarted.base, 'login', credentials)).status, 401);
+  const fresh = await request(restarted.base, 'register', credentials);
+  assert.equal(fresh.status, 200);
+  assert.deepEqual((await fresh.json()).preferences, {});
+  await restarted.app.stop();
+});
+
 test('SQLite coordinates independent connections without duplicate accounts or lost preference updates', async t => {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'evakage-sqlite-'));
   const file = path.join(dir, 'accounts.sqlite');
@@ -158,4 +217,8 @@ test('SQLite coordinates independent connections without duplicate accounts or l
   } finally { db.close(); }
   const forbidden = await request(first.base, 'preferences', { preferences: { text: 'private message', file: 'private bytes' }, revision: 1 }, cookies[0], 'PUT');
   assert.equal(forbidden.status, 400);
+  assert.equal((await request(first.base, 'delete', { password: credentials.password }, cookies[0], 'DELETE')).status, 200);
+  assert.equal((await request(second.base, 'register', credentials)).status, 200);
+  // A new account with the same name must not inherit the deleted account's sessions.
+  assert.equal((await fetch(`${second.base}/account/session`, { headers: { cookie: cookies[1] } }).then(response => response.json())).username, null);
 });

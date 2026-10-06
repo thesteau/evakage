@@ -46,6 +46,9 @@ import { saveStream, streamSaveAvailable, StreamSaveUnavailable } from './savest
  * '#connectTarget': HTMLElement,
  * '#connectCancel': HTMLButtonElement,
  * '#qrBtn': HTMLButtonElement,
+ * '#addDeviceDialog': HTMLDialogElement,
+ * '#addDeviceBtn': HTMLButtonElement,
+ * '#qrPairingCode': HTMLElement,
  * '#qrDialog': HTMLDialogElement,
  * '#serverQr': HTMLCanvasElement,
  * '#deviceQr': HTMLCanvasElement,
@@ -480,7 +483,7 @@ function connectWebSocket() {
   ws.addEventListener('open', () => {
     if (state.ws !== ws) return;
     state.wsBackoff = 500;
-    serverState.textContent = 'Signaling connected';
+    serverState.textContent = 'Ready to connect';
     serverState.classList.add('online');
   });
 
@@ -696,7 +699,7 @@ function connectWebSocket() {
     accountGeneration++;
     accountPeerIds.clear();
     releaseIdleLinks();
-    serverState.textContent = event.code === 1008 ? 'Access denied — reload after access is restored' : 'Signaling disconnected';
+    serverState.textContent = event.code === 1008 ? 'Access denied — reload after access is restored' : 'Connection lost — reconnecting…';
     serverState.classList.remove('online');
     state.peers.clear();
     state.rooms.clear();
@@ -3820,6 +3823,7 @@ $('#codeForm').addEventListener('submit', async (/** @type {Event} */ event) => 
   state.peers.set(peer.id, peer);
   codeFeedback.textContent = `Paired with ${peer.name}`;
   renderPeers();
+  $('#addDeviceDialog').close();
   openSession(peer.id);
 });
 
@@ -3955,7 +3959,9 @@ function renderQrCodes() {
   $('#qrServerUrl').textContent = url;
   $('#qrDeviceCode').textContent = invitation.href;
   $('#qrFingerprint').textContent = state.self.id;
+  $('#qrPairingCode').textContent = state.self.pairingCode;
 }
+$('#addDeviceBtn').addEventListener('click', () => openDialog($('#addDeviceDialog')));
 $('#qrBtn').addEventListener('click', () => {
   try { renderQrCodes(); } catch (err) { return toast(err.message); }
   openDialog($('#qrDialog'));
@@ -4656,13 +4662,8 @@ boot();
 
 setupScanner(async (code, id) => {
   const peer = await resolveCode(code, id);
-  if (peer) { toast(`Paired with ${peer.name}`); openSession(peer.id); }
+  if (peer) { $('#addDeviceDialog').close(); toast(`Paired with ${peer.name}`); openSession(peer.id); }
   else toast('Pairing code invalid, expired, or device unavailable.');
-});
-document.querySelector('#connectQrBtn')?.addEventListener('click', () => {
-  $('#connectDialog').close();
-  renderQrCodes();
-  openDialog($('#qrDialog'));
 });
 // focus-existing launches deliver URLs through the Launch Queue rather than
 // navigating the already-open app. Handle the invitation in that app instance.
@@ -4682,9 +4683,4 @@ const accountUI = setupAccounts({
     wsSend({ type: 'account-connect', token });
   },
   onSignOut: clearSignedOutDevice
-});
-
-document.querySelector('#codeQrBtn')?.addEventListener('click', () => {
-  renderQrCodes();
-  openDialog($('#qrDialog'));
 });

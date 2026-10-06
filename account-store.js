@@ -56,6 +56,7 @@ export function createAccountStore(file) {
   const update = db.prepare(`UPDATE accounts SET preferences = ?, revision = revision + 1
     WHERE username = ? AND revision = ? RETURNING revision`);
   let closed = false;
+  const remove = db.prepare('DELETE FROM accounts WHERE username = ? AND salt = ? AND hash = ?');
   /** @param {string} username @returns {Account | null} */
   function get(username) {
     const row = find.get(username);
@@ -67,6 +68,8 @@ export function createAccountStore(file) {
   return {
     get,
     count: () => Number(count.get()?.count),
+    /** @param {string} username @param {string} salt @param {string} hash */
+    delete(username, salt, hash) { return Number(remove.run(username, salt, hash).changes) === 1; },
     /** @param {string} username @param {string} salt @param {string} hash */
     create(username, salt, hash) {
       if (Number(insert.run(username, salt, hash).changes) === 1) return 'created';

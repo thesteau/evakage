@@ -23,9 +23,11 @@ async function verify(page, name) {
 test('verification gates sending, compares matching codes, persists, and blocking stops exchanges', async ({ devices }) => {
   const { alice, bob } = devices;
   await openPeer(alice, 'Bob'); await openPeer(bob, 'Alice');
+  await alice.locator('#closeSession').click();
   await alice.getByRole('button', { name: 'Settings', exact: true }).click();
   await alice.locator('#verifiedOnlyInput').check();
   await alice.locator('#settingsDialog').getByRole('button', { name: 'Done', exact: true }).click();
+  await openPeer(alice, 'Bob');
   await alice.locator('#messageInput').fill('Blocked until verified');
   await alice.locator('#messageForm').getByRole('button', { name: 'Send', exact: true }).click();
   await expect(alice.locator('#toastRegion')).toContainText('Verify or unblock');
@@ -54,7 +56,9 @@ test('verification gates sending, compares matching codes, persists, and blockin
 
 test('rendered QR canvases decode to the server URL and device code', async ({ devices }) => {
   const { alice } = devices;
-  await alice.getByRole('button', { name: 'QR codes', exact: true }).click();
+  await alice.locator('#addDeviceBtn').click();
+  await alice.getByRole('button', { name: 'Show my QR code', exact: true }).click();
+  await alice.locator('#qrDialog summary').click();
   for (const [id, label] of [['serverQr', 'qrServerUrl'], ['deviceQr', 'qrDeviceCode']]) {
     const raster = await alice.locator(`#${id}`).evaluate(element => {
       const canvas = /** @type {HTMLCanvasElement} */ (element);

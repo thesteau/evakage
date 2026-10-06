@@ -26,24 +26,14 @@
 
   <header class="topbar">
     <div>
-      <div class="eyebrow">ephemeral peer transfer</div>
+      <div class="eyebrow">Share between your devices</div>
       <h1>Evakage</h1>
     </div>
     <div class="topbar-actions">
-      <button id="installBtn" class="ghost hidden" type="button">Install app</button>
       <button id="themeBtn" class="icon-button" type="button" aria-label="Theme: follow system">
         <span id="themeIcon" aria-hidden="true">◐</span>
       </button>
       <button id="settingsBtn" class="ghost" type="button">Settings</button>
-      <button id="accountBtn" class="ghost" type="button">Account (optional)</button>
-      <button id="scanQrBtn" class="ghost" type="button">Scan QR</button>
-      <button id="qrBtn" class="ghost" type="button">QR codes</button>
-      <button id="devicesBtn" class="ghost" type="button">Known devices</button>
-      <div class="identity-card">
-        <span class="muted" id="selfCodeLabel">Your pairing code</span>
-        <button id="selfCode" class="code-button" type="button" aria-describedby="selfCodeLabel"
-                aria-label="Your device code, activate to copy">----</button>
-      </div>
     </div>
   </header>
 
@@ -51,28 +41,29 @@
     <section class="hero card" aria-labelledby="heroHeading">
       <div>
         <span id="serverState" class="status-dot offline" role="status">Connecting…</span>
-        <h2 id="heroHeading">Nearby browser peers</h2>
-        <p>Pick a device to chat, send text, or transfer a file. Drag files onto any row, or paste straight into the page. Payloads stay in browser memory and disappear when every participant is gone.</p>
+        <h2 id="heroHeading">Send a file. Start a chat.</h2>
+        <p>Open Evakage on your other device, then connect it here. Choose a connected device below to send a message or drop a file.</p>
       </div>
-      <form id="codeForm" class="code-form">
-        <label for="codeInput">Pair by code</label>
-        <div class="inline-field">
-          <input id="codeInput" autocomplete="off" autocapitalize="characters" spellcheck="false"
-                 placeholder="ABCD-EFGH" maxlength="16" aria-describedby="codeFeedback">
-          <button type="submit">Pair</button>
-          <button id="codeQrBtn" class="ghost" type="button">My pairing QR</button>
+      <div class="connect-start">
+        <button id="addDeviceBtn" type="button">Add a device</button>
+        <div class="identity-card">
+          <span class="muted" id="selfCodeLabel">Your code</span>
+          <button id="selfCode" class="code-button" type="button" aria-describedby="selfCodeLabel"
+                  aria-label="Your device code, activate to copy">----</button>
         </div>
-        <span id="codeFeedback" class="form-feedback" role="status"></span>
-      </form>
+      </div>
     </section>
 
     <section class="card peers-card" id="peersSection" aria-labelledby="peersHeading">
       <div class="section-heading">
         <div>
           <h2 id="peersHeading">Devices</h2>
-          <p class="muted">Advertising is off by default. Pair by private code, or enable advertising in Settings. Hidden devices can be shown in Known devices.</p>
+          <p class="muted">Your connected devices appear here. Only devices you connect can reach you unless you turn on discovery in Settings.</p>
         </div>
-        <button id="refreshBtn" class="ghost" type="button">Refresh view</button>
+        <div class="device-actions">
+          <button id="devicesBtn" class="ghost" type="button">Known devices</button>
+          <details class="device-more"><summary>More</summary><button id="refreshBtn" class="ghost" type="button">Refresh view</button></details>
+        </div>
       </div>
       <div class="table-wrap">
         <table>
@@ -98,8 +89,8 @@
     <section class="card peers-card" aria-labelledby="roomsHeading">
       <div class="section-heading">
         <div>
-          <h2 id="roomsHeading">Ephemeral rooms</h2>
-          <p class="muted">Private groups. Only joined members can see a room and its membership. Share its code to invite others.</p>
+          <h2 id="roomsHeading">Rooms</h2>
+          <p class="muted">Share with a group. Create a private room and invite others with its code, or enter a code to join.</p>
         </div>
         <div class="room-forms">
           <form id="createRoomForm" class="inline-field">
@@ -197,6 +188,15 @@
         </div>
         <p class="muted">Signing out clears this device’s chats, received files and drafts. Files you saved outside the app stay on your device.</p>
         <button id="accountLogout" type="button" class="danger" disabled>Sign out</button>
+        <details id="accountDeleteDetails" class="account-delete">
+          <summary>Delete account</summary>
+          <p class="muted">Permanently delete your account and saved settings, and sign out all its devices. This also clears chats, received files and drafts on connected devices. Files already saved outside the app and copies held by other people remain.</p>
+          <form id="accountDeleteForm">
+            <label for="accountDeletePassword">Confirm with your current password</label>
+            <input id="accountDeletePassword" type="password" autocomplete="current-password" minlength="12" maxlength="128" required>
+            <button id="accountDelete" type="submit" class="danger">Permanently delete account</button>
+          </form>
+        </details>
       </div>
       <form method="dialog" class="dialog-actions"><button type="submit" class="ghost">Done</button></form>
     </div>
@@ -204,6 +204,8 @@
   <dialog id="settingsDialog" class="dialog">
     <form method="dialog">
       <h2>Settings</h2>
+      <button id="accountBtn" class="ghost" type="button">Account (optional)</button>
+      <button id="installBtn" class="ghost hidden" type="button">Install app</button>
       <label class="setting-option"><input id="discoverableInput" type="checkbox"><span><strong>Advertise this device</strong><span class="muted"> — off by default. Pairing by private code works while hidden.</span></span></label>
       <label class="setting-option">
         <input id="verifiedOnlyInput" type="checkbox">
@@ -225,6 +227,10 @@
           <span><strong>Accept automatically</strong><span class="muted"> — every file is received as soon as it is sent.</span></span>
         </label>
       </fieldset>
+      <section class="app-about" aria-labelledby="appNameHeading">
+        <h3 id="appNameHeading">Why Evakage?</h3>
+        <p class="muted">The name combines <strong>Eva-</strong>, evoking evanescence — fading or disappearing — with <strong>kage (影)</strong>, Japanese for shadow. It reflects the app’s temporary conversations and file sharing.</p>
+      </section>
       <div class="dialog-actions">
         <button value="close" type="submit">Done</button>
       </div>
@@ -246,24 +252,42 @@
     </form>
   </dialog>
 
+  <dialog id="addDeviceDialog" class="dialog">
+    <div class="dialog-body">
+      <h2>Add a device</h2>
+      <p class="muted">Open Evakage on the other device too.</p>
+      <button id="scanQrBtn" type="button">Scan a QR code</button>
+      <form id="codeForm" class="code-form">
+        <label for="codeInput">Or enter the other device’s code</label>
+        <div class="inline-field">
+          <input id="codeInput" autocomplete="off" autocapitalize="characters" spellcheck="false"
+                 placeholder="ABCD-EFGH" maxlength="16" aria-describedby="codeFeedback">
+          <button type="submit">Connect</button>
+        </div>
+        <span id="codeFeedback" class="form-feedback" role="status"></span>
+      </form>
+      <div class="pairing-share">
+        <p class="muted">Connecting from the other device?</p>
+        <button id="qrBtn" class="ghost" type="button">Show my QR code</button>
+      </div>
+      <form method="dialog" class="dialog-actions"><button type="submit" class="ghost">Done</button></form>
+    </div>
+  </dialog>
+
   <dialog id="qrDialog" class="dialog qr-dialog">
     <form method="dialog">
-      <h2>Connect with QR codes</h2>
-      <p class="muted">Scan the server QR to open this app, then the device QR to pair. Use Scan QR inside the installed app to stay in it.</p>
-      <div class="qr-panels">
+      <h2>Connect to this device</h2>
+      <p class="muted">On your other device, open Evakage, choose Add a device, then Scan a QR code.</p>
       <section class="qr-panel">
-      <h3>Server URL</h3>
-      <canvas id="serverQr" class="qr-code" role="img" aria-label="Server URL QR code"></canvas>
-      <p id="qrServerUrl"></p>
+        <canvas id="deviceQr" class="qr-code" role="img" aria-label="Your device code QR code"></canvas>
+        <p>Or enter this code: <strong id="qrPairingCode"></strong></p>
       </section>
-      <section class="qr-panel">
-      <h3>Your device code</h3>
-      <canvas id="deviceQr" class="qr-code" role="img" aria-label="Your device code QR code"></canvas>
-      <p id="qrDeviceCode"></p>
-      </section>
-      </div>
       <details class="qr-details">
-        <summary>Pairing details</summary>
+        <summary>App link and connection details</summary>
+        <p>Need to open Evakage on the other device first? Scan this app link.</p>
+        <canvas id="serverQr" class="qr-code" role="img" aria-label="Server URL QR code"></canvas>
+        <p id="qrServerUrl"></p>
+        <p>Device invitation: <span id="qrDeviceCode"></span></p>
         <p class="muted">Pairing codes rotate every three days; paired devices stay paired. External camera links follow your browser and OS preferences.</p>
         <p>Your full device fingerprint: <code id="qrFingerprint" class="device-fingerprint"></code></p>
       </details>
@@ -280,7 +304,6 @@
   <dialog id="connectDialog" class="dialog">
     <form id="connectForm">
       <h2>Pair unknown device</h2>
-      <button id="connectQrBtn" class="ghost" type="button">Show my pairing QR</button>
       <p id="connectTarget"></p>
       <label for="connectCode">Code from the other device</label>
       <input id="connectCode" autocomplete="off" autocapitalize="characters" maxlength="16" required>

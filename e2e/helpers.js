@@ -68,8 +68,9 @@ export const test = base.extend(/** @type {import('@playwright/test').Fixtures<{
 /** Pair through the real owner-only code flow; never seed approval storage.
  * @param {Page} first @param {Page} second @param {boolean} [closeConversations] */
 export async function pairDevices(first, second, closeConversations = true) {
+  if (!await first.locator('#addDeviceDialog').isVisible()) await first.locator('#addDeviceBtn').click();
   await first.locator('#codeInput').fill(await second.locator('#selfCode').innerText());
-  await first.locator('#codeForm').getByRole('button', { name: 'Pair', exact: true }).click();
+  await first.locator('#codeForm').getByRole('button', { name: 'Connect', exact: true }).click();
   await expect(first.locator('#codeFeedback')).toContainText('Paired with');
   await expect(first.locator('#sessionPanel')).toBeVisible();
   const id = await first.locator('#selfCode').getAttribute('data-device-id');

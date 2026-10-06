@@ -5,6 +5,59 @@ import path from 'node:path';
 import { startServer } from '../tests/helpers.js';
 import { test as peerTest, deviceNames, chat, sendFile } from './helpers.js';
 
+/** @param {import('@playwright/test').Page} page */
+async function openAccount(page) {
+  if (await page.locator('#sessionPanel.open').count()) await page.locator('#closeSession').click();
+  await page.getByRole('button', { name: 'Settings', exact: true }).click();
+  await page.getByRole('button', { name: 'Account (optional)', exact: true }).click();
+}
+
+test('account deletion confirms the password and clears chats on all signed-in devices', async ({ browser }) => {
+  const cleanup = /** @type {(() => Promise<void>)[]} */ ([]);
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'evakage-browser-delete-'));
+  const { base } = await startServer({ after: fn => cleanup.push(fn) }, { accountsDb: path.join(dir, 'accounts.sqlite') });
+  const contexts = [await browser.newContext(), await browser.newContext()];
+  try {
+    const pages = await Promise.all(contexts.map(context => context.newPage()));
+    const [first, second] = pages;
+    for (const [index, page] of pages.entries()) {
+      await page.goto(base);
+      await expect(page.locator('#selfCode')).not.toHaveText('----');
+      await openAccount(page);
+      await page.locator('#accountUsername').fill('temporary_owner');
+      await page.locator('#accountPassword').fill('correct horse battery staple');
+      await page.getByRole('button', { name: index === 0 ? 'Create account' : 'Sign in', exact: true }).click();
+      await expect(page.locator('#accountStatus')).toContainText('Signed in as temporary_owner');
+      await page.locator('#accountDialog').getByRole('button', { name: 'Done', exact: true }).click();
+    }
+    for (const page of pages) await expect(page.locator('#secureState')).toContainText('Encrypted');
+    await chat(first, second, 'Temporary account chat');
+    await openAccount(first);
+    await first.locator('#accountDeleteDetails summary').click();
+    await first.locator('#accountDeletePassword').fill('incorrect password value');
+    await first.locator('#accountDelete').click();
+    await expect(first.locator('#accountStatus')).toContainText('Incorrect password');
+    await expect(first.locator('#accountSignedIn')).toBeVisible();
+    await first.locator('#accountDeletePassword').fill('correct horse battery staple');
+    await Promise.all([first.waitForEvent('load'), second.waitForEvent('load'), first.locator('#accountDelete').click()]);
+    for (const page of pages) {
+      await expect(page.locator('#selfCode')).not.toHaveText('----');
+      await expect(page.locator('#timeline')).toBeEmpty();
+      await expect(page.locator('#peerRows tr')).toHaveCount(1);
+      await openAccount(page);
+      await expect(page.locator('#accountForm')).toBeVisible();
+    }
+    await first.locator('#accountUsername').fill('temporary_owner');
+    await first.locator('#accountPassword').fill('correct horse battery staple');
+    await first.getByRole('button', { name: 'Sign in', exact: true }).click();
+    await expect(first.locator('#accountStatus')).toContainText('Invalid username or password');
+  } finally {
+    for (const context of contexts) await context.close();
+    for (const fn of cleanup) await fn();
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+});
+
 peerTest('hide and show control the list; blocked devices remain available for history and management', async ({ devices }) => {
   const { alice } = devices;
   const name = deviceNames.get('Bob') || '';
@@ -39,7 +92,7 @@ test('account devices connect privately, exchange content, and sign-out destroys
       await expect(page.locator('#selfCode')).not.toHaveText('----');
     }
     const signIn = async (/** @type {import('@playwright/test').Page} */ page, register = false) => {
-      await page.getByRole('button', { name: 'Account (optional)', exact: true }).click();
+      await openAccount(page);
       await page.locator('#accountUsername').fill('chat_owner');
       await page.locator('#accountPassword').fill('correct horse battery staple');
       await page.getByRole('button', { name: register ? 'Create account' : 'Sign in', exact: true }).click();
@@ -60,7 +113,7 @@ test('account devices connect privately, exchange content, and sign-out destroys
     await sendFile(computer, phone, 'account-file.txt', Buffer.from('private account file'));
     await phone.locator('#messageInput').fill('unsent private draft');
     await phone.locator('#closeSession').click();
-    await phone.getByRole('button', { name: 'Account (optional)', exact: true }).click();
+    await openAccount(phone);
     await Promise.all([phone.waitForEvent('load'), phone.locator('#accountLogout').click()]);
     await expect(phone.locator('#selfCode')).toHaveAttribute('data-device-id', phoneId || '');
     await expect(phone.locator('#timeline')).toBeEmpty();
@@ -89,7 +142,7 @@ test('account devices connect privately, exchange content, and sign-out destroys
     replacement.on('pageerror', error => errors.push(error.message));
     await replacement.goto(base);
     await expect(replacement.locator('#selfCode')).not.toHaveText('----');
-    await replacement.getByRole('button', { name: 'Account (optional)', exact: true }).click();
+    await openAccount(replacement);
     await expect(replacement.locator('#accountStatus')).toContainText('Signed in as chat_owner');
     await Promise.all([phone.waitForEvent('load'), replacement.waitForEvent('load'), replacement.locator('#accountLogout').click()]);
     await expect(phone.locator('#timeline')).toBeEmpty();
@@ -114,7 +167,7 @@ test('optional account preferences sync between profiles without merging identit
     const secondId = await second.locator('#selfCode').getAttribute('data-device-id');
     expect(firstId).not.toBe(secondId);
     for (const page of [first, second]) {
-      await page.getByRole('button', { name: 'Account (optional)', exact: true }).click();
+      await openAccount(page);
       await page.locator('#accountUsername').fill('sync_owner');
       await page.locator('#accountPassword').fill('correct horse battery staple');
       await page.getByRole('button', { name: page === first ? 'Create account' : 'Sign in', exact: true }).click();
@@ -136,11 +189,11 @@ test('optional account preferences sync between profiles without merging identit
     await expect(second.locator('input[value="always"]')).toBeChecked();
     await expect(second.locator('#discoverableInput')).not.toBeChecked();
     await second.locator('#settingsDialog').getByRole('button', { name: 'Done' }).click();
-    await second.getByRole('button', { name: 'Account (optional)', exact: true }).click();
+    await openAccount(second);
     await expect(second.locator('#accountStatus')).toContainText('Signed in as sync_owner');
     await Promise.all([second.waitForEvent('load'), second.locator('#accountLogout').click()]);
     await expect(second.locator('#selfCode')).not.toHaveText('----');
-    await second.getByRole('button', { name: 'Account (optional)', exact: true }).click();
+    await openAccount(second);
     await expect(second.locator('#accountForm')).toBeVisible();
   } finally {
     await a.close(); await b.close();
