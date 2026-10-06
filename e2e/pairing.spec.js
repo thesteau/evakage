@@ -141,15 +141,13 @@ test.describe('mandatory code pairing', () => {
 
   test('a device QR link uses the same code pairing flow and removes the secret fragment', async ({ devices }) => {
     const { alice, bob } = devices;
-    await alice.locator('#addDeviceBtn').click();
-    await alice.getByRole('button', { name: 'Show my QR code', exact: true }).click();
+    await alice.getByRole('button', { name: 'QR code', exact: true }).click();
     await alice.locator('#qrDialog summary').click();
     const invitation = await alice.locator('#qrDeviceCode').innerText();
     const params = new URLSearchParams(new URL(invitation).hash.slice(1));
     expect(params.get('pair')).toBe(await alice.locator('#selfCode').innerText());
     expect(params.get('device')).toBe(await alice.locator('#selfCode').getAttribute('data-device-id'));
     await alice.locator('#qrDialog').getByRole('button', { name: 'Done', exact: true }).click();
-    await alice.locator('#addDeviceDialog').getByRole('button', { name: 'Done', exact: true }).click();
     await bob.goto(invitation);
     await expect(bob.locator('#codeFeedback')).toContainText('Paired with');
     expect(await bob.evaluate(() => location.hash)).toBe('');

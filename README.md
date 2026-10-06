@@ -406,7 +406,7 @@ for a live backup, or stop the server before copying the database file.
 Passwords use salted scrypt hashes, sessions use HttpOnly/SameSite cookies,
 and account changes require same-origin requests. Sessions end on server
 restart; accounts and preferences survive. There is no password recovery flow.
-In Settings → Account, choose Delete account and confirm with your current
+Choose Login (or Account when signed in), then Delete account, and confirm with your current
 password to remove the account and saved preferences and revoke all its sessions.
 Connected devices clear their in-memory chats, received files and drafts.
 Files saved outside the app and copies held by other people remain.

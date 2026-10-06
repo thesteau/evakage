@@ -19,6 +19,7 @@ export function setupAccounts(callbacks) {
   const load = /** @type {HTMLButtonElement} */ (document.querySelector('#accountLoad'));
   const logout = /** @type {HTMLButtonElement} */ (document.querySelector('#accountLogout'));
   const signedInPanel = /** @type {HTMLElement} */ (document.querySelector('#accountSignedIn'));
+  const accountButton = /** @type {HTMLButtonElement} */ (document.querySelector('#accountBtn'));
   const deleteForm = /** @type {HTMLFormElement} */ (document.querySelector('#accountDeleteForm'));
   const deletePassword = /** @type {HTMLInputElement} */ (document.querySelector('#accountDeletePassword'));
   const deleteButton = /** @type {HTMLButtonElement} */ (document.querySelector('#accountDelete'));
@@ -29,6 +30,7 @@ export function setupAccounts(callbacks) {
   const update = async (/** @type {{username?: string | null, revision?: number}} */ value) => {
     const wasSignedIn = signedIn;
     signedIn = !!value.username;
+    accountButton.textContent = signedIn ? 'Account' : 'Login';
     revision = value.revision || 0;
     save.disabled = load.disabled = logout.disabled = deleteButton.disabled = !signedIn;
     status.textContent = signedIn ? `Signed in as ${value.username}. Save your settings here, then load them on your other devices.` : '';
@@ -81,7 +83,7 @@ export function setupAccounts(callbacks) {
   });
   dialog.addEventListener('close', () => {
     password.value = ''; deletePassword.value = ''; deleteDetails.open = false;
-    /** @type {HTMLButtonElement} */ (document.querySelector('#settingsBtn')).focus();
+    accountButton.focus();
   });
   update({ username: null });
   return { refresh: () => run(async () => update(await request('session'))) };

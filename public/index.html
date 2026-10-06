@@ -30,9 +30,17 @@
       <h1>Evakage</h1>
     </div>
     <div class="topbar-actions">
+      <div class="identity-card">
+        <span class="muted" id="selfCodeLabel">Your code</span>
+        <button id="selfCode" class="code-button" type="button" aria-describedby="selfCodeLabel"
+                aria-label="Your device code, activate to copy" title="Copy your code to connect from another device">----</button>
+      </div>
       <button id="themeBtn" class="icon-button" type="button" aria-label="Theme: follow system">
         <span id="themeIcon" aria-hidden="true">◐</span>
       </button>
+      <button id="qrBtn" class="ghost" type="button">QR code</button>
+      <button id="accountBtn" class="ghost" type="button">Login</button>
+      <button id="refreshBtn" class="ghost" type="button">Refresh view</button>
       <button id="settingsBtn" class="ghost" type="button">Settings</button>
     </div>
   </header>
@@ -46,23 +54,17 @@
       </div>
       <div class="connect-start">
         <button id="addDeviceBtn" type="button">Add a device</button>
-        <div class="identity-card">
-          <span class="muted" id="selfCodeLabel">Your code</span>
-          <button id="selfCode" class="code-button" type="button" aria-describedby="selfCodeLabel"
-                  aria-label="Your device code, activate to copy">----</button>
-        </div>
       </div>
     </section>
 
     <section class="card peers-card" id="peersSection" aria-labelledby="peersHeading">
       <div class="section-heading">
         <div>
-          <h2 id="peersHeading">Devices</h2>
+          <h2 id="peersHeading" title="Connect a device to chat or share files privately. Discovery in Settings lets nearby devices find you.">Devices</h2>
           <p class="muted">Your connected devices appear here. Only devices you connect can reach you unless you turn on discovery in Settings.</p>
         </div>
         <div class="device-actions">
           <button id="devicesBtn" class="ghost" type="button">Known devices</button>
-          <details class="device-more"><summary>More</summary><button id="refreshBtn" class="ghost" type="button">Refresh view</button></details>
         </div>
       </div>
       <div class="table-wrap">
@@ -89,7 +91,7 @@
     <section class="card peers-card" aria-labelledby="roomsHeading">
       <div class="section-heading">
         <div>
-          <h2 id="roomsHeading">Rooms</h2>
+          <h2 id="roomsHeading" title="Private group chats for sharing messages and files. Create a room and share its code, or use an invitation code to join.">Rooms</h2>
           <p class="muted">Share with a group. Create a private room and invite others with its code, or enter a code to join.</p>
         </div>
         <div class="room-forms">
@@ -204,7 +206,6 @@
   <dialog id="settingsDialog" class="dialog">
     <form method="dialog">
       <h2>Settings</h2>
-      <button id="accountBtn" class="ghost" type="button">Account (optional)</button>
       <button id="installBtn" class="ghost hidden" type="button">Install app</button>
       <label class="setting-option"><input id="discoverableInput" type="checkbox"><span><strong>Advertise this device</strong><span class="muted"> — off by default. Pairing by private code works while hidden.</span></span></label>
       <label class="setting-option">
@@ -266,10 +267,6 @@
         </div>
         <span id="codeFeedback" class="form-feedback" role="status"></span>
       </form>
-      <div class="pairing-share">
-        <p class="muted">Connecting from the other device?</p>
-        <button id="qrBtn" class="ghost" type="button">Show my QR code</button>
-      </div>
       <form method="dialog" class="dialog-actions"><button type="submit" class="ghost">Done</button></form>
     </div>
   </dialog>

@@ -56,8 +56,7 @@ test('verification gates sending, compares matching codes, persists, and blockin
 
 test('rendered QR canvases decode to the server URL and device code', async ({ devices }) => {
   const { alice } = devices;
-  await alice.locator('#addDeviceBtn').click();
-  await alice.getByRole('button', { name: 'Show my QR code', exact: true }).click();
+  await alice.getByRole('button', { name: 'QR code', exact: true }).click();
   await alice.locator('#qrDialog summary').click();
   for (const [id, label] of [['serverQr', 'qrServerUrl'], ['deviceQr', 'qrDeviceCode']]) {
     const raster = await alice.locator(`#${id}`).evaluate(element => {

@@ -8,8 +8,7 @@ import { test as peerTest, deviceNames, chat, sendFile } from './helpers.js';
 /** @param {import('@playwright/test').Page} page */
 async function openAccount(page) {
   if (await page.locator('#sessionPanel.open').count()) await page.locator('#closeSession').click();
-  await page.getByRole('button', { name: 'Settings', exact: true }).click();
-  await page.getByRole('button', { name: 'Account (optional)', exact: true }).click();
+  await page.locator('#accountBtn').click();
 }
 
 test('account deletion confirms the password and clears chats on all signed-in devices', async ({ browser }) => {

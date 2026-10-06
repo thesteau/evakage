@@ -4632,6 +4632,12 @@ async function consumeShareTarget() {
 async function boot() {
   // Theme first: it must not flash the wrong palette while config loads.
   setupTheme();
+  const topbar = document.querySelector('.topbar');
+  if (topbar instanceof HTMLElement) {
+    const updateHeaderHeight = () => document.documentElement.style.setProperty('--topbar-height', `${Math.ceil(topbar.getBoundingClientRect().height)}px`);
+    updateHeaderHeight();
+    new ResizeObserver(updateHeaderHeight).observe(topbar);
+  }
 
   try {
     const response = await fetch('/config.json', { cache: 'no-store' });
