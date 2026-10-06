@@ -22,7 +22,14 @@ test('account deletion confirms the password and clears chats on all signed-in d
     for (const [index, page] of pages.entries()) {
       await page.goto(base);
       await expect(page.locator('#selfCode')).not.toHaveText('----');
+      if (index === 0) {
+        await page.route('**/account/session', async route => {
+          await new Promise(resolve => setTimeout(resolve, 1000));
+          await route.continue();
+        });
+      }
       await openAccount(page);
+      if (index === 0) await expect(page.locator('#accountUsername')).toBeDisabled();
       await page.locator('#accountUsername').fill('temporary_owner');
       await page.locator('#accountPassword').fill('correct horse battery staple');
       await page.getByRole('button', { name: index === 0 ? 'Create account' : 'Sign in', exact: true }).click();

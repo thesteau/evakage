@@ -123,8 +123,10 @@ test.describe('legacy unsigned-chat protocol', () => {
     .replace('const MIN_PROTOCOL = 3;', 'const MIN_PROTOCOL = 2;') } });
   test('refuses the legacy peer before accepting a direct channel', async ({ devices }) => {
     const { alice, bob } = devices;
-    await pairDevices(alice, bob, false);
-    await expect(alice.locator('#toastRegion')).toContainText('this build speaks 3–3');
+    await Promise.all([
+      expect(alice.locator('#toastRegion')).toContainText('this build speaks 3–3'),
+      pairDevices(alice, bob, false)
+    ]);
     await expect(alice.locator('#peerRows')).toContainText('Version mismatch');
     await expect(alice.locator('#secureState')).not.toContainText('Encrypted');
   });

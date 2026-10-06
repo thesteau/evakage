@@ -32,7 +32,7 @@ export function setupAccounts(callbacks) {
     signedIn = !!value.username;
     accountButton.textContent = signedIn ? 'Account' : 'Login';
     revision = value.revision || 0;
-    save.disabled = load.disabled = logout.disabled = deleteButton.disabled = !signedIn;
+    save.disabled = load.disabled = logout.disabled = deleteButton.disabled = busy || !signedIn;
     status.textContent = signedIn ? `Signed in as ${value.username}. Save your settings here, then load them on your other devices.` : '';
     form.hidden = signedIn;
     signedInPanel.hidden = !signedIn;
@@ -42,8 +42,19 @@ export function setupAccounts(callbacks) {
   const run = async (/** @type {() => Promise<void>} */ action) => {
     if (busy) return;
     busy = true;
+    const controls = [...dialog.querySelectorAll('input, button:not(.dialog-close)')];
+    for (const control of controls) {
+      if (control instanceof HTMLInputElement || control instanceof HTMLButtonElement) control.disabled = true;
+    }
     try { await action(); } catch (error) { status.textContent = error.message || 'Account unavailable.'; }
-    finally { busy = false; password.value = ''; }
+    finally {
+      password.value = '';
+      for (const control of controls) {
+        if (control instanceof HTMLInputElement || control instanceof HTMLButtonElement) control.disabled = false;
+      }
+      busy = false;
+      save.disabled = load.disabled = logout.disabled = deleteButton.disabled = !signedIn;
+    }
   };
   document.querySelector('#accountBtn')?.addEventListener('click', () => {
     /** @type {HTMLDialogElement} */ (document.querySelector('#settingsDialog')).close();
@@ -78,7 +89,7 @@ export function setupAccounts(callbacks) {
       try {
         await request('delete', { password: deletePassword.value }, 'DELETE');
         callbacks.onSignOut();
-      } finally { deletePassword.value = ''; deleteButton.disabled = !signedIn; }
+      } finally { deletePassword.value = ''; }
     });
   });
   dialog.addEventListener('close', () => {

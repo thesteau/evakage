@@ -37,6 +37,7 @@ import {
   cipherLayout
 } from './relay.js';
 import { saveStream, streamSaveAvailable, StreamSaveUnavailable } from './savestream.js';
+import { TransferStats, bufferLimit } from './transfer-stats.js';
 
 /** @typedef {{
  * '#connectDialog': HTMLDialogElement,
@@ -412,8 +413,9 @@ const encoder = new TextEncoder();
 const CHUNK_SIZE = 64 * 1024;
 // Used only if /config.json did not answer; the server publishes the real value.
 const RELAY_CHUNK_FALLBACK = 256 * 1024;
-const HIGH_WATER = 8 * 1024 * 1024;
-const LOW_WATER = 3 * 1024 * 1024;
+const LOW_WATER = 256 * 1024;
+const channelRates = new WeakMap();
+const fileStats = new WeakMap();
 
 // Peer application protocol. Bump PROTOCOL_VERSION for any wire change; widen
 // [MIN_PROTOCOL, PROTOCOL_VERSION] only for versions this build can actually
@@ -1482,11 +1484,21 @@ async function handleCryptoProof(link, message) {
 /** @param {RTCDataChannel} dc */
 async function waitForWritable(dc) {
   if (dc.readyState !== 'open') throw new Error('Data channel is not open');
-  if (dc.bufferedAmount <= HIGH_WATER) return;
+  if (dc.bufferedAmount <= bufferLimit(channelRates.get(dc) || 0)) return;
+  const queued = dc.bufferedAmount;
+  const started = performance.now();
+  dc.bufferedAmountLowThreshold = Math.floor(bufferLimit(channelRates.get(dc) || 0) / 4);
   await new Promise((resolve, reject) => {
-    const onLow = () => { cleanup(); resolve(undefined); };
+    const onLow = () => {
+      const rate = Math.max(0, queued - dc.bufferedAmount) * 1000 / Math.max(1, performance.now() - started);
+      const previous = channelRates.get(dc);
+      channelRates.set(dc, previous ? .3 * rate + .7 * previous : rate);
+      cleanup(); resolve(undefined);
+    };
     const onClose = () => { cleanup(); reject(new Error('Data channel closed')); };
+    const timer = setTimeout(() => { cleanup(); reject(new Error('Direct transfer stalled')); }, 15000);
     const cleanup = () => {
+      clearTimeout(timer);
       dc.removeEventListener('bufferedamountlow', onLow);
       dc.removeEventListener('close', onClose);
     };
@@ -1912,6 +1924,7 @@ async function waitForSecure(peerId, timeoutMs = 12000) {
   while (Date.now() - start < timeoutMs) {
     const current = state.links.get(peerId);
     if (isSecure(current)) return current;
+    if (current?.gaveUp || current?.incompatible) throw new Error('Direct connection is unavailable');
     await new Promise(r => setTimeout(r, 80));
   }
   throw new Error(`Secure connection to ${displayName(peerId)} timed out`);
@@ -2115,7 +2128,13 @@ async function sendFiles(conv, fileList) {
   let links = [];
   if (!skipDirect && recipients.length) {
     const wait = canRelay ? P2P_WAIT_WITH_RELAY_MS : 12000;
-    await Promise.all(recipients.map(id => waitForSecure(id, wait).catch(() => null)));
+    await Promise.all(recipients.map(async id => {
+      const current = state.links.get(id);
+      if (isSecure(current) || (canRelay && (current?.relayPreferredUntil || 0) > Date.now())) return;
+      const ready = await waitForSecure(id, wait).catch(() => null);
+      const stalled = state.links.get(id);
+      if (!ready && canRelay && stalled) stalled.relayPreferredUntil = Date.now() + RELAY_STICKY_MS;
+    }));
     links = recipients.map(id => state.links.get(id)).filter(isSecure);
   }
   if (!links.length && !canRelay) throw new Error('Secure peer connection timed out');
@@ -2226,7 +2245,10 @@ async function sendBlobTo(links, conv, blob, meta, alreadyHeld = []) {
 
   const local = conv.files.get(meta.id);
   const trackProgress = local?.direction === 'sent';
-  if (trackProgress) local.transferId = transferId;
+  if (trackProgress) {
+    local.transferId = transferId;
+    fileStats.set(local, new TransferStats(local.size));
+  }
 
   try {
     await Promise.all(links.map(link =>
@@ -2394,6 +2416,7 @@ async function sendViaRelay(conv, blob, meta, record, recipientIds) {
   record.relayBlobId = offered.blobId;
   record.relayExpiresAt = offered.expiresAt;
   record.progress = 0;
+  fileStats.set(record, new TransferStats(record.size));
   renderSession();
 
   record.retryUpload = async () => {
@@ -3421,10 +3444,28 @@ function renderSession() {
 /** @param {Conversation} conv
  * @param {FileRecord} file */
 function updateFileProgress(conv, file) {
+  if (!file.hashing && !file.verifying) {
+    let stats = fileStats.get(file);
+    if (!stats) { stats = new TransferStats(file.size); fileStats.set(file, stats); }
+    stats.update(file.size * Math.max(0, Math.min(1, file.progress || 0)));
+  }
   if (state.activeConvId !== conv.id) return;
   const bar = timeline.querySelector(`.file-item[data-file-id="${CSS.escape(file.id)}"] .file-progress`);
   if (bar instanceof HTMLProgressElement) bar.value = Number.isFinite(file.progress) ? file.progress : 0;
   else renderSession();
+  const label = timeline.querySelector(`.file-item[data-file-id="${CSS.escape(file.id)}"] .file-estimate`);
+  if (label) label.textContent = transferEstimate(file);
+}
+
+/** @param {FileRecord} file */
+function transferEstimate(file) {
+  if (file.hashing || file.verifying || file.progress >= 1 || file.offer === 'pending'
+    || (!file.transferId && !['uploading', 'downloading'].includes(file.relayStage || ''))) return '';
+  const estimate = fileStats.get(file)?.estimate();
+  if (!estimate) return '';
+  const seconds = Math.ceil(estimate.secondsRemaining);
+  const remaining = seconds < 60 ? `${seconds}s` : `${Math.ceil(seconds / 60)} min`;
+  return `${formatBytes(estimate.bytesPerSecond)}/s · about ${remaining} remaining`;
 }
 
 function renderSessionNow() {
@@ -3668,6 +3709,7 @@ function renderFile(conv, file) {
 
   const progress = requiredChild(node, '.file-progress', 'progress');
   progress.value = Number.isFinite(file.progress) ? file.progress : (file.blob ? 1 : 0);
+  requiredChild(node, '.file-estimate', 'div').textContent = transferEstimate(file);
 
   const actions = requiredChild(node, '.file-actions', 'div');
   const btn = requiredChild(node, '.file-download', 'button');

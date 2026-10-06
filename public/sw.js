@@ -14,13 +14,14 @@
 // DOM lib does not know about.
 const worker = /** @type {ServiceWorkerGlobalScope} */ (/** @type {unknown} */ (self));
 
-const CACHE = 'evakage-v37';
+const CACHE = 'evakage-v39';
 
 const SHELL = [
   '/',
   '/index.html',
   '/styles.css',
   '/app.js',
+  '/transfer-stats.js',
   '/frames.js',
   '/messages.js',
   '/qr.js',

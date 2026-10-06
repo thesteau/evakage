@@ -41,6 +41,12 @@ Open the first **Devices** entry, marked **This is you**, even with no other dev
 
 ## Server relay
 
+Active uploads and downloads show a smoothed speed and approximate time remaining
+once enough progress has been measured. Estimates describe the current transfer
+stage, not delivery to every recipient. Direct send buffers adjust to measured
+drain speed within fixed memory bounds; a stalled buffer times out so the existing
+relay fallback can take over. These measurements stay in browser memory.
+
 Direct browser-to-browser transfer needs ICE to succeed. On a routed LAN, behind
 a VPN, or with a restrictive firewall it can fail outright, and then nothing gets
 through. So messages and files have a second path through the server that works
