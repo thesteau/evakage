@@ -6,10 +6,10 @@ test.use({ autoPair: false });
 
 test('self-chat recovers encrypted messages and uploads after reload', async ({ devices }) => {
   const { alice, bob } = devices;
-  await expect(alice.locator('#peerRows tr').first()).toContainText('This is you');
+  await expect(alice.locator('#peerRows tr.self-device')).toContainText('This is you');
   await bob.close();
   await expect(alice.locator('#peerRows tr')).toHaveCount(1);
-  await alice.locator('#peerRows tr').first().getByRole('button', { name: 'Open conversation with yourself', exact: true }).click();
+  await alice.getByRole('button', { name: 'Open conversation with yourself', exact: true }).click();
   await expect(alice.locator('#secureState')).toHaveText('Encrypted');
   await expect(alice.locator('#secureState')).toHaveAttribute('title', /24h reconnect window · 3-day limit/);
   await alice.locator('#messageInput').fill('A note to myself');
@@ -20,7 +20,7 @@ test('self-chat recovers encrypted messages and uploads after reload', async ({ 
   await uploaded;
   await alice.reload();
   await expect(alice.locator('#selfCode')).not.toHaveText('----');
-  await alice.locator('#peerRows tr').first().getByRole('button', { name: 'Open conversation with yourself', exact: true }).click();
+  await alice.getByRole('button', { name: 'Open conversation with yourself', exact: true }).click();
   await expect(alice.locator('#timeline')).toContainText('A note to myself');
   await expect(alice.locator('#timeline')).toContainText('self.txt');
   await expect(alice.locator('#timeline')).toContainText('SHA-256');
