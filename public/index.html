@@ -176,17 +176,30 @@
   </aside>
 
   <dialog id="accountDialog" class="dialog">
-    <h2>Optional account</h2>
-    <p>Your online devices connect privately when signed into the same account. You can also sync theme, incoming-file policy, verified-only mode and relay preferences. Messages and files are never saved to your account.</p>
-    <p>Signing out clears this device’s chats, received files and drafts, and disconnects it. Reconnecting requires signing in again or pairing by code or QR. Files you already saved outside the app remain on your device.</p>
-    <p id="accountStatus" role="status"></p>
-    <form id="accountForm">
-      <label for="accountUsername">Username</label><input id="accountUsername" autocomplete="username" pattern="[a-zA-Z0-9_\-]{3,40}" minlength="3" maxlength="40" required>
-      <label for="accountPassword">Password (at least 12 characters)</label><input id="accountPassword" type="password" autocomplete="current-password" minlength="12" maxlength="128" required>
-      <div class="dialog-actions"><button type="submit" value="login">Sign in</button><button type="submit" value="register">Create account</button></div>
-    </form>
-    <div class="dialog-actions"><button id="accountSave" type="button" disabled>Save preferences</button><button id="accountLoad" type="button" disabled>Load preferences and reload</button><button id="accountLogout" type="button" disabled>Sign out</button></div>
-    <form method="dialog"><button type="submit">Done</button></form>
+    <div class="dialog-body">
+      <h2>Account <span class="muted">(optional)</span></h2>
+      <p class="muted">Signed-in devices find each other automatically and can share your settings. Messages and files are never stored in your account.</p>
+      <p id="accountStatus" class="account-status" role="status"></p>
+      <form id="accountForm" class="account-form">
+        <label for="accountUsername">Username</label>
+        <input id="accountUsername" autocomplete="username" pattern="[a-zA-Z0-9_\-]{3,40}" minlength="3" maxlength="40" required>
+        <label for="accountPassword">Password <span class="muted">(12+ characters)</span></label>
+        <input id="accountPassword" type="password" autocomplete="current-password" minlength="12" maxlength="128" required>
+        <div class="dialog-actions">
+          <button type="submit" value="register" class="ghost">Create account</button>
+          <button type="submit" value="login">Sign in</button>
+        </div>
+      </form>
+      <div id="accountSignedIn" class="account-signed-in" hidden>
+        <div class="account-sync">
+          <button id="accountSave" type="button" class="ghost" disabled>Save settings</button>
+          <button id="accountLoad" type="button" class="ghost" disabled>Load settings</button>
+        </div>
+        <p class="muted">Signing out clears this device’s chats, received files and drafts. Files you saved outside the app stay on your device.</p>
+        <button id="accountLogout" type="button" class="danger" disabled>Sign out</button>
+      </div>
+      <form method="dialog" class="dialog-actions"><button type="submit" class="ghost">Done</button></form>
+    </div>
   </dialog>
   <dialog id="settingsDialog" class="dialog">
     <form method="dialog">

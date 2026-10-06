@@ -1,9 +1,3 @@
-# Deployment compose: runs a published image, never builds from source.
-# For building locally from a checkout, use the docker-compose.yml at the repo root.
-#
-#   cd deploy
-#   docker compose pull && docker compose up -d
-
 services:
   evakage:
     image: ghcr.io/thesteau/evakage:latest
@@ -13,10 +7,7 @@ services:
       - "3712:3000"
     env_file: .env
     volumes:
-      - ./account-data:/home/node/evakage-accounts
-    # Only accounts persist. Buffered transfers stay inside the container.
-    # Never mount BLOB_DIR.
-    security_opt:
-      - no-new-privileges:true
-    cap_drop:
-      - ALL
+      - account-data:/home/node/evakage-accounts
+
+volumes:
+  account-data:

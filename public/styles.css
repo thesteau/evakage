@@ -220,8 +220,11 @@ button.ghost:hover { background: var(--panel-2); filter: none; }
 .peers-card { margin-top: 18px; padding: 18px; }
 .section-heading { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 14px; padding: 4px 4px 14px; }
 .section-heading p { margin: 0; }
-.room-forms { display: grid; gap: 8px; min-width: min(360px, 100%); }
-.room-forms .inline-field { grid-template-columns: 1fr auto; }
+/* Both rows share one column grid so the inputs and buttons line up. */
+.room-forms { display: grid; grid-template-columns: 1fr auto; gap: 8px; min-width: min(360px, 100%); }
+.room-forms .inline-field { grid-column: 1 / -1; grid-template-columns: subgrid; }
+.room-forms button { width: 100%; }
+#roomFeedback:empty { display: none; }
 
 .table-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 16px; }
 table { width: 100%; border-collapse: collapse; min-width: 960px; }
@@ -373,6 +376,19 @@ progress { width: 100%; accent-color: var(--accent-2); }
 .dialog h2 { margin: 0; }
 .dialog p { margin: 0; font-size: .85rem; line-height: 1.5; }
 .dialog-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 4px; }
+/* A dialog holding more than one form: the body pads once, its forms do not. */
+.dialog-body { padding: 22px; display: grid; gap: 14px; }
+.dialog-body form { padding: 0; }
+.dialog h2 .muted { font-size: .9rem; font-weight: 600; }
+.account-status:empty { display: none; }
+.account-form { gap: 8px; }
+.account-form label { font-size: .85rem; font-weight: 700; }
+.account-form label + input { margin-bottom: 6px; }
+.account-signed-in { display: grid; gap: 12px; padding-top: 14px; border-top: 1px solid var(--line); }
+.account-signed-in[hidden], .dialog form[hidden] { display: none; }
+.account-sync { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+button.danger { background: transparent; border-color: color-mix(in srgb, var(--danger) 55%, transparent); color: var(--danger); }
+button.danger:hover { background: color-mix(in srgb, var(--danger) 12%, transparent); filter: none; }
 
 .setting-group { border: 1px solid var(--line); border-radius: 14px; padding: 12px 14px; margin: 0; display: grid; gap: 10px; }
 .setting-group legend { font-weight: 800; padding: 0 6px; }

@@ -10,6 +10,7 @@ type-findings.tmp
 
 # Optional local account data contains password hashes and preferences.
 data/
+deploy/account-data/
 test-results-preferences/
 
 # Optional account databases may be configured outside data/.

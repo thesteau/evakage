@@ -18,6 +18,7 @@ export function setupAccounts(callbacks) {
   const save = /** @type {HTMLButtonElement} */ (document.querySelector('#accountSave'));
   const load = /** @type {HTMLButtonElement} */ (document.querySelector('#accountLoad'));
   const logout = /** @type {HTMLButtonElement} */ (document.querySelector('#accountLogout'));
+  const signedInPanel = /** @type {HTMLElement} */ (document.querySelector('#accountSignedIn'));
   let revision = 0;
   let signedIn = false;
   let busy = false;
@@ -26,8 +27,9 @@ export function setupAccounts(callbacks) {
     signedIn = !!value.username;
     revision = value.revision || 0;
     save.disabled = load.disabled = logout.disabled = !signedIn;
-    status.textContent = signedIn ? `Signed in as ${value.username}. Your online account devices connect automatically. Save preferences here, then load them on another device.` : 'No account needed. Sign in to connect your devices and sync preferences.';
+    status.textContent = signedIn ? `Signed in as ${value.username}. Save your settings here, then load them on your other devices.` : '';
     form.hidden = signedIn;
+    signedInPanel.hidden = !signedIn;
     if (value.username) await callbacks.onSession(value.username);
     else if (wasSignedIn) callbacks.onSignOut();
   };
@@ -50,7 +52,7 @@ export function setupAccounts(callbacks) {
     const preferences = Object.fromEntries(KEYS.map(key => [key, localStorage.getItem(key) || (key === 'evakage-theme' ? 'system' : key === 'evakage-incoming' ? 'new' : '0')]));
     const value = await request('preferences', { preferences, revision }, 'PUT');
     revision = value.revision;
-    status.textContent = 'Preferences saved. Load them on your other signed-in browsers.';
+    status.textContent = 'Preferences saved. Use Load settings on your other devices.';
   }));
   load.addEventListener('click', () => run(async () => {
     const value = await request('session');
