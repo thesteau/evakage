@@ -106,12 +106,11 @@ export async function openPeer(page, name) {
  * received in two passes with a streamed Save.
  * @param {Page} page */
 export async function whenControlled(page) {
-  await page.evaluate(async () => {
-    await navigator.serviceWorker.ready;
-    if (!navigator.serviceWorker.controller) {
-      await new Promise(resolve => navigator.serviceWorker.addEventListener('controllerchange', resolve, { once: true }));
-    }
-  });
+  await expect.poll(() => page.evaluate(() =>
+    navigator.serviceWorker?.controller?.state === 'activated'), {
+    timeout: 15000,
+    message: 'The receiving page must be controlled by an activated service worker'
+  }).toBe(true);
 }
 
 /** @param {Page} sender @param {Page} receiver @param {string} text */

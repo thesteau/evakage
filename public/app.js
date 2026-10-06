@@ -4499,6 +4499,7 @@ async function setupServiceWorker() {
   let registration;
   try {
     registration = await navigator.serviceWorker.register('/sw.js', { updateViaCache: 'none' });
+    if (!registration) return;
   } catch {
     return;
   }
