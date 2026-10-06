@@ -83,10 +83,17 @@ test('camera QR scanning pairs in the app and stops camera tracks', async ({ bro
       }, 100);
       Object.defineProperty(navigator.mediaDevices, 'getUserMedia', { configurable: true, value: async () => stream });
     }, `${base}/#${new URLSearchParams({ pair: code, device: device || '' })}`);
-    await first.getByRole('button', { name: 'Scan QR', exact: true }).click();
+    await first.getByRole('button', { name: 'Add a device', exact: true }).click();
+    await first.getByRole('button', { name: 'Scan a QR code', exact: true }).click();
     await expect(first.locator('#sessionPanel')).toBeVisible();
     await expect(first.locator('#scanQrDialog')).not.toBeVisible();
+    await expect(first.locator('#addDeviceDialog')).not.toBeVisible();
     await expect.poll(() => first.locator('#scanQrVideo').evaluate(video => /** @type {HTMLVideoElement} */ (video).srcObject === null)).toBe(true);
+    // The camera stub always returns the same stream, including after it stops.
+    await expect.poll(() => first.evaluate(async () => {
+      const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+      return stream.getTracks().every(track => track.readyState === 'ended');
+    })).toBe(true);
     await first.locator('#closeSession').click();
     await first.getByRole('button', { name: 'Known devices', exact: true }).click();
     await expect(first.locator('#knownDeviceList')).toContainText('Paired');
