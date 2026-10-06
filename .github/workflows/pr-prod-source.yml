@@ -1,0 +1,21 @@
+name: "PR: Production source"
+
+on:
+  pull_request:
+    branches: [prod]
+    types: [opened, synchronize, reopened, edited]
+
+permissions:
+  contents: read
+
+jobs:
+  source:
+    name: Validate production PR source
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require same-repository main promotion
+        env:
+          SAME_REPO: ${{ github.event.pull_request.head.repo.full_name == github.repository }}
+          HEAD_BRANCH: ${{ github.head_ref }}
+        run: |
+          [[ "$SAME_REPO" == true && "$HEAD_BRANCH" == main ]]

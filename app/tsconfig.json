@@ -1,0 +1,44 @@
+{
+  "compilerOptions": {
+    "target": "ES2023",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "lib": [
+      "ES2023",
+      "DOM",
+      "DOM.Iterable",
+      "WebWorker"
+    ],
+    "types": [
+      "node"
+    ],
+    "rootDir": "..",
+    "outDir": "../dist",
+    "declaration": true,
+    "noEmitOnError": true,
+    "noImplicitAny": true,
+    "strictNullChecks": true,
+    "strictFunctionTypes": true,
+    "noImplicitThis": true,
+    "noImplicitOverride": true,
+    "noFallthroughCasesInSwitch": true,
+    "forceConsistentCasingInFileNames": true,
+    "allowUnreachableCode": false,
+    "allowUnusedLabels": false,
+    "skipLibCheck": true,
+    "resolveJsonModule": true,
+    "strict": true,
+    "useUnknownInCatchVariables": false
+  },
+  "include": [
+    "server/**/*.ts",
+    "client/ts/**/*.ts",
+    "../tests/unit/**/*.ts",
+    "../tests/e2e/**/*.ts",
+    "playwright*.config.ts"
+  ],
+  "exclude": [
+    "../node_modules",
+    "../dist"
+  ]
+}

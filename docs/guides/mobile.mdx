@@ -1,0 +1,29 @@
+---
+title: "Phones and tablets"
+description: "Install the app and understand mobile transfer limits."
+---
+
+Open the server URL and install it:
+
+- **Android / Chrome / Edge** — open **Settings → Install app** and choose **Install Evakage** when available; the browser's own install prompt also works.
+- **iOS / Safari** — Share → *Add to Home Screen*. Settings explains the manual installation steps when the browser cannot offer an install prompt.
+
+Once installed it runs full-screen with no browser chrome, respects display cutouts and home indicators, and the app shell opens offline (it will simply report signaling as disconnected until it can reach the server).
+
+Mobile-specific behaviour:
+
+Keep the app open and the screen unlocked on both devices until transfers finish.
+Switching apps or locking your phone can interrupt a transfer. Background transfers
+are not guaranteed, even when wake lock is available.
+
+- **Layout.** At 700px and below, device and room tables become labelled cards, with controls sized for touch.
+- **Backgrounding.** iOS tears down WebSockets and peer connections when you lock the screen or switch apps. Returning to the foreground re-checks signaling and rebuilds any dead links rather than waiting on a timer that was suspended too.
+- **Screen lock during transfers.** A screen wake lock is requested only while a transfer or hash is actually in flight, and released as soon as nothing is. Browser support and permission vary; keep the screen unlocked yourself if needed.
+- **Share target.** Once installed, Evakage appears in the share sheet of other apps. Shared text or a link is prefilled in the composer; shared files wait behind a banner until you pick a device or room — including a device that is offline, which gets them through the relay. The files are caught by the service worker and never reach the server unencrypted. (Android and desktop Chrome/Edge; iOS does not support web share targets.)
+- **Updates.** A new build never reloads the page underneath you; a banner offers the reload, so an in-flight transfer is not interrupted.
+
+The share-sheet path has a 16 MiB limit, including text and packaging. For larger
+files, open a conversation and use **Send file**; the configured per-file limit
+is 512 MiB by default.
+
+Large files remain the weak spot on phones. Relayed files are verified and then streamed to disk on Save without being held in memory, when the service worker is in control. Files received directly, and relayed files without the worker, are held in memory until saved, and a memory-constrained browser may evict the tab. Physical-phone memory has not been measured.

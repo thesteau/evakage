@@ -1,0 +1,39 @@
+version: 2
+
+updates:
+  # The app itself has no runtime dependencies, but keep the lockfile and any
+  # future dev tooling current.
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "chore(deps)"
+    groups:
+      npm-tooling:
+        patterns: ["*"]
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "chore(deps)"
+    groups:
+      actions:
+        patterns: ["*"]
+
+  # Picks up new node:26-alpine base images, which is where container CVEs
+  # usually arrive for this project.
+  - package-ecosystem: docker
+    directory: /app
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "chore(deps)"
+    groups:
+      base-images:
+        patterns: ["*"]

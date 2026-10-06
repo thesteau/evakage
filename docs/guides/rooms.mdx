@@ -1,0 +1,24 @@
+---
+title: "Rooms"
+description: "Invite a small group and understand room transport and recovery."
+---
+
+Rooms extend the same model to a small group. Create one from the rooms table, then share its `ABCD-EFGH` code with the other devices. Only joined members receive room details, codes, names, membership and transport state. Outsiders see an empty room list. Joining requires the invitation code; a room ID alone does not authorize a new member. All unsuccessful invitation attempts return the same generic response.
+
+Creating a room requires login. Each account can own two active rooms across
+all its devices; creating a third destroys the oldest room and its buffered
+content. The Create button stays visible and explains login requirements and
+replacement through toasts. Joining by code never requires an account.
+An ended room cannot be recreated by reconnecting or reusing its invitation.
+
+The rooms list shows size and connection status without member names. After
+joining, open the room's chat to see its members, including devices marked away.
+
+- **Up to six members, transport is a full mesh.** Every member holds one DataChannel per other member, each with its own ECDH/AES-GCM key and its own safety code (hover a member chip to read it). Nothing is relayed through other peers; a member a direct link cannot reach gets its copy through the server relay instead, sealed to it.
+- **Past six, a room runs through the server.** A mesh costs O(n²) connections and a sender uploads each file once per recipient, so a bigger room opens no direct links at all: every message and file goes through the relay, sealed separately to each member, and a file is uploaded once however many members there are. The room says `Large room · sealed to each member via server`. There are no per-link safety codes in this mode — authenticity rests on each item's signature. The cap is `ROOM_MAX_MEMBERS` (default 20, at most 64).
+- **Dropping off does not lose your seat.** A member whose connection drops shows as *away*: it keeps its seat, is still sent to through the relay, and catches up when it rejoins. Leaving on purpose gives the seat up; so does reloading without rejoining, or staying away past the relay window (3 hours by default).
+- **A room survives while anyone holds a seat, including an away seat.** It ends when the last seat is given up or expires. A signaling interruption can restore membership on reconnect while the server still holds the room; a server restart removes the room. Direct content stays in browser memory, and relay ciphertext follows its separate expiry policy.
+- **History heals itself.** Messages and file manifests carry immutable IDs, so every pair of peers exchanges its full manifest when their link comes up and merges by ID. A device that rejoins after a reload recovers what the survivors still hold, with no elected leader and no duplicates.
+- **File bytes are never re-broadcast on rejoin.** A returning member sees the file metadata and pulls the bytes on demand from a peer that still has them; if nobody online holds them any more, the entry reads `Gone`.
+
+Rooms and direct sessions share the same pairwise links — being in a room with someone and DMing them uses one connection, not two.

@@ -1,0 +1,41 @@
+---
+title: "Privacy and storage"
+description: "What the browser and server retain and what encryption protects."
+---
+
+The signaling server knows who is currently online, tracks room membership, and routes WebRTC negotiation messages. It receives a message or a file only when that item goes through the relay (below), and then only as ciphertext sealed to the recipient.
+
+Conversation/file state is held in browser memory. Device keys live in IndexedDB; trust records and preferences live in localStorage. Optional account storage contains password hashes and selected preferences, never device keys or content.
+
+If browser A disappears and browser B stays open, B retains the session. When A returns with the same device ID, B can reconnect and send chat/file metadata back over the peer channel. Completed file blobs held by B remain requestable.
+
+If **all participating browser instances lose their in-memory state** (closed/reloaded/crashed), direct-only content cannot be recovered. Self-chat copies remain recoverable from the server within their expiry window.
+
+## Device identity
+
+Each browser generates a long-lived, non-extractable ECDSA P-256 key on first run and keeps it in IndexedDB. **The device ID other browsers see is the SHA-256 fingerprint of that key's public half**, and every peer signs a handshake transcript — its own ephemeral key, yours, and both nonces — to prove it holds the matching private key.
+
+That closes the gap where the signaling server was trusted for identity. If a server routes you to a device whose key does not hash to the ID it advertised, or whose signature does not verify, the link is refused before any payload key is used and the reason is shown. Impersonating a peer now requires forging an ECDSA signature rather than editing a presence list.
+
+Because the ID is the fingerprint, the **safety code is stable**: it is derived from both devices' long-lived fingerprints, so it stays the same across reloads, reconnects, and restarts. Compare it out of band once. Devices are also remembered on first use — a peer shows `new` the first time you connect and `known` afterwards; a re-keyed browser appears as a new device rather than silently inheriting the old one's trust.
+
+Device keys, local trust records and preferences are persisted; optional accounts also store password hashes and selected preferences. No message or file content is written to the account database. Direct content stays in browser memory; relayed ciphertext is buffered temporarily under the relay expiry policy.
+
+## Security review
+
+Evakage has not undergone an independent security audit. The server sees connection metadata, recipient identities and relay sizes. A compromised server that serves modified application code is outside the protection of device verification. Read the [security model](https://github.com/thesteau/evakage/blob/main/SECURITY.md) and [independent review scope](https://github.com/thesteau/evakage/blob/main/maintainer/security-review.md).
+
+## Usage and responsibility
+
+Evakage is provided "as is", without warranty. Users are responsible for their
+use of the app, the content they send or share, and complying with applicable laws.
+Instance operators are responsible for configuration, access controls, updates,
+account backups and server security. Use it only where you have permission.
+
+Other people's deployments, modifications and uses are their own responsibility.
+Using this code does not mean an instance is operated or endorsed by the author.
+The author and contributors are not responsible for misuse, data loss, security
+incidents or other damage arising from its use, to the extent permitted by law.
+
+See the [MIT license](https://github.com/thesteau/evakage/blob/main/LICENSE) for
+the full warranty disclaimer and limitation of liability.

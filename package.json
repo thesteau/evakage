@@ -1,0 +1,44 @@
+{
+  "name": "evakage",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Browser-first ephemeral peer chat and file transfer for trusted networks.",
+  "license": "MIT",
+  "author": "thesteau",
+  "homepage": "https://github.com/thesteau/evakage#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/thesteau/evakage.git"
+  },
+  "bugs": {
+    "url": "https://github.com/thesteau/evakage/issues"
+  },
+  "type": "module",
+  "scripts": {
+    "start": "npm run build && node dist/app/server/server.js",
+    "dev": "node scripts/dev.mjs",
+    "test": "npm run build && node --test \"dist/tests/unit/*.test.js\"",
+    "test:e2e": "npm run build && playwright test --config dist/app/playwright.config.js",
+    "test:e2e:platform": "npm run build && playwright test --config dist/app/playwright.platform.config.js",
+    "lint": "eslint --config app/eslint.config.js .",
+    "typecheck": "tsc --noEmit -p app/tsconfig.json",
+    "typecheck:release": "tsc --noEmit -p scripts/tsconfig.json",
+    "test:release": "node --test \"tests/release/*.test.cts\"",
+    "check": "npm run lint && npm run typecheck && npm run typecheck:release && npm test && npm run test:release",
+    "build": "node scripts/build.mjs"
+  },
+  "engines": {
+    "node": ">=22.13.0"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.63.0",
+    "@types/node": "^26.6.4",
+    "eslint": "^10.12.0",
+    "globals": "^17.13.0",
+    "jsqr": "1.4.0",
+    "qrcode-generator": "2.0.4",
+    "release-please": "17.11.2",
+    "typescript": "^5.9.3",
+    "typescript-eslint": "^8.71.1"
+  }
+}

@@ -1,0 +1,25 @@
+node_modules/
+/dist/
+*.tsbuildinfo
+.env
+.env.*
+!.env.example
+*.log
+.DS_Store
+coverage/
+test-results/
+playwright-report/
+.mintlify/
+.local/
+*.tmp.mjs
+*.tmp
+
+# Optional local account data contains password hashes and preferences.
+data/
+deploy/account-data/
+test-results-*/
+
+# Optional account databases may be configured outside data/.
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm

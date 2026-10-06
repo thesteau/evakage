@@ -1,0 +1,2292 @@
+{
+  "date": "2026-10-04",
+  "scope": "Local Windows Chromium, container TURN, no WAN or physical phone; selected candidate types recorded",
+  "runs": [
+    {
+      "profile": "desktop TURN chat",
+      "report": {
+        "environment": "Chromium, seven isolated contexts, desktop, forced TURN (selected pairs verified), no network shaping",
+        "timing": "Wall time includes Playwright actions, rendering and assertion polling; readyMs starts before membership action and waits for encrypted-link UI. Delivery is measured to the last recipient UI.",
+        "baseline": {
+          "created": 72,
+          "closed": 42,
+          "connected": 72
+        },
+        "baselineCandidates": [
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          }
+        ],
+        "finalCandidates": [
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          }
+        ],
+        "baselineDeliveryMs": 92,
+        "samples": [
+          {
+            "cycle": 1,
+            "phase": "relay",
+            "transportVisibleMs": 79,
+            "deliveryMs": 187,
+            "reverseDeliveryMs": 154,
+            "readyMs": 79,
+            "created": 0,
+            "closed": 30,
+            "connected": 0,
+            "receiptPaths": [
+              "relay",
+              "relay",
+              "relay",
+              "relay",
+              "relay",
+              "relay"
+            ],
+            "transferCompleteMs": null
+          },
+          {
+            "cycle": 1,
+            "phase": "mesh",
+            "transportVisibleMs": 62,
+            "deliveryMs": 289,
+            "reverseDeliveryMs": 108,
+            "readyMs": 885,
+            "created": 30,
+            "closed": 0,
+            "connected": 30,
+            "receiptPaths": [
+              "direct",
+              "direct",
+              "direct",
+              "direct",
+              "direct"
+            ],
+            "transferCompleteMs": null
+          },
+          {
+            "cycle": 2,
+            "phase": "relay",
+            "transportVisibleMs": 57,
+            "deliveryMs": 179,
+            "reverseDeliveryMs": 158,
+            "readyMs": 58,
+            "created": 0,
+            "closed": 30,
+            "connected": 0,
+            "receiptPaths": [
+              "relay",
+              "relay",
+              "relay",
+              "relay",
+              "relay",
+              "relay"
+            ],
+            "transferCompleteMs": null
+          },
+          {
+            "cycle": 2,
+            "phase": "mesh",
+            "transportVisibleMs": 52,
+            "deliveryMs": 216,
+            "reverseDeliveryMs": 86,
+            "readyMs": 875,
+            "created": 30,
+            "closed": 0,
+            "connected": 30,
+            "receiptPaths": [
+              "direct",
+              "direct",
+              "direct",
+              "direct",
+              "direct"
+            ],
+            "transferCompleteMs": null
+          },
+          {
+            "cycle": 3,
+            "phase": "relay",
+            "transportVisibleMs": 61,
+            "deliveryMs": 203,
+            "reverseDeliveryMs": 173,
+            "readyMs": 61,
+            "created": 0,
+            "closed": 30,
+            "connected": 0,
+            "receiptPaths": [
+              "relay",
+              "relay",
+              "relay",
+              "relay",
+              "relay",
+              "relay"
+            ],
+            "transferCompleteMs": null
+          },
+          {
+            "cycle": 3,
+            "phase": "mesh",
+            "transportVisibleMs": 54,
+            "deliveryMs": 314,
+            "reverseDeliveryMs": 91,
+            "readyMs": 867,
+            "created": 30,
+            "closed": 0,
+            "connected": 30,
+            "receiptPaths": [
+              "direct",
+              "direct",
+              "direct",
+              "direct",
+              "direct"
+            ],
+            "transferCompleteMs": null
+          }
+        ],
+        "errors": [],
+        "transferChurn": false,
+        "transferBytesPerPhase": null,
+        "verifiedDeliveries": 78,
+        "expectedMessagesPerIncumbent": 13
+      }
+    },
+    {
+      "profile": "desktop interrupted transfer",
+      "report": {
+        "environment": "Chromium, seven isolated contexts, desktop, loopback without TURN, no network shaping",
+        "timing": "Wall time includes Playwright actions, rendering and assertion polling; readyMs starts before membership action and waits for encrypted-link UI. Delivery is measured to the last recipient UI.",
+        "baseline": {
+          "created": 72,
+          "closed": 42,
+          "connected": 72
+        },
+        "baselineCandidates": [
+          {
+            "local": "host",
+            "remote": "host"
+          },
+          {
+            "local": "host",
+            "remote": "host"
+          },
+          {
+            "local": "host",
+            "remote": "host"
+          },
+          {
+            "local": "host",
+            "remote": "host"
+          },
+          {
+            "local": "host",
+            "remote": "host"
+          },
+          {
+            "local": "host",
+            "remote": "host"
+          },
+          {
+            "local": "host",
+            "remote": "host"
+          },
+          {
+            "local": "host",
+            "remote": "host"
+          },
+          {
+            "local": "host",
+            "remote": "host"
+          },
+          {
+            "local": "host",
+            "remote": "host"
+          },
+          {
+            "local": "host",
+            "remote": "host"
+          },
+          {
+            "local": "host",
+            "remote": "host"
+          },
+          {
+            "local": "host",
+            "remote": "host"
+          },
+          {
+            "local": "host",
+            "remote": "host"
+          },
+          {
+            "local": "host",
+            "remote": "host"
+          },
+          {
+            "local": "host",
+            "remote": "host"
+          },
+          {
+            "local": "host",
+            "remote": "host"
+          },
+          {
+            "local": "host",
+            "remote": "host"
+          },
+          {
+            "local": "host",
+            "remote": "host"
+          },
+          {
+            "local": "host",
+            "remote": "host"
+          },
+          {
+            "local": "host",
+            "remote": "host"
+          },
+          {
+            "local": "host",
+            "remote": "host"
+          },
+          {
+            "local": "host",
+            "remote": "host"
+          },
+          {
+            "local": "host",
+            "remote": "host"
+          },
+          {
+            "local": "host",
+            "remote": "host"
+          },
+          {
+            "local": "host",
+            "remote": "host"
+          },
+          {
+            "local": "host",
+            "remote": "host"
+          },
+          {
+            "local": "host",
+            "remote": "host"
+          },
+          {
+            "local": "host",
+            "remote": "host"
+          },
+          {
+            "local": "host",
+            "remote": "host"
+          }
+        ],
+        "finalCandidates": [
+          {
+            "local": "host",
+            "remote": "host"
+          },
+          {
+            "local": "host",
+            "remote": "host"
+          },
+          {
+            "local": "host",
+            "remote": "host"
+          },
+          {
+            "local": "host",
+            "remote": "host"
+          },
+          {
+            "local": "host",
+            "remote": "host"
+          },
+          {
+            "local": "host",
+            "remote": "host"
+          },
+          {
+            "local": "host",
+            "remote": "host"
+          },
+          {
+            "local": "host",
+            "remote": "host"
+          },
+          {
+            "local": "host",
+            "remote": "host"
+          },
+          {
+            "local": "host",
+            "remote": "host"
+          },
+          {
+            "local": "host",
+            "remote": "host"
+          },
+          {
+            "local": "host",
+            "remote": "host"
+          },
+          {
+            "local": "host",
+            "remote": "host"
+          },
+          {
+            "local": "host",
+            "remote": "host"
+          },
+          {
+            "local": "host",
+            "remote": "host"
+          },
+          {
+            "local": "host",
+            "remote": "host"
+          },
+          {
+            "local": "host",
+            "remote": "host"
+          },
+          {
+            "local": "host",
+            "remote": "host"
+          },
+          {
+            "local": "host",
+            "remote": "host"
+          },
+          {
+            "local": "host",
+            "remote": "host"
+          },
+          {
+            "local": "host",
+            "remote": "host"
+          },
+          {
+            "local": "host",
+            "remote": "host"
+          },
+          {
+            "local": "host",
+            "remote": "host"
+          },
+          {
+            "local": "host",
+            "remote": "host"
+          },
+          {
+            "local": "host",
+            "remote": "host"
+          },
+          {
+            "local": "host",
+            "remote": "host"
+          },
+          {
+            "local": "host",
+            "remote": "host"
+          },
+          {
+            "local": "host",
+            "remote": "host"
+          },
+          {
+            "local": "host",
+            "remote": "host"
+          },
+          {
+            "local": "host",
+            "remote": "host"
+          }
+        ],
+        "baselineDeliveryMs": 102,
+        "samples": [
+          {
+            "cycle": 1,
+            "phase": "relay",
+            "transportVisibleMs": 66,
+            "deliveryMs": 200,
+            "reverseDeliveryMs": 195,
+            "readyMs": 77,
+            "created": 0,
+            "closed": 30,
+            "connected": 0,
+            "receiptPaths": [
+              "relay",
+              "relay",
+              "relay",
+              "relay",
+              "relay",
+              "relay"
+            ],
+            "transferCompleteMs": 576
+          },
+          {
+            "cycle": 1,
+            "phase": "mesh",
+            "transportVisibleMs": 47,
+            "deliveryMs": 146,
+            "reverseDeliveryMs": 72,
+            "readyMs": 880,
+            "created": 30,
+            "closed": 0,
+            "connected": 30,
+            "receiptPaths": [
+              "direct",
+              "direct",
+              "direct",
+              "direct",
+              "direct"
+            ],
+            "transferCompleteMs": 1085
+          },
+          {
+            "cycle": 2,
+            "phase": "relay",
+            "transportVisibleMs": 60,
+            "deliveryMs": 194,
+            "reverseDeliveryMs": 134,
+            "readyMs": 70,
+            "created": 0,
+            "closed": 30,
+            "connected": 0,
+            "receiptPaths": [
+              "relay",
+              "relay",
+              "relay",
+              "relay",
+              "relay",
+              "relay"
+            ],
+            "transferCompleteMs": 536
+          },
+          {
+            "cycle": 2,
+            "phase": "mesh",
+            "transportVisibleMs": 61,
+            "deliveryMs": 172,
+            "reverseDeliveryMs": 97,
+            "readyMs": 889,
+            "created": 30,
+            "closed": 0,
+            "connected": 30,
+            "receiptPaths": [
+              "direct",
+              "direct",
+              "direct",
+              "direct",
+              "direct"
+            ],
+            "transferCompleteMs": 1091
+          },
+          {
+            "cycle": 3,
+            "phase": "relay",
+            "transportVisibleMs": 64,
+            "deliveryMs": 156,
+            "reverseDeliveryMs": 108,
+            "readyMs": 73,
+            "created": 0,
+            "closed": 30,
+            "connected": 0,
+            "receiptPaths": [
+              "relay",
+              "relay",
+              "relay",
+              "relay",
+              "relay",
+              "relay"
+            ],
+            "transferCompleteMs": 437
+          },
+          {
+            "cycle": 3,
+            "phase": "mesh",
+            "transportVisibleMs": 57,
+            "deliveryMs": 188,
+            "reverseDeliveryMs": 98,
+            "readyMs": 911,
+            "created": 30,
+            "closed": 0,
+            "connected": 30,
+            "receiptPaths": [
+              "direct",
+              "direct",
+              "direct",
+              "direct",
+              "direct"
+            ],
+            "transferCompleteMs": 1088
+          }
+        ],
+        "errors": [],
+        "transferChurn": true,
+        "transferBytesPerPhase": 524288,
+        "verifiedDeliveries": 78,
+        "expectedMessagesPerIncumbent": 13
+      }
+    },
+    {
+      "profile": "mobile emulation TURN interrupted transfer",
+      "report": {
+        "environment": "Chromium, seven isolated contexts, Pixel 7 emulation (not a physical phone), forced TURN (selected pairs verified), no network shaping",
+        "timing": "Wall time includes Playwright actions, rendering and assertion polling; readyMs starts before membership action and waits for encrypted-link UI. Delivery is measured to the last recipient UI.",
+        "baseline": {
+          "created": 72,
+          "closed": 42,
+          "connected": 72
+        },
+        "baselineCandidates": [
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          }
+        ],
+        "finalCandidates": [
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          }
+        ],
+        "baselineDeliveryMs": 93,
+        "samples": [
+          {
+            "cycle": 1,
+            "phase": "relay",
+            "transportVisibleMs": 89,
+            "deliveryMs": 187,
+            "reverseDeliveryMs": 3666,
+            "readyMs": 104,
+            "created": 0,
+            "closed": 30,
+            "connected": 0,
+            "receiptPaths": [
+              "relay",
+              "relay",
+              "relay",
+              "relay",
+              "relay",
+              "relay"
+            ],
+            "transferCompleteMs": 4078
+          },
+          {
+            "cycle": 1,
+            "phase": "mesh",
+            "transportVisibleMs": 61,
+            "deliveryMs": 3602,
+            "reverseDeliveryMs": 135,
+            "readyMs": 871,
+            "created": 30,
+            "closed": 0,
+            "connected": 30,
+            "receiptPaths": [
+              "direct",
+              "direct",
+              "direct",
+              "direct",
+              "direct"
+            ],
+            "transferCompleteMs": 3939
+          },
+          {
+            "cycle": 2,
+            "phase": "relay",
+            "transportVisibleMs": 57,
+            "deliveryMs": 213,
+            "reverseDeliveryMs": 4129,
+            "readyMs": 73,
+            "created": 0,
+            "closed": 30,
+            "connected": 0,
+            "receiptPaths": [
+              "relay",
+              "relay",
+              "relay",
+              "relay",
+              "relay",
+              "relay"
+            ],
+            "transferCompleteMs": 4546
+          },
+          {
+            "cycle": 2,
+            "phase": "mesh",
+            "transportVisibleMs": 57,
+            "deliveryMs": 896,
+            "reverseDeliveryMs": 3024,
+            "readyMs": 890,
+            "created": 30,
+            "closed": 0,
+            "connected": 30,
+            "receiptPaths": [
+              "direct",
+              "direct",
+              "direct",
+              "direct",
+              "direct"
+            ],
+            "transferCompleteMs": 4090
+          },
+          {
+            "cycle": 3,
+            "phase": "relay",
+            "transportVisibleMs": 77,
+            "deliveryMs": 174,
+            "reverseDeliveryMs": 4136,
+            "readyMs": 88,
+            "created": 0,
+            "closed": 30,
+            "connected": 0,
+            "receiptPaths": [
+              "relay",
+              "relay",
+              "relay",
+              "relay",
+              "relay",
+              "relay"
+            ],
+            "transferCompleteMs": 4522
+          },
+          {
+            "cycle": 3,
+            "phase": "mesh",
+            "transportVisibleMs": 60,
+            "deliveryMs": 3627,
+            "reverseDeliveryMs": 85,
+            "readyMs": 882,
+            "created": 30,
+            "closed": 0,
+            "connected": 30,
+            "receiptPaths": [
+              "direct",
+              "direct",
+              "direct",
+              "direct",
+              "direct"
+            ],
+            "transferCompleteMs": 3910
+          }
+        ],
+        "errors": [],
+        "transferChurn": true,
+        "transferBytesPerPhase": 524288,
+        "verifiedDeliveries": 78,
+        "expectedMessagesPerIncumbent": 13
+      }
+    },
+    {
+      "profile": "mobile emulation TURN interrupted transfer",
+      "report": {
+        "environment": "Chromium, seven isolated contexts, Pixel 7 emulation (not a physical phone), forced TURN (selected pairs verified), no network shaping",
+        "timing": "Wall time includes Playwright actions, rendering and assertion polling; readyMs starts before membership action and waits for encrypted-link UI. Delivery is measured to the last recipient UI.",
+        "baseline": {
+          "created": 72,
+          "closed": 42,
+          "connected": 72
+        },
+        "baselineCandidates": [
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          }
+        ],
+        "finalCandidates": [
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          }
+        ],
+        "baselineDeliveryMs": 80,
+        "samples": [
+          {
+            "cycle": 1,
+            "phase": "relay",
+            "transportVisibleMs": 84,
+            "deliveryMs": 202,
+            "reverseDeliveryMs": 4154,
+            "readyMs": 96,
+            "created": 0,
+            "closed": 30,
+            "connected": 0,
+            "receiptPaths": [
+              "relay",
+              "relay",
+              "relay",
+              "relay",
+              "relay",
+              "relay"
+            ],
+            "transferCompleteMs": 4574
+          },
+          {
+            "cycle": 1,
+            "phase": "mesh",
+            "transportVisibleMs": 52,
+            "deliveryMs": 3651,
+            "reverseDeliveryMs": 120,
+            "readyMs": 877,
+            "created": 30,
+            "closed": 0,
+            "connected": 30,
+            "receiptPaths": [
+              "direct",
+              "direct",
+              "direct",
+              "direct",
+              "direct"
+            ],
+            "transferCompleteMs": 3961
+          },
+          {
+            "cycle": 2,
+            "phase": "relay",
+            "transportVisibleMs": 58,
+            "deliveryMs": 180,
+            "reverseDeliveryMs": 4165,
+            "readyMs": 69,
+            "created": 0,
+            "closed": 30,
+            "connected": 0,
+            "receiptPaths": [
+              "relay",
+              "relay",
+              "relay",
+              "relay",
+              "relay",
+              "relay"
+            ],
+            "transferCompleteMs": 4571
+          },
+          {
+            "cycle": 2,
+            "phase": "mesh",
+            "transportVisibleMs": 53,
+            "deliveryMs": 3593,
+            "reverseDeliveryMs": 168,
+            "readyMs": 898,
+            "created": 30,
+            "closed": 0,
+            "connected": 30,
+            "receiptPaths": [
+              "direct",
+              "direct",
+              "direct",
+              "direct",
+              "direct"
+            ],
+            "transferCompleteMs": 3963
+          },
+          {
+            "cycle": 3,
+            "phase": "relay",
+            "transportVisibleMs": 80,
+            "deliveryMs": 201,
+            "reverseDeliveryMs": 3555,
+            "readyMs": 96,
+            "created": 0,
+            "closed": 30,
+            "connected": 0,
+            "receiptPaths": [
+              "relay",
+              "relay",
+              "relay",
+              "relay",
+              "relay",
+              "relay"
+            ],
+            "transferCompleteMs": 4000
+          },
+          {
+            "cycle": 3,
+            "phase": "mesh",
+            "transportVisibleMs": 51,
+            "deliveryMs": 3697,
+            "reverseDeliveryMs": 112,
+            "readyMs": 889,
+            "created": 30,
+            "closed": 0,
+            "connected": 30,
+            "receiptPaths": [
+              "direct",
+              "direct",
+              "direct",
+              "direct",
+              "direct"
+            ],
+            "transferCompleteMs": 4008
+          }
+        ],
+        "errors": [],
+        "transferChurn": true,
+        "transferBytesPerPhase": 524288,
+        "verifiedDeliveries": 78,
+        "expectedMessagesPerIncumbent": 13
+      }
+    },
+    {
+      "profile": "mobile emulation TURN interrupted transfer",
+      "report": {
+        "environment": "Chromium, seven isolated contexts, Pixel 7 emulation (not a physical phone), forced TURN (selected pairs verified), no network shaping",
+        "timing": "Wall time includes Playwright actions, rendering and assertion polling; readyMs starts before membership action and waits for encrypted-link UI. Delivery is measured to the last recipient UI.",
+        "baseline": {
+          "created": 72,
+          "closed": 42,
+          "connected": 72
+        },
+        "baselineCandidates": [
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          }
+        ],
+        "finalCandidates": [
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          }
+        ],
+        "baselineDeliveryMs": 101,
+        "samples": [
+          {
+            "cycle": 1,
+            "phase": "relay",
+            "transportVisibleMs": 75,
+            "deliveryMs": 173,
+            "reverseDeliveryMs": 4176,
+            "readyMs": 88,
+            "created": 0,
+            "closed": 30,
+            "connected": 0,
+            "receiptPaths": [
+              "relay",
+              "relay",
+              "relay",
+              "relay",
+              "relay",
+              "relay"
+            ],
+            "transferCompleteMs": 4555
+          },
+          {
+            "cycle": 1,
+            "phase": "mesh",
+            "transportVisibleMs": 49,
+            "deliveryMs": 878,
+            "reverseDeliveryMs": 3007,
+            "readyMs": 874,
+            "created": 30,
+            "closed": 0,
+            "connected": 30,
+            "receiptPaths": [
+              "direct",
+              "direct",
+              "direct",
+              "direct",
+              "direct"
+            ],
+            "transferCompleteMs": 4052
+          },
+          {
+            "cycle": 2,
+            "phase": "relay",
+            "transportVisibleMs": 55,
+            "deliveryMs": 169,
+            "reverseDeliveryMs": 4116,
+            "readyMs": 67,
+            "created": 0,
+            "closed": 30,
+            "connected": 0,
+            "receiptPaths": [
+              "relay",
+              "relay",
+              "relay",
+              "relay",
+              "relay",
+              "relay"
+            ],
+            "transferCompleteMs": 4486
+          },
+          {
+            "cycle": 2,
+            "phase": "mesh",
+            "transportVisibleMs": 59,
+            "deliveryMs": 3655,
+            "reverseDeliveryMs": 98,
+            "readyMs": 879,
+            "created": 30,
+            "closed": 0,
+            "connected": 30,
+            "receiptPaths": [
+              "direct",
+              "direct",
+              "direct",
+              "direct",
+              "direct"
+            ],
+            "transferCompleteMs": 3948
+          },
+          {
+            "cycle": 3,
+            "phase": "relay",
+            "transportVisibleMs": 53,
+            "deliveryMs": 167,
+            "reverseDeliveryMs": 158,
+            "readyMs": 66,
+            "created": 0,
+            "closed": 30,
+            "connected": 0,
+            "receiptPaths": [
+              "relay",
+              "relay",
+              "relay",
+              "relay",
+              "relay",
+              "relay"
+            ],
+            "transferCompleteMs": 501
+          },
+          {
+            "cycle": 3,
+            "phase": "mesh",
+            "transportVisibleMs": 63,
+            "deliveryMs": 3623,
+            "reverseDeliveryMs": 90,
+            "readyMs": 898,
+            "created": 30,
+            "closed": 0,
+            "connected": 30,
+            "receiptPaths": [
+              "direct",
+              "direct",
+              "direct",
+              "direct",
+              "direct"
+            ],
+            "transferCompleteMs": 3932
+          }
+        ],
+        "errors": [],
+        "transferChurn": true,
+        "transferBytesPerPhase": 524288,
+        "verifiedDeliveries": 78,
+        "expectedMessagesPerIncumbent": 13
+      }
+    },
+    {
+      "profile": "desktop TURN interrupted transfer",
+      "report": {
+        "environment": "Chromium, seven isolated contexts, desktop, forced TURN (selected pairs verified), no network shaping",
+        "timing": "Wall time includes Playwright actions, rendering and assertion polling; readyMs starts before membership action and waits for encrypted-link UI. Delivery is measured to the last recipient UI.",
+        "baseline": {
+          "created": 72,
+          "closed": 42,
+          "connected": 72
+        },
+        "baselineCandidates": [
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          }
+        ],
+        "finalCandidates": [
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          },
+          {
+            "local": "relay",
+            "remote": "relay"
+          }
+        ],
+        "baselineDeliveryMs": 112,
+        "samples": [
+          {
+            "cycle": 1,
+            "phase": "relay",
+            "transportVisibleMs": 94,
+            "deliveryMs": 242,
+            "reverseDeliveryMs": 218,
+            "readyMs": 115,
+            "created": 0,
+            "closed": 30,
+            "connected": 0,
+            "receiptPaths": [
+              "relay",
+              "relay",
+              "relay",
+              "relay",
+              "relay",
+              "relay"
+            ],
+            "transferCompleteMs": 747
+          },
+          {
+            "cycle": 1,
+            "phase": "mesh",
+            "transportVisibleMs": 94,
+            "deliveryMs": 601,
+            "reverseDeliveryMs": 89,
+            "readyMs": 1027,
+            "created": 30,
+            "closed": 0,
+            "connected": 30,
+            "receiptPaths": [
+              "direct",
+              "direct",
+              "direct",
+              "direct",
+              "direct"
+            ],
+            "transferCompleteMs": 1276
+          },
+          {
+            "cycle": 2,
+            "phase": "relay",
+            "transportVisibleMs": 104,
+            "deliveryMs": 275,
+            "reverseDeliveryMs": 205,
+            "readyMs": 116,
+            "created": 0,
+            "closed": 30,
+            "connected": 0,
+            "receiptPaths": [
+              "relay",
+              "relay",
+              "relay",
+              "relay",
+              "relay",
+              "relay"
+            ],
+            "transferCompleteMs": 788
+          },
+          {
+            "cycle": 2,
+            "phase": "mesh",
+            "transportVisibleMs": 113,
+            "deliveryMs": 1103,
+            "reverseDeliveryMs": 112,
+            "readyMs": 1041,
+            "created": 30,
+            "closed": 0,
+            "connected": 30,
+            "receiptPaths": [
+              "direct",
+              "direct",
+              "direct",
+              "direct",
+              "direct"
+            ],
+            "transferCompleteMs": 1494
+          },
+          {
+            "cycle": 3,
+            "phase": "relay",
+            "transportVisibleMs": 103,
+            "deliveryMs": 210,
+            "reverseDeliveryMs": 255,
+            "readyMs": 116,
+            "created": 0,
+            "closed": 30,
+            "connected": 0,
+            "receiptPaths": [
+              "relay",
+              "relay",
+              "relay",
+              "relay",
+              "relay",
+              "relay"
+            ],
+            "transferCompleteMs": 761
+          },
+          {
+            "cycle": 3,
+            "phase": "mesh",
+            "transportVisibleMs": 90,
+            "deliveryMs": 1136,
+            "reverseDeliveryMs": 99,
+            "readyMs": 1053,
+            "created": 30,
+            "closed": 0,
+            "connected": 30,
+            "receiptPaths": [
+              "direct",
+              "direct",
+              "direct",
+              "direct",
+              "direct"
+            ],
+            "transferCompleteMs": 1493
+          }
+        ],
+        "errors": [],
+        "transferChurn": true,
+        "transferBytesPerPhase": 524288,
+        "verifiedDeliveries": 78,
+        "expectedMessagesPerIncumbent": 13
+      }
+    }
+  ]
+}

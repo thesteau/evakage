@@ -1,0 +1,75 @@
+---
+title: "Devices and pairing"
+description: "Connect by private invitation, verify devices and control discovery."
+---
+
+## Device verification and access
+
+Device names are fixed by the server from device codes; custom names and rename
+requests are ignored/rejected. Message/file author labels use local device
+records rather than sender-supplied display names.
+
+Unknown devices first require their private pairing code: ask the owner for
+the code shown at the top of their app, or scan their device QR. Public advertised
+codes do not grant pairing. Private codes expire after three days; successful
+pairing is remembered by fingerprint and survives code rotation. Codes expire
+at the three-day boundary even if cleanup timers stall. A server restart also
+replaces invitation codes; existing local pairings survive.
+
+Open **Known devices**, choose **Verify**, and contact the owner outside the app.
+Compare the pairwise code shown for each other's fingerprint and enter the code
+the other owner reads to you. Successful comparison is remembered locally;
+**Block** stops exchanges with that fingerprint in this browser. Unblocking
+requires a fresh verification when verified-only mode is enabled. Forgetting
+clears pairing on both sides and requires another code pairing; it does not
+revoke access to the server itself.
+
+Enable **Only exchange with verified devices** in Settings to require this
+approval for all recipients and incoming authors. Sending to a room refuses the
+whole send until every current recipient is verified, rather than silently
+including a newly added member. This policy is local to each browser.
+
+For server access controls, collect full fingerprints from **QR code → Connection details** (your own)
+or **Known devices** (peers), configure `DEVICE_ALLOWLIST`, and restart. An allowed
+ID alone is insufficient: the server checks a P-256 signature over its fresh
+socket challenge. Removing an ID and restarting disconnects/revokes that device.
+This complements `AUTH_TOKEN`; configuration/restart is the administrator flow.
+It does not protect against a server serving compromised application code.
+
+**QR code** shows a device invitation URL whose fragment
+contains its private pairing code and expected fingerprint, plus your full
+fingerprint for allowlist setup. Authentication tokens and existing URL query
+parameters are excluded. Pairing invitations are bearer credentials; safety-code
+comparison provides the additional out-of-band ownership check.
+
+## Using it
+
+- **Show and Filter** — use **Show** to choose all, online, offline or your devices.
+  Each table's **Filter** menu contains search fields and **Clear filters**.
+  Search ignores case, extra spaces and code hyphens; multiple words can match
+  across columns in **Search all**. Click a column heading to sort.
+- **Send a file** — drag it onto any device or room row, drop it on an open
+  session, or use **Send file** in the session toolbar. Paste works too:
+  <kbd>Ctrl/Cmd+V</kbd> anywhere on the page sends clipboard files or text, and
+  asks where to send if no session is open.
+- **Send text or a link** — open a session and type, or paste and press Enter.
+- **Rooms** — create one and share its `ABCD-EFGH` code; join with **Join by code**.
+  Dropping a file on a joined room sends it to every member.
+- **Theme** — the header toggle cycles system → light → dark and remembers the
+  choice.
+- **Known devices** — review the devices this browser remembers, and delete any
+  of them, from **Known devices** in the header.
+- **Incoming files** — **Settings** in the header chooses what happens when a
+  device sends you a file: *ask for new devices* (the default), *always ask*, or
+  *accept automatically*. When asked, nothing is received until you press
+  **Accept**; the sender sees that it is waiting. **Decline** tells the sender,
+  and a file waiting on the server is deleted there. Messages are never gated.
+- **Keyboard** — everything is reachable by Tab; <kbd>Esc</kbd> closes the
+  session panel and dialogs, and focus is returned to wherever it came from.
+  The device and room tables re-render constantly, and focus survives that.
+
+Hovering a device's **Status** shows the actual ICE candidate pair (`host↔host`,
+`srflx↔host`, or `relay`) and the round-trip time, so a slow transfer can be
+diagnosed as "this is going through TURN" rather than guessed at; a TURN-relayed
+link is highlighted. Active transfers show speed and estimated time remaining
+in the conversation.

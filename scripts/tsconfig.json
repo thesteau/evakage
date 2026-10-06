@@ -1,0 +1,11 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "CommonJS",
+    "types": ["node"],
+    "skipLibCheck": true,
+    "noEmit": true,
+    "moduleDetection": "force"
+  },
+  "include": ["release-state.cts", "../tests/release/*.test.cts"]
+}

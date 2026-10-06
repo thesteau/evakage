@@ -1,0 +1,84 @@
+---
+title: "Development"
+description: "Run the server, checks and browser tests from source."
+---
+
+This guide is for contributors modifying the source. To use an existing instance
+or host your own, follow the [quick start](/quickstart) and [deployment](/hosting/deployment).
+The maintainer's publishing workflow is documented separately in [releases](/releases);
+it is not required to run your own instance or fork.
+
+Use Node 24 or newer for development and release tooling. The container uses Node 26.
+The app and its tests use TypeScript. Build output is plain JavaScript ES modules.
+
+```bash
+npm ci
+npm run check
+npx playwright install chromium firefox webkit
+npm run test:e2e
+npm run test:e2e:platform
+npm run dev
+```
+
+Open `http://localhost:3000`. Local accounts are disabled unless `ACCOUNTS_DB` is configured.
+Node commands read your shell environment; they do not load `app/.env`.
+For example, enable accounts before starting the development server:
+
+```bash
+export ACCOUNTS_DB=./data/accounts.sqlite
+npm run dev
+```
+
+In PowerShell, use `$env:ACCOUNTS_DB = './data/accounts.sqlite'` instead of `export`.
+
+## Repository layout
+
+| Directory | Contents |
+| --- | --- |
+| `app/server/` | TypeScript HTTP/WebSocket server, accounts and relay storage |
+| `app/client/html/` | Browser page markup |
+| `app/client/css/` | Browser styles |
+| `app/client/ts/` | Browser modules, domain types and service worker |
+| `app/client/assets/` | Icons, manifest and vendored libraries |
+| `dist/` | Generated JavaScript, assembled public assets and compiled tests (ignored) |
+| `tests/unit/` | Application unit tests |
+| `tests/e2e/` | Playwright browser scenarios |
+| `app/` | Dockerfile, source Compose setup and app check configurations |
+| `tests/release/` | Repository release automation tests |
+| `scripts/` | Release automation and benchmark scripts |
+| `deploy/` | Published-image Compose setup |
+| `docs/` | Mintlify public documentation |
+| `maintainer/` | Security review scope and validation evidence |
+
+The source image builds with the repository root as its context, using
+`app/Dockerfile` and its companion `app/Dockerfile.dockerignore`. This keeps shared
+package metadata available while excluding secrets and local artifacts. Tests are
+included in the build stage for type checking; they are absent from the runtime image.
+
+`npm run build` compiles TypeScript and assembles `dist/app/public/`, retaining
+the existing browser URLs. Start and test commands build automatically.
+`npm run dev` watches source changes, rebuilds and restarts the server.
+ESLint checks TypeScript syntax and TypeScript checks the application and tests.
+`npm run check` also checks
+and tests the release bridge with mocked GitHub APIs and temporary Git repositories.
+No real releases are created by these tests.
+
+Browser tests own their server, temporary relay storage and browser contexts.
+Chromium and platform suites write to separate directories under `test-results/`.
+Inspect retained failure traces with `npx playwright show-trace <path-to-trace.zip>`.
+
+## Documentation
+
+The [Mintlify configuration](https://www.mintlify.com/docs/organize/settings) is
+`docs/docs.json`. Run the [CLI](https://www.mintlify.com/docs/cli/commands) from `docs/`:
+
+```bash
+npx mint dev
+npx mint validate
+npx mint broken-links
+```
+
+Set the documentation directory to `docs/` when connecting Mintlify. Hosting and
+the public documentation URL are still to be configured.
+
+See [releases](/releases) for contribution and release policy.

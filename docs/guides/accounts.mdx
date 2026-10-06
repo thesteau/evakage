@@ -1,0 +1,101 @@
+---
+title: "Accounts and preferences"
+description: "Optional account discovery, saved preferences and sign-out behavior."
+---
+
+## Browser identity and discovery
+
+Each browser profile has one persistent key fingerprint. Concurrent tabs use the
+same identity; the newest tab owns the connection and the replaced tab stops
+reconnecting. Different browsers and devices have different identities, even
+when signed into the same account. Self-messaging stores encrypted notes for this
+browser identity; pair another browser or sign into the same account to message it. Offline code-paired peers receive
+sealed relay items when they return, within the relay expiry window. A disconnected
+signaling server means peer status is unknown, not proof that another device is offline.
+
+Advertising controls public discovery. Devices whose full fingerprints are already
+known can still be looked up directly, including after server restarts. Payload
+exchange continues to require locally approved pairing.
+
+**Hide** removes a device from the list and **Show** restores it in Known devices.
+**Block** prevents exchanges. **Delete** on a conversation removes its local memory
+and disconnects unused links; it keeps the pairing and cannot recall delivered or
+server-buffered content. **Delete** in Known devices removes the stored relationship.
+**Leave room** gives up membership without deleting the room for other members.
+**Delete** on an unjoined room removes its remaining local conversation history.
+
+**Scan QR Code** uses the camera inside the app, including the installed PWA, and
+stops the camera when scanning completes, is cancelled, or the page is hidden.
+HTTPS or localhost and camera permission are required. The **QR code** button in
+the header or Connect dialog shows your current invitation. Scanned invitations must belong to
+this server; arbitrary URLs are never opened. QR decoding is bundled locally.
+
+External QR scans use ordinary in-scope HTTPS links. Opening the installed PWA
+is controlled by browser/OS support and the user's link preferences; installation
+alone cannot guarantee it. The app handles Launch Queue invitations when supported.
+See [Chrome navigation management](https://developer.chrome.com/docs/capabilities/pwa-navigation-management).
+Scanning inside the installed app is the dependable way to remain in it.
+
+
+
+## Optional accounts
+
+Docker enables accounts by default with a SQLite database at
+`/home/node/evakage-accounts/accounts.sqlite`. Both Compose configurations mount
+an `account-data` volume so accounts and preferences survive container replacement.
+Signing up is optional for chat, files and joining rooms; creating rooms requires an account.
+
+When running Node locally, set `ACCOUNTS_DB=./data/accounts.sqlite` to enable
+accounts. Without that setting, local Node accounts are disabled. Set
+`ACCOUNTS_DB` to an empty value to disable accounts in Docker or Compose.
+The database stores only usernames, salted password hashes and selected preferences;
+text, files, private device keys and login sessions are never stored in it. The
+database schema is created automatically on first startup.
+
+SQLite uses Node's built-in `node:sqlite` module (Node 22.13.0 or newer), with
+prepared statements, a unique username constraint and atomic revision checks
+for preference updates. See [Node SQLite documentation](https://nodejs.org/api/sqlite.html).
+WAL mode and full synchronous commits protect account writes. Keep the database
+and its `-wal`/`-shm` files together in the account volume. Use SQLite's backup API
+for a live backup, or stop the server before copying the database file.
+Passwords use salted scrypt hashes, sessions use HttpOnly/SameSite cookies,
+and account changes require same-origin requests. Sessions end on server
+restart; accounts and preferences survive. There is no password recovery flow.
+Choose Login (or Account when signed in), then Delete account, and confirm with your current
+password to remove the account and saved preferences and revoke all its sessions.
+Connected devices clear their in-memory chats, received files and drafts.
+Files saved outside the app and copies held by other people remain.
+
+For Docker, the default configuration already includes the account volume:
+
+```bash
+cp app/.env.example app/.env
+docker compose -f app/compose.yaml up -d --build
+```
+
+For a published image, run `docker compose up -d` from `deploy/`.
+The account volume is separate from ephemeral relay storage; never mount BLOB_DIR.
+Behind an HTTPS reverse proxy set `TRUST_PROXY=1` for Secure account cookies.
+
+Use **Login** in the header to create an account or sign in; it becomes **Account**
+when signed in. **Save settings**
+uploads theme, incoming-file policy, verified-only mode and relay preference.
+On another browser, sign in and choose **Load settings** to apply
+that configuration (reloading clears local in-memory conversations). Concurrent
+updates require loading the newer version before saving. Advertising consent,
+pairings, verification/block/hide records, private device keys, messages and files
+remain local. Chat, files and joining rooms work without an account; creating
+rooms requires one.
+
+Online browsers signed into the same account discover each other privately,
+connect automatically, and open a chat when there is one other visible device.
+With several devices, choose one from the device list. Public advertising remains
+off unless enabled separately. Blocking and verified-only restrictions still apply.
+Account connections require both devices to be online; they do not queue messages
+for offline delivery.
+
+Signing out clears all chats, received files and drafts in that browser, revokes
+its connections and room memberships, and reloads the app. Other devices keep
+their local history. The signed-out browser needs a code/QR pairing or a new login
+to reconnect. Account chats do not restore history from another device after
+signing back in. Previously downloaded files outside the app are unaffected.

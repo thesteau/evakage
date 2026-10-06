@@ -1,0 +1,120 @@
+# Security notes
+
+This is an MVP, not an audited secure messenger.
+
+## Current design
+
+1. The Node server serves static assets, publishes presence, tracks room membership, resolves short device/room codes, and relays WebRTC signaling JSON.
+2. Messages and files go over browser-to-browser WebRTC DataChannels when a direct link can be made, and otherwise through the server relay (item 10) as sealed, signed ciphertext.
+3. Each DataChannel session generates fresh P-256 ECDH keys in the browsers. The derived AES-256-GCM key encrypts application control messages and file chunks.
+4. A short safety code is shown per link. It is derived from the two devices' long-lived identity fingerprints (item 9), not the per-session keys, so it is stable and worth comparing out of band once when authentication matters.
+5. On the devices, message text and completed file blobs are kept only in JS memory. Device keys, trust records and preferences are persisted locally; payloads are not. (The service worker is explicitly kept away from relayed file bodies so they never land in Cache Storage.)
+6. Optional SQLite accounts persist usernames, salted scrypt password hashes and selected preferences only. Account storage is separate from relay ciphertext; text, files and private device keys never enter the account database. Login sessions stay in server memory and end on restart. Anonymous use remains available.
+7. Account device discovery uses one-use, device-bound socket tickets issued through same-origin authenticated requests. Both devices must prove ownership of their persistent identity and have active sessions for the same account. Account trust is temporary; sign-out revokes connections, room seats and pending relay access, and clears local chats through a fresh document. Account chats never synchronize old history back to a newly signed-in device.
+6. Rooms of up to six are a full mesh of those same pairwise sessions. There is no group key: each link is encrypted separately and has its own safety code, so a room of six has fifteen independently keyed links. Larger rooms (up to `ROOM_MAX_MEMBERS`, default 20) open no links at all and use only the server relay (item 10): every item is sealed separately to each member and signed by its sender.
+7. Peers negotiate an application protocol version during the key handshake and refuse a non-overlapping peer before deriving a key.
+8. Files carry a SHA-256 computed by the sender. The receiver verifies the assembled bytes and discards a mismatch instead of offering it for saving. This detects corruption and tampering in transit; it is not a defence against a peer that lies about both the bytes and the digest, which is what the per-link safety codes are for.
+9. Each browser holds a long-lived, non-extractable ECDSA P-256 key in IndexedDB. The device ID is the SHA-256 fingerprint of its public half, and each peer signs a transcript binding both ephemeral ECDH keys and both nonces. A peer whose key does not hash to its advertised ID, or whose signature does not verify, is refused before the derived key is used for anything. Devices are remembered on first use and shown as `new` or `known`.
+10. **Server relay.** Each browser also holds a long-lived, non-extractable ECDH P-256 *seal key*, signed by its identity key and published at registration. Before sealing anything, a sender checks that the advertised identity key hashes to the recipient's device ID and that it signed the seal key — so a server that substitutes its own seal key is caught. A relayed file is encrypted with a random AES-256-GCM key in 256 KiB chunks, each bound by AAD to the file id, its index and the chunk count (no reordering, splicing or truncation). The content key, name, type and SHA-256 go into an envelope sealed separately to each recipient (ECIES: ephemeral ECDH + HKDF-SHA-256 + AES-GCM) and signed by the sender's identity key. A relayed chat message is sealed to each recipient directly in the same kind of envelope. The item kind (message or file) is inside the signature, so neither can be replayed as the other, and a relayed message's author is taken from the verified signature rather than its body. The recipient rejects an envelope not addressed to it, of the wrong kind, whose sender differs from what the server reported, or whose signature does not verify.
+
+## Server-side controls
+
+- **Schema validation.** Every WebSocket message is matched against an explicit shape before any handler sees it. Signaling is re-serialised from validated fields only, so unknown keys never reach the other peer. SDP is size-capped and its inner type must match its envelope; ICE candidates are length- and range-checked.
+- **Rate limiting.** Per-connection token buckets for messages and (more strictly) for signaling, a per-address cap on concurrent connections, and a per-address registration budget. Repeated schema violations close the socket.
+- **Relay limits.** A device may only address a relayed item to the other party of a direct session or to members of a room it has joined. Uploads are capped at the declared length (anything past it is aborted with 413); files and messages have separate per-device quotas and share a total buffer quota. An item is unlinked as soon as every recipient has it, and expired ciphertext is removed by the periodic sweep; a directory is removed once empty. Access expires with the item's conversation — 15 minutes after every device party to it has gone, 3 hours for a one-to-one session left with a single device, and 3 days absolute — independently of cleanup.
+- **Origin checks.** WebSocket upgrades must carry an `Origin` matching the request's own host, or one listed in `ALLOWED_ORIGINS`. Requests with no `Origin` (non-browser clients) are still allowed.
+- **Optional authentication.** `AUTH_TOKEN` gates the page and the upgrade; the token is exchanged once for an `HttpOnly; SameSite=Strict` cookie holding an HMAC, so the token itself stops travelling in URLs. `/healthz` stays open.
+- **Proxy awareness.** `X-Forwarded-Host` and `X-Forwarded-For` are honoured only when `TRUST_PROXY` is set.
+
+These bound resource abuse and casual cross-site access. They are **not** a substitute for keeping the service on a trusted network.
+
+## Important caveats
+
+- A malicious/compromised signaling service can no longer impersonate a peer, because device IDs are key fingerprints and possession is proved by signature. It can still **deny** service, observe who is online and who talks to whom, add a device it controls to a room's member list, and serve a modified `app.js` on next load — serving the code means it is trusted for the code. The per-device `known`/`new` marker and the stable safety code are what expose an unexpected device.
+- Trust-on-first-use is exactly that: the first sighting of a device is accepted without verification. Compare the safety code out of band the first time a device shows as `new` if it matters.
+- The identity key lives in IndexedDB, unencrypted at rest and readable by anything with access to the browser profile. It is non-extractable, so it cannot be exported by script, but a compromised device is a compromised identity.
+- Clearing site data, or a browser evicting storage, destroys the identity. The device then reappears as a new device with a new ID and a new safety code.
+- No independent protocol review or penetration test has been performed. Automated parser fuzzing is included in the local test suite. `npm audit`, CodeQL, and Trivy run in CI, but automated scanning is not a review.
+- A peer can consume memory by sending data. The configured file-size limit and the client-side caps (messages and files per conversation, sync-state size, chunk size, queued ICE candidates, concurrent transfers) bound this but are not a complete resource-abuse defence.
+- `app/public/sha256.js` is a hand-written hash used for integrity only, never for secrecy or authentication. It is checked against `node:crypto` across sizes, block boundaries, and streaming splits, but it has not been independently audited.
+- Installing the PWA caches the app shell. A cached build keeps running until the user accepts the update banner, so a security fix is not guaranteed to be live immediately after deploy.
+- Browser memory can be paged/swapped by the OS. "Memory only" does not mean forensic impossibility.
+- File names/types are untrusted. Downloads are offered as blobs and are never executed by the app.
+- TURN relays, if configured, can observe traffic metadata and encrypted packet sizes/timing but should not receive plaintext application payloads.
+- **What the server relay exposes.** A relayed message or file is written to disk inside the container as ciphertext, in a directory per conversation. The server — and anyone who can read the container's filesystem — learns its approximate size, whether it is a message or a file, which device sent it, which devices it was for, and when; the directory layout also groups items by conversation. It cannot read the content, a file's name, type or hash, or a message's text.
+- **Items outlive the devices, by design, for the grace period (15 minutes by default).** An item a recipient has not yet taken stays on the server after every device in the conversation has disconnected, so a device that returns within the window still receives it. New access ends at the maximum age: expired items cannot be listed, claimed, uploaded, or newly downloaded, including with a token issued earlier. Uploads crossing expiry are rejected; downloads opened before expiry may finish afterward. Physical ciphertext removal waits for the periodic sweep (1 minute by default) and can be delayed by scheduling or filesystem failures. A server restart or a recreated container ends it immediately. Deletion is by unlink, not secure erase; on a copy-on-write container layer or SSD, freed blocks may persist until overwritten. The ciphertext is useless without a recipient's seal key, but "deleted" means unreachable, not forensically gone.
+- **Seal keys are trusted on first use, like identities.** A sender verifies a seal key against the recipient's device ID and identity signature, which stops a server substituting keys for a device the sender already knows. The first time a device is seen, the server could present an entirely fabricated device — the `new` badge and the safety code are what expose that.
+- **Two-pass relay receiving trades a second download for bounded memory.** With a controlling service worker, the receiver verifies a relayed file, discards it and keeps a SHA-256 per chunk. Save fetches it again and streams to disk only chunks matching those digests, holding the last chunk until the whole-file hash matches. A mismatch, truncation or revocation fails the browser download rather than completing it, but bytes already written to a failed download's partial file are the browser's to clean up. The server copy stays until the save completes, which lengthens its life up to the normal expiry limits. Direct transfers, and relays without the worker, still assemble the whole file in memory.
+- **Relay download is authorised by an item-scoped token** issued over the recipient's registered WebSocket. Anyone who obtains a live token can fetch the ciphertext, and nothing more.
+- Presence is intentionally visible to all clients connected to this signaling server. Put the service behind trusted-network access controls if that is not acceptable.
+- Rooms and their codes/membership are advertised to every client connected to the signaling server, and any of them can join a room that is under its size cap. Room codes are discovery aids, not access control; a room is exactly as private as the network the server sits on.
+- Room membership is asserted by the server. A client only accepts room traffic for rooms it joined itself, but a malicious signaling server could still add a device it controls to a room's membership list — the per-link safety codes are what would expose that.
+- **Large rooms have no per-link safety-code display.** A room past six members exchanges nothing directly. Known devices provides pairwise code comparison from long-lived fingerprints even without a direct link. Each item is still signed by its sender and sealed to each member's verified seal key, and senders are still marked `new`/`known` — but a device the server adds to a large room's membership is exposed only by that marker, not by a code.
+- **Accepting a file is a UX control, not a security boundary.** With the default *ask for new devices*, a file from a device this browser has never met is not received until the user accepts it — no chunks are kept and a relayed file stays on the server — which stops unsolicited files landing on a shared LAN. Devices already met are accepted automatically; *always ask* covers that. Unknown senders require code pairing before chat or files are accepted.
+  Optional verified-only mode adds out-of-band verification to that pairing.
+- **Shared files never reach the server in the clear.** A share from another app is a POST to `/share`, which the service worker intercepts; the files wait in the worker's memory (not Cache Storage) for one-time collection, and then go out the normal, encrypted way. Collection is refused at ten minutes even if a suspended worker missed its cleanup timer. Cleanup is best effort, and worker termination can lose the share sooner; ten minutes is not a delivery guarantee. If a share reaches the server anyway (no worker in control), the body is read and discarded, up to 8 MiB, and nothing is stored.
+- Room history is replicated to every member and merged by message ID. Any member can therefore rebroadcast what it holds; leaving a room does not retract what others already received.
+- **Chat messages have portable author signatures.** The author signs versioned
+  JSON containing the author fingerprint, display name, room ID or canonical
+  direct-device pair, message ID, timestamp and text under a message-specific
+  context. Live, relayed and peer-synced messages must pass public-key fingerprint
+  and ECDSA verification before merging. A relayer can withhold genuine history,
+  but cannot edit it or forge another author's proof. Invalid and unsigned legacy
+  entries are discarded; peer-supplied trust flags are ignored. Accepted author/ID
+  pairs are immutable and replay-idempotent, so a different author reusing an ID
+  cannot hide its original. Protocol v3 refuses v2 peers without downgrading.
+  A valid room proof does not prove the author was an authorized member: membership
+  authorization remains a separate gap. Peer-synced file metadata is also unsigned;
+  portable message proofs do not cover filenames, holders or file authorship.
+
+
+Before public deployment, configure authentication/rate limiting and complete the [independent security review](maintainer/security-review.md).
+
+## Local approval and server access controls
+
+Known devices supports out-of-band pairwise safety-code verification and local
+blocking. The optional verified-only policy gates outgoing recipients, incoming
+live/relay authors and synchronized authors. A new room member stops the whole
+send until verified. This is recipient approval, not a signed group-membership
+protocol; enabled policies protect only the browsers that enforce them.
+
+`DEVICE_ALLOWLIST` checks full fingerprints plus a P-256 possession proof bound
+to a random challenge for each socket (`evakage/register/1`). Copying an allowed
+fingerprint, presenting another public key or replaying a proof on a new socket
+is refused. Removing an entry and restarting revokes server access. An empty
+list intentionally preserves trusted-network access. A compromised server that
+serves altered application code remains outside this protection.
+
+Chunk uploads are authorized by the sender's item token; downloads use recipient
+tokens. Each upload request commits one ciphertext chunk; concurrent writers are
+refused. The app abandons interrupted uploads and restarts with a fresh server
+item and key. Interrupted downloads discard partial plaintext and restart at byte
+zero; nonzero download offsets are refused. The server treats ciphertext as opaque.
+Recipients authenticate index/count/file bindings and check the signed whole-file
+hash before offering Save. Reload and server restart retain their ephemeral semantics.
+
+Active relay downloads are aborted when their sender becomes unauthorized through
+blocking, forgetting or pairing revocation. Authorization is checked again during
+receipt and before completion, so a download started before revocation cannot
+become a saved file afterward. The same applies to a two-pass save: Save is
+refused for a sender blocked after verification, and revocation during the save
+pass fails the streamed download. Already completed files are not erased.
+
+Private device invitations use random server-generated codes with a three-day
+lifetime. They are delivered only on the owner's socket and never appear in
+presence, room membership or lookup records. Expiry is checked during pairing
+without relying on the rotation sweep. Manual entry and QR fragments use the
+same endpoint, bound to the expected fingerprint when a device is selected.
+Fragment credentials are cleared after consumption and are not sent in HTTP
+page requests. Code guessing has a separate socket budget. Real fingerprint
+registrations always require a fresh possession proof, even without an allowlist.
+
+Each browser independently refuses unknown/unpaired senders and recipients;
+optional safety-code verification adds an out-of-band identity check. Invitation
+codes authorize their holders against an honest server; the server is trusted as
+code issuer. Existing pairings survive code rotation and reload. Forgetting
+removes the pairing association on both sides and keeps a local revocation marker
+so reconnect cannot silently restore it. It does not revoke server access or
+retract content already delivered. Offline pairing/revocation notices are reconciled
+on reconnect; a server restart replaces invitation codes and transient server
+associations, while locally remembered pairings remain.

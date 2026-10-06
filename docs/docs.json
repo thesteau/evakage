@@ -1,0 +1,15 @@
+{
+  "$schema": "https://mintlify.com/docs.json",
+  "theme": "mint",
+  "name": "Evakage",
+  "colors": { "primary": "#556FFF", "light": "#88A8FF", "dark": "#556FFF" },
+  "navigation": {
+    "groups": [
+      { "group": "Get started", "pages": ["index", "quickstart"] },
+      { "group": "Using Evakage", "pages": ["guides/devices", "guides/rooms", "guides/transfers", "guides/mobile", "guides/accounts"] },
+      { "group": "Self-hosting", "pages": ["hosting/deployment", "hosting/configuration", "hosting/privacy"] },
+      { "group": "Contributing", "pages": ["development", "releases"] }
+    ]
+  },
+  "navbar": { "links": [{ "label": "GitHub", "href": "https://github.com/thesteau/evakage" }, { "label": "Buy me a coffee", "href": "https://buymeacoffee.com/thesteau" }] }
+}

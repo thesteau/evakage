@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512" role="img" aria-label="Evakage">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#16203a"/>
+      <stop offset="1" stop-color="#090e1c"/>
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" rx="112" fill="url(#bg)"/>
+  <path d="M140 250V374H372V250" fill="none" stroke="#88a8ff" stroke-width="34" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M256 112v190m0 0-70-70m70 70 70-70" fill="none" stroke="#6ee7c8" stroke-width="34" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

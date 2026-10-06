@@ -1,0 +1,108 @@
+---
+title: "Messages and files"
+description: "Send, verify and recover direct and relayed transfers."
+---
+
+## Message yourself
+
+Open the first **Devices** entry, marked **This is you**, even with no other devices online, to send notes or upload files to your own device identity. Items are encrypted and signed in the browser before upload. Reading your items keeps the encrypted server copy available after a reload. Reconnect within 24 hours of disconnecting; each item has a hard 3-day limit from creation. Use the same browser profile: clearing its identity or switching browsers prevents decryption. Server restarts still erase buffered items early. These lifetimes apply only to self-chat.
+
+## Transfer integrity
+
+![An encrypted conversation between two paired browsers](/images/conversation.png)
+
+Every file is hashed with SHA-256 before the first byte leaves the sender, and the digest travels with the metadata. The receiver hashes what it assembled and compares: a mismatch is discarded rather than saved, and the row offers a retry. Verified files show `SHA-256 ✓` with the digest on hover, so it can be checked against a known value out of band.
+
+Hashing is incremental (`app/client/ts/sha256.ts`, checked against `node:crypto` in the test suite) because WebCrypto's `digest()` is one-shot and would need the whole file resident at once.
+
+Direct transfers carry an ID and can be cancelled from either end. A cancelled or interrupted direct transfer keeps the chunks that already arrived, and **Resume** tells the sender which ranges to skip. Relay transfers restart from byte zero, as described below.
+
+## Server relay
+
+Active uploads and downloads show a smoothed speed and approximate time remaining
+once enough progress has been measured. Estimates describe the current transfer
+stage, not delivery to every recipient. Direct send buffers adjust to measured
+drain speed within fixed memory bounds; a stalled buffer times out so the existing
+relay fallback can take over. These measurements stay in browser memory.
+
+Direct browser-to-browser transfer needs ICE to succeed. On a routed LAN, behind
+a VPN, or with a restrictive firewall it can fail outright, and then nothing gets
+through. So messages and files have a second path through the server that works
+regardless:
+
+- **Automatic.** An item goes direct when a direct link is available, and through
+  the server for any recipient it cannot reach — including one whose link drops
+  part-way through a file. Each recipient gets each item exactly once, by one
+  path. Files wait up to 5s for a direct link, messages 2.5s; once a direct link
+  has failed for a device, later messages to it go straight to the server for
+  30s while the link keeps retrying. Anything that went this way is marked
+  `via server`.
+- **Or forced.** Tick **Via server** in the session toolbar to skip the direct
+  attempt entirely, for a network where you know it never works.
+- **Sealed.** Each device has a long-lived key for this, signed by its identity
+  key and verified by the sender before use. A message is sealed to each
+  recipient directly. A file is encrypted with a random key, and that key — with
+  the file's name, type and SHA-256 — is sealed separately to each recipient.
+  The server stores ciphertext and opaque envelopes. It learns sizes and who is
+  sending to whom, never content.
+- **Signed.** Every envelope is also signed by the sender's identity key, so a
+  recipient knows the item really came from that device even if the server lies
+  about who sent it. Chat also carries a portable author signature, verified
+  on live delivery, relay delivery and recovery through another peer. Altered
+  or unsigned history is discarded rather than attributed to the claimed author.
+- **Verified.** A relayed file's SHA-256 is checked after decrypting, exactly as
+  for a direct transfer.
+
+**Lifetime.** Each conversation gets its own directory on the server: the same
+two devices, or the same room, always share one; a new pairing or room gets a
+new one.
+
+An item lives with its conversation rather than on a fixed clock. It is deleted
+at the first of:
+
+- every recipient has received it;
+- **everyone party to it has been gone for 15 minutes** — long enough to survive
+  a locked phone, a reload or a wifi drop, so a device that comes back still
+  receives what was left for it;
+- a **one-to-one conversation has had only one device present for 3 hours**. One
+  device waiting on a peer that is not coming back is a stalled session, not a
+  live one. Rooms are exempt: a room with one member connected is still a room;
+- **3 days from the item's creation**, whatever else is true. New items in the
+  same conversation have their own creation times and deadlines.
+
+Expiry is about access, not just disk: an expired item stops appearing in
+pending delivery and cannot be claimed, uploaded or newly downloaded, even with
+a token issued earlier. Uploads that cross the deadline are rejected; a download
+opened before expiry may finish afterward, and delivered copies cannot be
+recalled. Physical cleanup follows on the sweep (every minute by default), so
+there is no exact physical-deletion deadline.
+
+The app shows the countdown next to anything the server is holding, and marks it
+when its expiry deadline is close.
+- A server restart or a recreated container erases everything immediately. Item
+  records live only in the server's memory, so a restart ends items early,
+  never late.
+
+It lives inside the container with no volume, so it is never exposed on the
+host. See [Deployment](/hosting/deployment) for an optional host cron.
+
+## Interrupted relay transfers and memory
+
+Relayed uploads encrypt and PUT one ciphertext chunk at a time. An interrupted
+upload stops and abandons its server item. **Restart upload** creates a new item
+with a fresh encryption key and sends the whole file again from byte zero.
+
+Interrupted downloads discard partial plaintext and wait for an explicit restart,
+including after reconnect. **Restart download** fetches
+the whole ciphertext again from byte zero using a recipient download token.
+AES-GCM binds every chunk to its file ID, index and total; SHA-256 still must match
+before Save is offered. Relay transfers do not resume. A server restart or expiry
+removes the buffered item.
+
+When the service worker controls the page, a relayed file is received in two
+passes. The first verifies it and keeps only a digest per chunk. **Save** fetches
+it again and streams it straight to disk, passing on only chunks identical to the
+verified ones; any difference fails the download. The server copy is kept until
+that save completes, so Save shows the expiry countdown and a file that expires
+first shows **Gone**. Without the worker, the verified file is kept in memory
+until Save, as before. See [design and measurements](https://github.com/thesteau/evakage/blob/main/maintainer/relay-memory.md).
