@@ -4,7 +4,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { startServer, openWs, waitFor } from './helpers.js';
-import { fingerprintOf, signTranscript, bytesToBase64 } from '../public/identity.js';
+import { fingerprintOf, signTranscript, bytesToBase64 } from '../../app/public/identity.js';
 
 test('room creation requires login, anonymous guests can join, and account-wide replacement destroys the oldest room', async t => {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'evakage-room-policy-'));

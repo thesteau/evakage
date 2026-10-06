@@ -2,7 +2,7 @@ import { test, expect } from '@playwright/test';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { startServer } from '../tests/helpers.js';
+import { startServer } from '../unit/helpers.js';
 import { test as peerTest, deviceNames, chat, sendFile } from './helpers.js';
 
 /** @param {import('@playwright/test').Page} page */

@@ -4,7 +4,7 @@ import fsp from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
-import { createEvakageServer } from '../server/server.js';
+import { createEvakageServer } from '../../app/server/server.js';
 
 /** Legacy room unit tests use synthetic device IDs. Their HTTP account session
  * is attached directly; identity-bound socket login is covered by account tests.

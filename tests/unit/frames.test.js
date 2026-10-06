@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { parseFrame, CONTROL_KIND, FILE_CHUNK_KIND } from '../public/frames.js';
+import { parseFrame, CONTROL_KIND, FILE_CHUNK_KIND } from '../../app/public/frames.js';
 
 const limits = { controlBytes: 1024, chunkBytes: 64, fileChunks: 32 };
 const valid = { conv: 'direct', id: 'file', t: 'transfer', seq: 0, total: 2 };

@@ -20,7 +20,7 @@ never installs a saved Blob. Unblocking or pairing again permits an explicit
 restart from byte zero. Completed files already received are not retroactively
 erased. Live chat also rechecks authorization after asynchronous signature work.
 
-`app/e2e/receiving-validation.spec.js` covers blocking and forgetting while the HTTP
+`tests/e2e/receiving-validation.spec.js` covers blocking and forgetting while the HTTP
 response is held. Both prevent completion and Save. A separate case changes
 ciphertext after the first authenticated chunk: decryption fails and Save remains
 unavailable. Existing tests cover truncated files, hash checks, restart boundaries,
@@ -40,7 +40,7 @@ RAM limits or battery behavior.
 Relayed files are now received in two passes, as described in
 [relay memory](relay-memory.md). The 32 MiB phone simulation now uses this
 path: one body fetch for verification, a second for a Save streamed through
-the service worker. `app/e2e/two-pass.spec.js` covers these cases:
+the service worker. `tests/e2e/two-pass.spec.js` covers these cases:
 
 - exact bytes and release after a streamed save;
 - a tampered or truncated second pass (altered on the server's disk) failing
@@ -51,9 +51,9 @@ the service worker. `app/e2e/two-pass.spec.js` covers these cases:
 - the single-pass and in-memory fallbacks.
 
 Except for the Chromium-only throttled case, these pass three times each in
-Chromium, Firefox and WebKit. `app/tests/relay.test.js` covers digest binding,
+Chromium, Firefox and WebKit. `tests/unit/relay.test.js` covers digest binding,
 substitution with a validly encrypted different file, truncation and trailing
-bytes. `app/tests/savestream.test.js` covers the worker route. Node measurements show
+bytes. `tests/unit/savestream.test.js` covers the worker route. Node measurements show
 flat peak RSS for the two-pass decrypt/verify code at 64 and 128 MiB. Browser
 memory and physical phones were not measured.
 

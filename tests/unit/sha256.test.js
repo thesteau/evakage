@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
-import { Sha256, hashChunks } from '../public/sha256.js';
+import { Sha256, hashChunks } from '../../app/public/sha256.js';
 
 const reference = (/** @type {Uint8Array} */ bytes) => crypto.createHash('sha256').update(Buffer.from(bytes)).digest('hex');
 const hashOnce = (/** @type {Uint8Array} */ bytes) => new Sha256().update(bytes).hex();

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { TransferStats, bufferLimit } from '../public/transfer-stats.js';
+import { TransferStats, bufferLimit } from '../../app/public/transfer-stats.js';
 
 test('transfer estimates wait for samples, smooth changes, and expire when stalled', () => {
   const stats = new TransferStats(10000, 0);

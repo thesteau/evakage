@@ -3,7 +3,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
-import { fingerprintOf, bytesToBase64, signTranscript, verifyAdvertisedIdentity } from '../public/identity.js';
+import { fingerprintOf, bytesToBase64, signTranscript, verifyAdvertisedIdentity } from '../../app/public/identity.js';
 import {
   buildEnvelope,
   openEnvelope,
@@ -14,7 +14,7 @@ import {
   createBodyDecryptor,
   verifiedPlaintext,
   cipherLayout
-} from '../public/relay.js';
+} from '../../app/public/relay.js';
 
 // The global Web Crypto, not node:crypto's: same object at runtime, but typed
 // with the DOM CryptoKey the app code expects. @types/node's KeyUsage runs ahead
@@ -157,7 +157,7 @@ test('an envelope claiming a sender it was not signed by is refused', async () =
     contentKey: bytesToBase64(crypto.randomBytes(32))
   });
   const signature = await signTranscript(forger.privateKey, `evakage/envelope/1|${inner}`);
-  const { seal } = await import('../public/identity.js');
+  const { seal } = await import('../../app/public/identity.js');
   const box = await seal(recipient.sealRaw, new TextEncoder().encode(JSON.stringify({ inner, signature })));
 
   await assert.rejects(
@@ -247,7 +247,7 @@ test('a relayed message claiming an author who did not sign it is refused', asyn
     message: { id: crypto.randomUUID(), text: 'I am the victim', at: 1, fromName: 'Victim' }
   });
   const signature = await signTranscript(forger.privateKey, `evakage/envelope/1|${inner}`);
-  const { seal } = await import('../public/identity.js');
+  const { seal } = await import('../../app/public/identity.js');
   const box = await seal(recipient.sealRaw, new TextEncoder().encode(JSON.stringify({ inner, signature })));
 
   await assert.rejects(

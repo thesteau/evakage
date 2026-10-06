@@ -3,7 +3,7 @@ import { test as engineTest, expect, devices as profiles } from '@playwright/tes
 import fs from 'node:fs/promises';
 import { createReadStream } from 'node:fs';
 import { createHash } from 'node:crypto';
-import { startServer } from '../tests/helpers.js';
+import { startServer } from '../unit/helpers.js';
 
 for (const action of ['Block', 'Delete']) {
   test(`${action.toLowerCase()} during a relay download prevents accepting or saving it`, async ({ devices }) => {

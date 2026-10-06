@@ -63,8 +63,8 @@ Open `http://localhost:3000`. Server code lives in `app/server/`; browser assets
 live in `app/public/`. The app uses plain ES modules with no frontend build step.
 
 The Dockerfile, source-build Compose setup, environment example and app check
-configs also live in `app/`. Application tests are in `app/tests/` and `app/e2e/`;
-release automation tests remain in `scripts/tests/`.
+configs also live in `app/`. Tests live in `tests/`, grouped into `unit/`, `e2e/`,
+and `release/`.
 
 See [RELEASING.md](RELEASING.md) for release operations.
 

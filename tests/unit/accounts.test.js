@@ -5,7 +5,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { startServer, openWs, waitFor } from './helpers.js';
-import { fingerprintOf, signTranscript, bytesToBase64 } from '../public/identity.js';
+import { fingerprintOf, signTranscript, bytesToBase64 } from '../../app/public/identity.js';
 
 /** @param {string} base @param {string} route @param {object} body @param {string} [cookie] @param {string} [method] */
 function request(base, route, body, cookie = '', method = 'POST') {

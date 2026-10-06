@@ -1,7 +1,7 @@
 import { test as baseTest, expect } from '@playwright/test';
 import fs from 'node:fs/promises';
 import { pairDevices, whenControlled } from './helpers.js';
-import { startServer } from '../tests/helpers.js';
+import { startServer } from '../unit/helpers.js';
 
 /** @typedef {import('@playwright/test').Page} Page */
 /** @typedef {{alice: Page, bob: Page, errors: string[]}} Peers */

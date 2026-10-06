@@ -3,7 +3,7 @@ import fs from 'node:fs/promises';
 import { pairDevices, joinRoom } from './helpers.js';
 import { performance } from 'node:perf_hooks';
 import { signInRoomOwner } from './helpers.js';
-import { startRoomServer as startServer } from '../tests/helpers.js';
+import { startRoomServer as startServer } from '../unit/helpers.js';
 
 /** @typedef {import('@playwright/test').Page} Page */
 /** @typedef {{created: number, closed: number, connected: number}} Counters */

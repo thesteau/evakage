@@ -1,13 +1,13 @@
 import { test as base, expect } from '@playwright/test';
 import fs from 'node:fs/promises';
-import { startRoomServer as startServer } from '../tests/helpers.js';
+import { startRoomServer as startServer } from '../unit/helpers.js';
 
 export const deviceNames = new Map();
 
 /** @typedef {import('@playwright/test').Page} Page */
 /** @typedef {{device: string, patch: (source: string) => string} | null} AppPatch */
 
-export const test = base.extend(/** @type {import('@playwright/test').Fixtures<{devices: {alice: Page, bob: Page, disconnect: (name: string) => void, server: ReturnType<typeof import('../server/server.js').createEvakageServer>}, appPatch: AppPatch, autoPair: boolean}, {}, import('@playwright/test').PlaywrightTestArgs, import('@playwright/test').PlaywrightWorkerArgs>} */ ({
+export const test = base.extend(/** @type {import('@playwright/test').Fixtures<{devices: {alice: Page, bob: Page, disconnect: (name: string) => void, server: ReturnType<typeof import('../../app/server/server.js').createEvakageServer>}, appPatch: AppPatch, autoPair: boolean}, {}, import('@playwright/test').PlaywrightTestArgs, import('@playwright/test').PlaywrightWorkerArgs>} */ ({
   // Serves one device a rewritten app.js, so a test can play a peer that
   // misbehaves in a way the honest client never would. Set with
   // test.use({ appPatch: { device: 'Bob', patch: source => ... } }).

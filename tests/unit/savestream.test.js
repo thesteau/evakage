@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import vm from 'node:vm';
 
-const source = await fs.readFile(new URL('../public/sw.js', import.meta.url), 'utf8');
+const source = await fs.readFile(new URL('../../app/public/sw.js', import.meta.url), 'utf8');
 const origin = 'https://drop.test';
 
 function workerHarness() {

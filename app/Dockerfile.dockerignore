@@ -4,8 +4,7 @@
 docs
 maintainer
 scripts
-app/tests
-app/e2e
+tests
 app/.env
 app/.env.*
 app/eslint.config.js

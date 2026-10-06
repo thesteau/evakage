@@ -86,7 +86,7 @@ export default [
   },
   {
     // Tests run in Node but exercise the browser-shaped globals Node now ships.
-    files: ['app/tests/**/*.js', 'app/e2e/**/*.js'],
+    files: ['tests/unit/**/*.js', 'tests/e2e/**/*.js'],
     languageOptions: {
       globals: { ...globals.node, ...globals.browser }
     },

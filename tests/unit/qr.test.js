@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import jsQR from 'jsqr';
-import { qrMatrix } from '../public/qr.js';
+import { qrMatrix } from '../../app/public/qr.js';
 
 for (const text of ['ABCD-EFGH', 'https://drop.example.test/', 'https://drop.example.test/%E2%9C%93']) {
   test(`QR decoder round trip: ${text}`, () => {

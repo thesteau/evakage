@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { fingerprintOf, bytesToBase64, signTranscript } from '../public/identity.js';
+import { fingerprintOf, bytesToBase64, signTranscript } from '../../app/public/identity.js';
 import { startRoomServer as startServer, openWs, waitFor, register } from './helpers.js';
 
 test('health, presence, stable codes, and code lookup work', async t => {

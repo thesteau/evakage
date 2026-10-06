@@ -1,8 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { bytesToBase64, fingerprintOf, signTranscript } from '../public/identity.js';
-import { messageScope, signMessage, verifyMessage, historyFrames, messageKey } from '../public/messages.js';
-import { buildMessageEnvelope, openMessageEnvelope } from '../public/relay.js';
+import { bytesToBase64, fingerprintOf, signTranscript } from '../../app/public/identity.js';
+import { messageScope, signMessage, verifyMessage, historyFrames, messageKey } from '../../app/public/messages.js';
+import { buildMessageEnvelope, openMessageEnvelope } from '../../app/public/relay.js';
 
 async function identity() {
   const pair = await crypto.subtle.generateKey({ name: 'ECDSA', namedCurve: 'P-256' }, false, ['sign', 'verify']);
@@ -13,10 +13,10 @@ const alice = await identity();
 const bob = await identity();
 const mallory = await identity();
 const scope = messageScope('direct', [alice.deviceId, bob.deviceId]);
-/** @returns {import('../public/types.js').Message} */
+/** @returns {import('../../app/public/types.js').Message} */
 const message = () => ({ id: crypto.randomUUID(), from: alice.deviceId, fromName: 'Alice', text: 'A | B\n"quoted" 🦊', at: 0 });
 
-/** @param {import('../public/types.js').Message} value @param {string} conversation
+/** @param {import('../../app/public/types.js').Message} value @param {string} conversation
  * @param {Awaited<ReturnType<typeof identity>>} signer */
 async function rawProof(value, conversation, signer) {
   const inner = JSON.stringify({ v: 1, scope: conversation, id: value.id, from: value.from,

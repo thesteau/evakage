@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createPairingCodes, PAIRING_CODE_MAX_AGE_MS } from '../server/server.js';
+import { createPairingCodes, PAIRING_CODE_MAX_AGE_MS } from '../../app/server/server.js';
 
 test('private invitation codes resolve before expiry and are refused at the exact boundary', () => {
   let now = 1000;

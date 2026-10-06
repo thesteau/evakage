@@ -184,13 +184,13 @@ test('static serving refuses traversal and sends security headers everywhere', a
   };
 
   for (const attempt of [
-    '/../server/server.js',
-    '/../../server/server.js',
+    '/../../app/server/server.js',
+    '/../../../app/server/server.js',
     '/..%2fapp/server/server.js',
     '/..%2F..%2Fapp/server/server.js',
     '/%2e%2e/app/server/server.js',
     '/./../package.json',
-    '/icons/../../server/server.js',
+    '/icons/../../../app/server/server.js',
     '/....//app/server/server.js'
   ]) {
     const response = await get(attempt);

@@ -7,7 +7,7 @@ background interruption were involved.
 ## Reproduce
 
 ```sh
-npm run test:e2e -- app/e2e/room-churn.spec.js --workers=1 --repeat-each=3
+npm run test:e2e -- tests/e2e/room-churn.spec.js --workers=1 --repeat-each=3
 ```
 
 Each run forms a six-device mesh, then repeats three cycles of an explicit
@@ -101,7 +101,7 @@ for this local test configuration. See [Coturn's Docker documentation](https://g
 
 ```sh
 # Local file regression without Docker
-npm run test:e2e -- app/e2e/room-churn.spec.js --grep "file transfers" --workers=1
+npm run test:e2e -- tests/e2e/room-churn.spec.js --grep "file transfers" --workers=1
 # TURN-only file regression; Docker must be running
 node scripts/benchmarks/room-turn.mjs
 # Repeat with Pixel 7 browser emulation, not a physical phone

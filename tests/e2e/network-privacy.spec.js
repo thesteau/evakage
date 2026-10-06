@@ -1,6 +1,6 @@
 import { signInRoomOwner } from './helpers.js';
 import { test, expect } from '@playwright/test';
-import { startRoomServer as startServer } from '../tests/helpers.js';
+import { startRoomServer as startServer } from '../unit/helpers.js';
 
 /** @param {import('@playwright/test').Page} page */
 async function advertise(page) {

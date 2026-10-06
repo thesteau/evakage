@@ -1,7 +1,7 @@
 import { expect } from '@playwright/test';
 import { test, deviceNames, openPeer, chat, pairDevices } from './helpers.js';
-import { startServer } from '../tests/helpers.js';
-import { PAIRING_CODE_MAX_AGE_MS } from '../server/server.js';
+import { startServer } from '../unit/helpers.js';
+import { PAIRING_CODE_MAX_AGE_MS } from '../../app/server/server.js';
 
 test.describe('pairing restoration ordering', () => {
   test.use({ appPatch: { device: 'Both', patch: source => source

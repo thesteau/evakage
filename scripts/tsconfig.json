@@ -7,5 +7,5 @@
     "noEmit": true,
     "moduleDetection": "force"
   },
-  "include": ["release-state.cts", "tests/*.test.cts"]
+  "include": ["release-state.cts", "../tests/release/*.test.cts"]
 }

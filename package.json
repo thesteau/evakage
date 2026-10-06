@@ -17,13 +17,13 @@
   "scripts": {
     "start": "node app/server/server.js",
     "dev": "node --watch app/server/server.js",
-    "test": "node --test \"app/tests/*.test.js\"",
+    "test": "node --test \"tests/unit/*.test.js\"",
     "test:e2e": "playwright test --config app/playwright.config.js",
     "test:e2e:platform": "playwright test --config app/playwright.platform.config.js",
     "lint": "eslint --config app/eslint.config.js .",
     "typecheck": "tsc --noEmit -p app/tsconfig.json",
     "typecheck:release": "tsc --noEmit -p scripts/tsconfig.json",
-    "test:release": "node --test \"scripts/tests/*.test.cts\"",
+    "test:release": "node --test \"tests/release/*.test.cts\"",
     "check": "npm run lint && npm run typecheck && npm run typecheck:release && npm test && npm run test:release"
   },
   "engines": {

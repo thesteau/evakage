@@ -34,7 +34,7 @@ Verify these properties independently:
 ## Reproduce and report
 
 Run `npm ci`, `npm run check`, `npm run test:e2e` and
-`npm run test:e2e:platform`. Adversarial browser tests are in `app/e2e/history.spec.js`,
+`npm run test:e2e:platform`. Adversarial browser tests are in `tests/e2e/history.spec.js`,
 `pairing.spec.js`, `security-controls.spec.js`, `relay-restart.spec.js` and
 `receiving-validation.spec.js`, plus `transfer.spec.js`. Unit tests exercise parser fuzzing, signatures, expiration,
 quotas and wrong credentials. Passing them is supporting evidence only.

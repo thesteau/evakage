@@ -31,8 +31,8 @@ jobs:
           # OS temp dir; they are never shipped, so their findings are noise.
           config: |
             paths-ignore:
-              - app/tests
-              - scripts/tests
+              - tests/unit
+              - tests/release
 
       # Uploading to the Security tab needs code scanning enabled, which a private
       # repository only has with GitHub Code Security. Until then, results are
