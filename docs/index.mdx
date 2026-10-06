@@ -1,0 +1,28 @@
+---
+title: "Evakage"
+description: "Private browser chat and file sharing for trusted networks."
+---
+
+**Evakage is in prerelease development.** The stable release pipeline is prepared but disabled.
+
+Evakage is a self-hosted app for encrypted text, links and files between browsers, directly or in small rooms. It runs in one Docker container and works as a browser page or installed PWA.
+
+- Keeps devices private by default; advertising in Settings is opt-in. Paired devices and fellow room members can still see one another.
+- Shows device name, short code, platform/browser, connection state, RTT, and WebRTC bytes sent/received.
+- Opens a direct peer session from the table with **Chat**, **Text**, or **File** actions.
+- Provides **connect by code** as a fallback if presence UI is stale or awkward.
+- Hosts **ephemeral rooms** (up to 20 devices by default), joined from the room table or by room code.
+- Uses WebRTC DataChannels for peer payload transport.
+- Adds an application-layer ephemeral ECDH/AES-GCM encryption layer on top of WebRTC transport encryption.
+- Displays a short safety code derived from both devices' long-lived identity keys, stable across sessions.
+- Installs as a PWA on phones, tablets, and desktops, with an offline app shell, and appears in the phone's share sheet for files, text and links.
+- Keeps local messages and completed direct file copies in browser memory; relayed ciphertext is buffered temporarily on the server.
+- Re-syncs chat/file metadata from any surviving peer when a browser reconnects with the same local device identity.
+- Allows a returned peer to request an in-memory file again from whichever peer still holds the bytes.
+- Falls back to a **server relay** for messages and files when a direct connection cannot be made — sealed so the server cannot read them, deleted once delivered, and otherwise living only as long as the conversation they belong to.
+- Asks before receiving files from a device you have not met (configurable).
+- Chat, files and joining rooms work without accounts. An account is required to create rooms and can also connect your online devices privately and sync selected preferences.
+- Verifies every device's long-lived identity key and shows a stable safety code.
+- Works as an ordinary browser page too — installing is optional.
+
+Start with the [quick start](/quickstart). Learn about [storage and privacy](/hosting/privacy) before deploying.

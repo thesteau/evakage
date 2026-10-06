@@ -1,0 +1,44 @@
+---
+title: "Quick start"
+description: "Run Evakage and connect two browsers."
+---
+
+Evakage is in prerelease development. To try this checkout, build locally:
+
+```bash
+git clone https://github.com/thesteau/aria-drop.git
+cd aria-drop
+cp app/.env.example app/.env
+docker compose -f app/compose.yaml up -d --build
+```
+
+Open `http://localhost:3712` on the host. For another device, expose the app through
+an HTTPS reverse proxy with a certificate trusted by that device. Set `TRUST_PROXY=1`
+only when clients reach the app through a proxy you control. WebCrypto, browser
+identity and PWA features require HTTPS or localhost.
+
+The source Compose setup reads `app/.env`. Copy the example as shown above,
+then edit its values before starting Compose.
+
+## Connect devices
+
+1. Open the same server URL in both browsers.
+2. On one device, show its private pairing code or **My pairing QR**.
+3. On the other device, choose **Pair by code** or **Scan QR**.
+4. Open the paired device and send text, a link or a file.
+
+Advertising is off by default. Public advertised codes do not authorize pairing.
+Creating rooms requires an optional account; joining by invitation, chatting and
+sharing files work without one. Compare safety codes outside the app when verifying
+a device's owner.
+
+## Published images
+
+The [deployment setup](/hosting/deployment) pulls `ghcr.io/thesteau/evakage:latest`
+by default. Once automation is enabled, `latest` tracks tested `main` commits.
+For a stable release, edit the deployment Compose image tag to an actually published `vX.Y.Z` tag.
+The prepared pipeline starts at `v1.0.0`; its configuration does not mean that
+version is already available.
+
+Learn about [privacy and storage](/hosting/privacy), [configuration](/hosting/configuration)
+and [mobile limitations](/guides/mobile) before relying on a deployment.

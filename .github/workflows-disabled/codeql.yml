@@ -1,0 +1,82 @@
+name: CodeQL
+
+on:
+  push:
+    branches: [main, prod]
+  pull_request:
+    branches: [main, prod]
+  schedule:
+    # Catch newly published advisories against code that has not changed.
+    - cron: '27 5 * * 1'
+
+permissions:
+  contents: read
+  security-events: write
+  # The analyze step reads its own workflow run to attach results; without this
+  # it fails with "Resource not accessible by integration".
+  actions: read
+
+jobs:
+  analyze:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Initialise CodeQL
+        uses: github/codeql-action/init@v4
+        with:
+          languages: javascript-typescript
+          queries: security-and-quality
+          # The tests deliberately build URLs from fixture data and write to the
+          # OS temp dir; they are never shipped, so their findings are noise.
+          config: |
+            paths-ignore:
+              - app/tests
+              - scripts/tests
+
+      # Uploading to the Security tab needs code scanning enabled, which a private
+      # repository only has with GitHub Code Security. Until then, results are
+      # kept as a build artifact and gated here instead. Set the repository
+      # variable CODE_SCANNING_ENABLED=true to upload once it is available.
+      - name: Analyse
+        uses: github/codeql-action/analyze@v4
+        with:
+          category: /language:javascript-typescript
+          output: sarif-results
+          upload: ${{ vars.CODE_SCANNING_ENABLED == 'true' && 'always' || 'never' }}
+
+      - name: Keep the results
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: codeql-sarif
+          path: sarif-results
+          if-no-files-found: ignore
+
+      # Fail on any finding from a security query; quality findings are listed
+      # but do not fail the build.
+      - name: Gate on security findings
+        run: |
+          set -euo pipefail
+          report() {
+            jq -r --arg want "$1" '
+              .runs[]
+              | ([.tool.driver.rules[]?, .tool.extensions[]?.rules[]?] | map({(.id): .}) | add // {}) as $rules
+              | .results[]
+              | (($rules[.ruleId].properties.tags // []) | index("security") != null) as $sec
+              | select(($want == "security") == $sec)
+              | "\(.ruleId)  \(.locations[0].physicalLocation.artifactLocation.uri):\(.locations[0].physicalLocation.region.startLine)  \(.message.text)"
+            ' sarif-results/*.sarif
+          }
+          quality=$(report quality)
+          security=$(report security)
+          if [ -n "$quality" ]; then
+            echo "::group::Quality findings (not blocking)"
+            echo "$quality"
+            echo "::endgroup::"
+          fi
+          if [ -n "$security" ]; then
+            echo "$security" | while IFS= read -r line; do echo "::error::$line"; done
+            exit 1
+          fi
+          echo "No security findings."

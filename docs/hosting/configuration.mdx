@@ -1,0 +1,29 @@
+---
+title: "Configuration"
+description: "Environment variables for self-hosting Evakage."
+---
+
+| Environment variable | Default | Purpose |
+| --- | --- | --- |
+| `PORT` | `3000` | HTTP/WebSocket listen port |
+| `HOST` | `0.0.0.0` | Listen address |
+| `MAX_FILE_BYTES` | `536870912` | Browser-side per-file admission limit advertised to clients |
+| `ICE_SERVERS_JSON` | `[]` | JSON array of standard `RTCIceServer` objects for STUN/TURN |
+| `AUTH_TOKEN` | *(unset)* | When set, the whole server needs this token. Open `https://host/?token=THE_TOKEN` once and the server trades it for an `HttpOnly; SameSite=Strict` session cookie that also authorises the WebSocket upgrade. `/healthz` stays open for the container healthcheck. |
+| `DEVICE_ALLOWLIST` | *(unset)* | Comma-separated full device fingerprints permitted to register. Each must prove possession of its signing key using a fresh socket challenge. Remove a fingerprint and restart to revoke its server access. |
+| `ALLOWED_ORIGINS` | *(same host)* | Comma-separated exact origins permitted to open the WebSocket. Unset means "must match the request's own host", which is what you want behind a normal reverse proxy. |
+| `TRUST_PROXY` | `0` | Set to `1` only when a proxy you control sits in front. It makes the server believe `X-Forwarded-Host` (for origin checks) and `X-Forwarded-For` (for per-address limits). Leave it off if clients can reach the port directly, or they can spoof both. |
+| `ACCOUNTS_DB` | `/home/node/evakage-accounts/accounts.sqlite` in Docker; unset for Node | Optional SQLite account database path. Use a separate persistent account volume; no text or files are stored here. |
+| `BLOB_DIR` | `/tmp/evakage-blobs` in the image | Where relayed messages and files wait, one subdirectory per conversation. Keep it inside the container; do not mount a volume here. |
+| `BLOB_IDLE_GRACE_MS` | `900000` (15 min) | How long an item outlives the moment every device party to it disconnected. |
+| `BLOB_SOLO_MAX_MS` | `10800000` (3h) | How long a one-to-one conversation may sit with only one device present before its items expire. Rooms are exempt. Also how long an offline device stays listed as reachable, and how long an away member keeps its room seat. |
+| `BLOB_MAX_AGE_MS` | `259200000` (3 days) | Absolute ceiling from offer creation, however alive the session is. |
+| `BLOB_SWEEP_MS` | `60000` (1 min) | How often the sweep runs. It also removes any empty conversation directory. |
+| `BLOB_STORE_BYTES` | `4294967296` (4 GiB) | Total space all buffered transfers may use together. |
+| `BLOB_PER_DEVICE` | `32` | Files one device may have waiting on the server at once. |
+| `BLOB_MESSAGES_PER_DEVICE` | `2000` | Messages one device may have waiting on the server at once. |
+| `ROOM_MAX_MEMBERS` | `20` | Seats per room, clamped to 2–64. Rooms of up to six use the direct mesh; larger ones run entirely through the relay. |
+
+On the same LAN, host ICE candidates are usually sufficient. If peers are separated by routed networks, restrictive firewalls, or VPN topology, configure TURN.
+
+The mesh size (6) and the per-server room cap (64) are constants in `app/server/server.js`, not environment variables — the mesh cost grows quadratically, so changing it is deliberately a code change. The rate limits and defensive budgets live next to them in the `LIMITS` object.

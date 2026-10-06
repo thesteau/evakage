@@ -1,0 +1,38 @@
+name: "Release: Promote main to prod"
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: promote-main-to-prod
+  cancel-in-progress: false
+
+jobs:
+  promotion:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/github-script@v9
+        with:
+          script: |
+            const {owner, repo} = context.repo;
+            await github.rest.repos.getBranch({owner, repo, branch: 'prod'});
+            const comparison = await github.rest.repos.compareCommitsWithBasehead({
+              owner, repo, basehead: 'prod...main'
+            });
+            if (comparison.data.ahead_by === 0) return;
+            const existing = await github.rest.pulls.list({
+              owner, repo, state: 'open', base: 'prod', head: `${owner}:main`
+            });
+            if (existing.data.length) return;
+            await github.rest.pulls.create({
+              owner, repo, base: 'prod', head: 'main',
+              title: 'chore: promote main to prod',
+              body: 'Promote the reviewed integration branch to production. This PR follows main automatically. Merge using a merge commit to preserve Conventional Commit history. After merging, Release Please opens or updates the metadata PR on release-state. No release metadata is committed to main or prod.'
+            });

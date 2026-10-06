@@ -5,6 +5,8 @@ node_modules/
 coverage/
 test-results/
 playwright-report/
+.mintlify/
+.local/
 type-edit.tmp.mjs
 type-findings.tmp
 

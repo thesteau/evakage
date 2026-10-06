@@ -36,7 +36,7 @@ These bound resource abuse and casual cross-site access. They are **not** a subs
 - Clearing site data, or a browser evicting storage, destroys the identity. The device then reappears as a new device with a new ID and a new safety code.
 - No independent protocol review or penetration test has been performed. Automated parser fuzzing is included in the local test suite. `npm audit`, CodeQL, and Trivy run in CI, but automated scanning is not a review.
 - A peer can consume memory by sending data. The configured file-size limit and the client-side caps (messages and files per conversation, sync-state size, chunk size, queued ICE candidates, concurrent transfers) bound this but are not a complete resource-abuse defence.
-- `public/sha256.js` is a hand-written hash used for integrity only, never for secrecy or authentication. It is checked against `node:crypto` across sizes, block boundaries, and streaming splits, but it has not been independently audited.
+- `app/public/sha256.js` is a hand-written hash used for integrity only, never for secrecy or authentication. It is checked against `node:crypto` across sizes, block boundaries, and streaming splits, but it has not been independently audited.
 - Installing the PWA caches the app shell. A cached build keeps running until the user accepts the update banner, so a security fix is not guaranteed to be live immediately after deploy.
 - Browser memory can be paged/swapped by the OS. "Memory only" does not mean forensic impossibility.
 - File names/types are untrusted. Downloads are offered as blobs and are never executed by the app.
@@ -68,7 +68,7 @@ These bound resource abuse and casual cross-site access. They are **not** a subs
   portable message proofs do not cover filenames, holders or file authorship.
 
 
-Do not expose this MVP directly to the public Internet without authentication/rate limiting and a review of the items in `CODEX_HANDOFF.md`.
+Before public deployment, configure authentication/rate limiting and complete the [independent security review](maintainer/security-review.md).
 
 ## Local approval and server access controls
 

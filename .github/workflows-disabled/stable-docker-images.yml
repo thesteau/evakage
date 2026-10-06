@@ -1,0 +1,109 @@
+name: "Image: Stable release"
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing stable GitHub Release tag to retry
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: stable-image-${{ github.event.release.tag_name || inputs.tag }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Validate stable release
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.release.outputs.tag }}
+      revision: ${{ steps.revision.outputs.sha }}
+    env:
+      RELEASE_TAG: ${{ github.event.release.tag_name || inputs.tag }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Validate published stable release
+        id: release
+        shell: bash
+        run: |
+          [[ "$RELEASE_TAG" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]
+          gh api "repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG" > "$RUNNER_TEMP/release.json"
+          jq -e '.draft == false and .prerelease == false' "$RUNNER_TEMP/release.json"
+          echo "tag=$RELEASE_TAG" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ steps.release.outputs.tag }}
+          fetch-depth: 0
+      - name: Verify tag belongs to prod
+        id: revision
+        run: |
+          git fetch origin prod
+          git merge-base --is-ancestor HEAD origin/prod
+          target=$(jq -r '.target_commitish' "$RUNNER_TEMP/release.json")
+          [[ "$target" == prod || "$target" == "$(git rev-parse HEAD)" ]]
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+  validate:
+    needs: release
+    uses: ./.github/workflows/ci.yml
+    with:
+      ref: ${{ needs.release.outputs.revision }}
+
+  publish:
+    needs: [release, validate]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    env:
+      RELEASE_TAG: ${{ needs.release.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.release.outputs.revision }}
+      - uses: docker/setup-qemu-action@v4
+      - uses: docker/setup-buildx-action@v4
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Check immutable image tag
+        id: image
+        shell: bash
+        env:
+          REGISTRY_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          image="${GITHUB_REPOSITORY_OWNER,,}/evakage"
+          echo "name=ghcr.io/$image" >> "$GITHUB_OUTPUT"
+          token=$(curl --fail --silent --show-error --get --user "$GITHUB_ACTOR:$REGISTRY_TOKEN" \
+            --data-urlencode "service=ghcr.io" --data-urlencode "scope=repository:$image:pull" \
+            https://ghcr.io/token | jq -er '.token')
+          status=$(curl --silent --show-error --output /dev/null --write-out '%{http_code}' \
+            --head -H "Authorization: Bearer $token" \
+            -H 'Accept: application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.list.v2+json, application/vnd.oci.image.manifest.v1+json, application/vnd.docker.distribution.manifest.v2+json' \
+            "https://ghcr.io/v2/$image/manifests/$RELEASE_TAG")
+          case "$status" in
+            200) echo "exists=true" >> "$GITHUB_OUTPUT" ;;
+            404) echo "exists=false" >> "$GITHUB_OUTPUT" ;;
+            *) echo "Registry check failed: HTTP $status" >&2; exit 1 ;;
+          esac
+      - uses: docker/build-push-action@v7
+        if: steps.image.outputs.exists == 'false'
+        with:
+          context: .
+          file: app/Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.image.outputs.name }}:${{ env.RELEASE_TAG }}
+          build-args: |
+            VERSION=${{ env.RELEASE_TAG }}
+            REVISION=${{ needs.release.outputs.revision }}
+          cache-from: type=gha,scope=stable
+          cache-to: type=gha,mode=max,scope=stable

@@ -1,0 +1,15 @@
+services:
+  evakage:
+    build:
+      context: ..
+      dockerfile: app/Dockerfile
+    container_name: evakage
+    restart: unless-stopped
+    ports:
+      - "3712:3000"
+    env_file: .env
+    volumes:
+      - account-data:/home/node/evakage-accounts
+
+volumes:
+  account-data:

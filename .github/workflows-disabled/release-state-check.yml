@@ -1,0 +1,85 @@
+name: "Release: Validate metadata"
+
+on:
+  pull_request_target:
+    branches: [release-state]
+    types: [opened, synchronize, reopened, edited]
+  workflow_dispatch:
+    inputs:
+      pr:
+        description: Release metadata PR number to validate
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  pull-requests: read
+  statuses: write
+
+jobs:
+  metadata:
+    if: github.event_name != 'workflow_dispatch' || github.ref == 'refs/heads/prod'
+    name: Run release metadata validation
+    runs-on: ubuntu-latest
+    steps:
+      - name: Resolve metadata PR
+        id: pr
+        uses: actions/github-script@v9
+        env:
+          PR_NUMBER: ${{ inputs.pr || github.event.pull_request.number }}
+        with:
+          script: |
+            const number = Number(process.env.PR_NUMBER);
+            if (!Number.isSafeInteger(number) || number <= 0) throw new Error('Invalid PR number');
+            const {data: pr} = await github.rest.pulls.get({...context.repo, pull_number: number});
+            if (pr.state !== 'open' || pr.base.ref !== 'release-state' ||
+                pr.head.repo?.full_name !== `${context.repo.owner}/${context.repo.repo}` ||
+                pr.head.ref !== 'release-please--branches--release-state') {
+              throw new Error('Expected an open same-repository release metadata PR');
+            }
+            core.setOutput('sha', pr.head.sha);
+      # pull_request_target's automatic check belongs to the base commit.
+      # Publish the required status explicitly on the metadata PR head instead.
+      - name: Mark metadata validation pending
+        uses: actions/github-script@v9
+        env:
+          PR_HEAD_SHA: ${{ steps.pr.outputs.sha }}
+        with:
+          script: |
+            await github.rest.repos.createCommitStatus({
+              ...context.repo,
+              sha: process.env.PR_HEAD_SHA,
+              context: 'Validate release metadata',
+              state: 'pending',
+              target_url: `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`
+            });
+      - uses: actions/checkout@v7
+        with:
+          ref: prod
+          fetch-depth: 0
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - name: Validate metadata without executing PR code
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_OPERATION: check
+          RELEASE_STATE_REF: ${{ steps.pr.outputs.sha }}
+        run: node scripts/release-state.cts
+      - name: Report metadata validation result on PR head
+        if: always() && steps.pr.outputs.sha != ''
+        uses: actions/github-script@v9
+        env:
+          VALIDATION_RESULT: ${{ job.status }}
+          PR_HEAD_SHA: ${{ steps.pr.outputs.sha }}
+        with:
+          script: |
+            await github.rest.repos.createCommitStatus({
+              ...context.repo,
+              sha: process.env.PR_HEAD_SHA,
+              context: 'Validate release metadata',
+              state: process.env.VALIDATION_RESULT === 'success' ? 'success' : 'failure',
+              target_url: `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`
+            });

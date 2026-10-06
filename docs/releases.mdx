@@ -1,0 +1,54 @@
+---
+title: "Releases"
+description: "How main builds become reviewed, tagged stable releases."
+---
+
+The release pipeline is prepared but disabled while Evakage is in prerelease
+development. `latest` belongs to `main`; stable releases use immutable `vX.Y.Z` tags.
+
+```mermaid
+flowchart LR
+    A[Feature PR] -->|Squash merge| B[main]
+    B -->|Successful CI| C[latest image]
+    B -->|Reviewed promotion, merge commit| D[prod]
+    D --> E[Release metadata PR]
+    E -->|Reviewed merge| F[Tag recorded prod commit]
+    F --> G[GitHub Release and versioned image]
+```
+
+`release-state` holds only the version manifest, changelog and recorded production
+commit. Release metadata never merges into application branches. The first stable
+release is `v1.0.0`. The development `package.json` version is not the stable release
+source of truth; the tag and container OCI labels identify released code.
+
+## PR titles and versions
+
+Use `<type>[(scope)][!]: <summary>` for PRs into `main`, because squash merges use
+the PR title as the commit message.
+
+| Type | Version effect |
+| --- | --- |
+| `feat:` | Minor |
+| `fix:`, `perf:`, `revert:` | Patch |
+| Any accepted type with `!` | Major |
+| `docs:`, `chore:`, `refactor:`, `test:`, `build:`, `ci:`, `style:`, `deps:` | No release on their own; included with the next releasable change |
+
+For example, `fix(relay): reject expired downloads` produces a patch bump.
+`feat(protocol)!: require a new handshake` produces a major bump. The largest
+bump among unshipped commits determines the version.
+
+Promotions into `prod` and approvals into `release-state` use merge commits.
+Each release tags the production SHA recorded in the approved metadata, even if
+newer work has reached `prod` while review was pending.
+
+## Image versions
+
+`latest` is published from successful `main` CI runs. Stable releases publish
+`ghcr.io/thesteau/evakage:vX.Y.Z` for amd64 and arm64 after source, browser,
+container smoke and vulnerability checks. Stable image retries skip existing tags.
+
+Edit the image tag in the [deployment Compose file](/hosting/deployment) to pin
+a published stable release. Stable releases do not move `latest`.
+
+Maintainers: activation, GitHub settings, retries and metadata recovery are covered
+in [RELEASING.md](https://github.com/thesteau/aria-drop/blob/main/RELEASING.md).

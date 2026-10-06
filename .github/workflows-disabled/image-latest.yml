@@ -1,0 +1,68 @@
+name: "Image: Main latest"
+
+on:
+  workflow_run:
+    workflows: ["CI: Validate app"]
+    types: [completed]
+    branches: [main]
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: image-latest
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.head_repository.full_name == github.repository
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+      - name: Check main revision
+        id: current
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          tip=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" --jq '.object.sha')
+          if [[ "$tip" == "$HEAD_SHA" ]]; then
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: docker/setup-qemu-action@v4
+        if: steps.current.outputs.publish == 'true'
+      - uses: docker/setup-buildx-action@v4
+        if: steps.current.outputs.publish == 'true'
+      - name: Set image name
+        if: steps.current.outputs.publish == 'true'
+        id: image
+        run: echo "name=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/evakage" >> "$GITHUB_OUTPUT"
+      - uses: docker/login-action@v4
+        if: steps.current.outputs.publish == 'true'
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@v7
+        if: steps.current.outputs.publish == 'true'
+        with:
+          context: .
+          file: app/Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: |
+            ${{ steps.image.outputs.name }}:latest
+            ${{ steps.image.outputs.name }}:sha-${{ github.event.workflow_run.head_sha }}
+          build-args: |
+            VERSION=dev
+            REVISION=${{ github.event.workflow_run.head_sha }}
+          cache-from: type=gha,scope=main
+          cache-to: type=gha,mode=max,scope=main

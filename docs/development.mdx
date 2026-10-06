@@ -1,0 +1,61 @@
+---
+title: "Development"
+description: "Run the server, checks and browser tests from source."
+---
+
+Use Node 24 or newer for development and release tooling. The container uses Node 26.
+The app uses plain ES modules and has no frontend build step.
+
+```bash
+npm ci
+npm run check
+npx playwright install chromium firefox webkit
+npm run test:e2e
+npm run test:e2e:platform
+npm run dev
+```
+
+Open `http://localhost:3000`. Local accounts are disabled unless `ACCOUNTS_DB` is configured.
+
+## Repository layout
+
+| Directory | Contents |
+| --- | --- |
+| `app/server/` | HTTP/WebSocket server, accounts and relay storage |
+| `app/public/` | Browser modules, styles, service worker and icons |
+| `app/tests/` | Application unit tests |
+| `app/e2e/` | Playwright browser scenarios |
+| `app/` | Dockerfile, source Compose setup and app check configurations |
+| `scripts/tests/` | Repository release automation tests |
+| `scripts/` | Release automation and benchmark scripts |
+| `deploy/` | Published-image Compose setup |
+| `docs/` | Mintlify public documentation |
+| `maintainer/` | Security review scope and validation evidence |
+
+The source image builds with the repository root as its context, using
+`app/Dockerfile` and its companion `app/Dockerfile.dockerignore`. This keeps shared
+package metadata available while excluding tests, secrets and local artifacts.
+
+ESLint and TypeScript check the JavaScript in place. `npm run check` also checks
+and tests the release bridge with mocked GitHub APIs and temporary Git repositories.
+No real releases are created by these tests.
+
+Browser tests own their server, temporary relay storage and browser contexts.
+Chromium and platform suites write to separate directories under `test-results/`.
+Inspect retained failure traces with `npx playwright show-trace <path-to-trace.zip>`.
+
+## Documentation
+
+The [Mintlify configuration](https://www.mintlify.com/docs/organize/settings) is
+`docs/docs.json`. Run the [CLI](https://www.mintlify.com/docs/cli/commands) from `docs/`:
+
+```bash
+npx mint dev
+npx mint validate
+npx mint broken-links
+```
+
+Set the documentation directory to `docs/` when connecting Mintlify. Hosting and
+the public documentation URL are still to be configured.
+
+See [releases](/releases) for contribution and release policy.

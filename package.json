@@ -15,14 +15,16 @@
   },
   "type": "module",
   "scripts": {
-    "start": "node server.js",
-    "dev": "node --watch server.js",
-    "test": "node --test",
-    "test:e2e": "playwright test",
-    "test:e2e:platform": "playwright test --config playwright.platform.config.js",
-    "lint": "eslint .",
-    "typecheck": "tsc --noEmit",
-    "check": "npm run lint && npm run typecheck && npm test"
+    "start": "node app/server/server.js",
+    "dev": "node --watch app/server/server.js",
+    "test": "node --test \"app/tests/*.test.js\"",
+    "test:e2e": "playwright test --config app/playwright.config.js",
+    "test:e2e:platform": "playwright test --config app/playwright.platform.config.js",
+    "lint": "eslint --config app/eslint.config.js .",
+    "typecheck": "tsc --noEmit -p app/tsconfig.json",
+    "typecheck:release": "tsc --noEmit -p scripts/tsconfig.json",
+    "test:release": "node --test \"scripts/tests/*.test.cts\"",
+    "check": "npm run lint && npm run typecheck && npm run typecheck:release && npm test && npm run test:release"
   },
   "engines": {
     "node": ">=22.13.0"
@@ -34,6 +36,7 @@
     "globals": "^15.14.0",
     "jsqr": "1.4.0",
     "qrcode-generator": "2.0.4",
+    "release-please": "17.11.2",
     "typescript": "^5.7.2"
   }
 }

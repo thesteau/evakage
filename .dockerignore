@@ -1,8 +1,0 @@
-.git
-.github
-node_modules
-test-results
-playwright-report
-npm-debug.log
-*.zip
-.DS_Store
