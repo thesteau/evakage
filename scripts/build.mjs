@@ -6,6 +6,12 @@ import { spawnSync } from 'node:child_process';
 const root = fileURLToPath(new URL('../', import.meta.url));
 const outputDir = path.resolve(root, 'dist');
 const stagingDir = path.resolve(root, '.local/build');
+// Local builds stay local even in a Git checkout; image workflows pass metadata.
+const version = process.env.VERSION || 'dev';
+const revision = process.env.REVISION || 'unknown';
+const buildLabel = /^v\d+\.\d+\.\d+$/.test(version)
+  ? version
+  : /^[a-f0-9]{7,40}$/i.test(revision) ? revision.slice(0, 7).toLowerCase() : 'local';
 if (path.dirname(outputDir) !== path.resolve(root) || path.relative(root, stagingDir).startsWith('..')) {
   throw new Error('Build output must stay inside the repository.');
 }
@@ -17,6 +23,17 @@ for (const dir of ['html', 'css', 'assets']) {
   await fs.cp(path.join(root, 'app/client', dir), publicDir, { recursive: true, filter: source => !source.endsWith('.ts') && !source.endsWith('.mts') });
 }
 await fs.cp(path.join(stagingDir, 'app/client/ts'), publicDir, { recursive: true });
+const indexPath = path.join(publicDir, 'index.html');
+await fs.writeFile(indexPath, (await fs.readFile(indexPath, 'utf8')).replace(
+  '<span id="buildLabel" class="build-label">build local</span>',
+  `<span id="buildLabel" class="build-label">build ${buildLabel}</span>`,
+));
+// A different image must install a new shell cache, including its own label.
+const workerPath = path.join(publicDir, 'sw.js');
+await fs.writeFile(workerPath, (await fs.readFile(workerPath, 'utf8')).replace(
+  /const CACHE = '(evakage-v\d+)';/,
+  (_, cache) => `const CACHE = '${cache}-${buildLabel}';`,
+));
 const qrPath = path.join(publicDir, 'qr.js');
 await fs.writeFile(qrPath, (await fs.readFile(qrPath, 'utf8')).replace('../assets/vendor/qrcode.mjs', './vendor/qrcode.mjs'));
 // Node tests import the compiled client modules using their source-relative paths.
