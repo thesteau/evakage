@@ -38,6 +38,18 @@ Preserve the public `Host` header or send it as `X-Forwarded-Host`; see
 
 ## Relayed messages and files
 
+The default server caps are 200 connected devices and 50 active rooms, with two
+rooms per account. These are admission limits, not a benchmarked capacity claim.
+The temporary relay defaults to 4 GiB total: 3 GiB for files and 1 GiB for text.
+Per-conversation ceilings are 50 GiB of files and 1 GiB of text, but the global
+budgets take precedence. See [configuration](/hosting/configuration) to adjust
+these limits for the host's disk and network capacity.
+
+Accepted file uploads reserve their declared size immediately. Completed pending
+items may be removed oldest first to admit new content; active transfers are
+protected from capacity eviction. Online participants receive capacity warnings
+and removal notices. The relay remains temporary and is erased on restart.
+
 Messages and files that cannot go directly between devices are temporarily buffered by the
 server as sealed ciphertext. They are stored **inside the container**
 (`/tmp/evakage-blobs`), one directory per conversation, and there is

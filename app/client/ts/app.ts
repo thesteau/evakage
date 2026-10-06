@@ -792,6 +792,11 @@ function connectWebSocket() {
       return;
     }
 
+    if (msg.type === 'relay-notice') {
+      toast(msg.message);
+      return;
+    }
+
     if (msg.type === 'error') {
       // Relay errors belong to a specific pending request; hand them to it
       // rather than toasting, so the caller can decide what to tell the user.

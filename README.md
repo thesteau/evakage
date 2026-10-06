@@ -4,7 +4,7 @@ Self-hosted, browser-first encrypted chat and file sharing for trusted networks.
 Connect devices by private code or QR, send text and files directly, or invite a
 small group into an ephemeral room. Install it as a PWA or use it in your browser.
 
-[Documentation](https://github.com/thesteau/evakage/tree/main/docs) ·
+[Documentation](https://evakage.docs.thesteau.com) ·
 [Buy me a coffee](https://buymeacoffee.com/thesteau)
 
 ![Evakage device list and private rooms](docs/images/devices-and-rooms.png)
@@ -66,7 +66,9 @@ independent security audit; see [SECURITY.md](SECURITY.md).
 
 ## Documentation
 
-Read the [documentation in this repository](https://github.com/thesteau/evakage/tree/main/docs):
+Read the [hosted documentation](https://evakage.docs.thesteau.com).
+The [documentation source](https://github.com/thesteau/evakage/tree/main/docs)
+is also available in this repository:
 
 - [Quick start](docs/quickstart.mdx)
 - [Pairing devices](docs/guides/devices.mdx), [rooms](docs/guides/rooms.mdx), and [transfers](docs/guides/transfers.mdx)
