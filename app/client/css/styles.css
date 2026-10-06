@@ -429,12 +429,14 @@ progress { width: 100%; accent-color: var(--accent-2); }
 /* Project links sit below a divider at the foot of Settings. */
 .settings-links {
   display: flex;
+  align-items: center;
   justify-content: center;
   gap: 8px;
   margin-top: 4px;
   padding-top: 14px;
   border-top: 1px solid var(--line);
 }
+.build-label { margin-left: auto; color: var(--muted); font-size: .75rem; white-space: nowrap; }
 .settings-links .icon-button {
   display: inline-flex;
   align-items: center;
