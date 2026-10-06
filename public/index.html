@@ -49,10 +49,10 @@
   <main class="page-shell">
     <section class="hero card" aria-labelledby="heroHeading">
       <div>
-        <h2 id="heroHeading">Send a file. Start a chat.</h2>
-        <p>Open Evakage on your other device, then connect it here. Choose a connected device below to send a message or drop a file.</p>
+        <h2 id="heroHeading">Start a chat</h2>
       </div>
       <div class="connect-start">
+        <button id="usageBtn" class="ghost" type="button" aria-haspopup="dialog">Usage</button>
         <button id="addDeviceBtn" type="button">Connect</button>
       </div>
     </section>
@@ -66,6 +66,11 @@
         <div class="device-actions">
           <button id="devicesBtn" class="ghost" type="button">Known devices</button>
         </div>
+      </div>
+      <div class="list-controls">
+        <label><span class="visually-hidden">Filter devices</span><input id="deviceFilter" type="search" placeholder="Filter devices"></label>
+        <label><span class="visually-hidden">Device scope</span><select id="deviceScope"><option value="all">All devices</option><option value="yours">Your devices</option><option value="online">Online</option><option value="offline">Offline</option></select></label>
+        <label><span class="visually-hidden">Sort devices</span><select id="deviceSort"><option value="name">Name A–Z</option><option value="name-desc">Name Z–A</option><option value="platform">Platform</option><option value="status">Status</option></select></label>
       </div>
       <div class="table-wrap">
         <table>
@@ -104,11 +109,15 @@
             <label class="visually-hidden" for="roomCodeInput">Join a room by code</label>
             <input id="roomCodeInput" autocomplete="off" autocapitalize="characters" spellcheck="false"
                    placeholder="ABCD-EFGH" maxlength="9">
-            <button type="submit" class="ghost">Join by code</button>
+            <button type="submit" class="ghost">Join</button>
           </form>
         </div>
       </div>
       <span id="roomFeedback" class="form-feedback" role="status"></span>
+      <div class="list-controls">
+        <label><span class="visually-hidden">Filter rooms</span><input id="roomFilter" type="search" placeholder="Filter rooms"></label>
+        <label><span class="visually-hidden">Sort rooms</span><select id="roomSort"><option value="oldest">Oldest first</option><option value="newest">Newest first</option><option value="name">Name A–Z</option><option value="name-desc">Name Z–A</option></select></label>
+      </div>
       <div class="table-wrap">
         <table>
           <caption class="visually-hidden">Your joined rooms, with membership and actions</caption>
@@ -256,16 +265,30 @@
     </form>
   </dialog>
 
+  <dialog id="usageDialog" class="dialog" aria-labelledby="usageHeading">
+    <div class="dialog-header">
+      <h2 id="usageHeading">Usage</h2>
+      <button class="ghost dialog-close" type="button" data-close-dialog aria-label="Close" title="Close">×</button>
+    </div>
+    <div class="dialog-body">
+      <ol>
+        <li>Open Evakage on both devices.</li>
+        <li>Choose Connect, then scan the other device’s QR code or enter its code and choose Join.</li>
+        <li>Select a device below to chat or share files.</li>
+      </ol>
+      <p class="muted">For a group chat, create a room and share its code. Anyone with the code can join; login is only needed to create a room.</p>
+    </div>
+  </dialog>
+
   <dialog id="addDeviceDialog" class="dialog">
     <div class="dialog-header">
       <h2>Connect</h2>
       <button class="ghost dialog-close" type="button" data-close-dialog aria-label="Close" title="Close">×</button>
     </div>
     <div class="dialog-body">
-      <p class="muted">Open Evakage on the other device too.</p>
-      <button id="scanQrBtn" type="button">Scan a QR code</button>
+      <button id="scanQrBtn" type="button">Scan QR Code</button>
       <form id="codeForm" class="code-form">
-        <label for="codeInput">Or enter the other device’s code</label>
+        <label class="visually-hidden" for="codeInput">Other device’s code</label>
         <div class="inline-field">
           <input id="codeInput" autocomplete="off" autocapitalize="characters" spellcheck="false"
                  placeholder="ABCD-EFGH" maxlength="16" aria-describedby="codeFeedback">
@@ -282,7 +305,7 @@
       <button class="ghost dialog-close" type="button" data-close-dialog aria-label="Close" title="Close">×</button>
     </div>
     <form method="dialog">
-      <p class="muted">On your other device, open Evakage, choose Connect, then Scan a QR code.</p>
+      <p class="muted">On your other device, open Evakage, choose Connect, then Scan QR Code.</p>
       <section class="qr-panel">
         <canvas id="deviceQr" class="qr-code" role="img" aria-label="Your device code QR code"></canvas>
         <p>Or enter this code: <strong id="qrPairingCode"></strong></p>

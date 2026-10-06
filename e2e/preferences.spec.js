@@ -98,13 +98,30 @@ test('account devices connect privately, exchange content, and sign-out destroys
       await expect(page.locator('#accountStatus')).toContainText('Signed in as chat_owner');
       await page.locator('#accountDialog').getByRole('button', { name: 'Close' }).click();
     };
+    const ownPhoneId = await phone.locator('#selfCode').getAttribute('data-device-id');
+    await computer.evaluate(async id => {
+      const modulePath = '/identity.js';
+      const identity = await import(modulePath);
+      identity.hideDevice(id, 'Previously hidden phone', true);
+      identity.blockDevice(id, true);
+      localStorage.setItem('evakage-verified-only', '1');
+    }, ownPhoneId);
+    await computer.reload();
+    await expect(computer.locator('#selfCode')).not.toHaveText('----');
     await signIn(computer, true); await signIn(phone);
     for (const page of [computer, phone]) {
       await expect(page.locator('#sessionPanel')).toBeVisible();
-      await expect(page.locator('#peerRows')).toContainText('Your account');
+      await expect(page.locator('#peerRows')).toContainText('This is yours');
       expect(await page.evaluate(() => localStorage.getItem('evakage-discoverable'))).toBeNull();
       await expect(page.locator('#secureState')).toContainText('Encrypted');
     }
+    expect(await computer.evaluate(async id => {
+      const modulePath = '/identity.js';
+      const identity = await import(modulePath);
+      const trust = identity.deviceTrust(id);
+      return { blocked: trust.blocked, hidden: trust.hidden };
+    }, ownPhoneId)).toEqual({ blocked: false, hidden: false });
+    await expect(computer.locator('#peerRows').getByRole('button', { name: /^Hide / })).toHaveCount(0);
     await expect(outsider.locator('#peerRows tr')).toHaveCount(1);
     const phoneId = await phone.locator('#selfCode').getAttribute('data-device-id');
     const phoneName = await phone.locator('#selfCode').getAttribute('data-device-name') || '';

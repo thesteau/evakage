@@ -192,17 +192,17 @@ h2 { margin-bottom: 8px; letter-spacing: -.02em; }
   display: grid;
   grid-template-columns: 1.3fr .7fr;
   gap: 30px;
-  align-items: end;
+  align-items: center;
 }
 .hero p { max-width: 720px; color: var(--muted); margin-bottom: 0; line-height: 1.55; }
-.connection-status { display: inline-flex; align-items: center; gap: 8px; font-size: .82rem; white-space: nowrap; }
+.connection-status { display: inline-flex; align-items: center; gap: 8px; padding: 10px 13px; border: 1px solid var(--line); border-radius: 999px; background: var(--panel-2); font-size: .82rem; white-space: nowrap; }
 .header-status { font-weight: 700; color: var(--warn); }
 .header-status.online { color: var(--status-ready); }
 .header-status.offline { color: var(--danger); }
 
 .code-form label { display: block; font-size: .78rem; color: var(--muted); margin-bottom: 7px; font-weight: 700; }
 .code-form { min-width: 0; }
-.connect-start { display: grid; gap: 8px; }
+.connect-start { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
 #peersHeading, #roomsHeading { cursor: help; }
 .topbar-actions .identity-card { font-size: .85rem; white-space: nowrap; }
 .device-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
@@ -633,3 +633,8 @@ tbody tr.offline td.expiring {
 #qrServerUrl { overflow-wrap: anywhere; }
 
 .qr-preview { width: 100%; max-height: 50vh; }
+
+.list-controls { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
+.list-controls label { min-width: 0; }
+.list-controls label:first-child { flex: 1 1 180px; }
+.list-controls select { max-width: 100%; padding: 11px 12px; border: 1px solid var(--line); border-radius: 12px; background: var(--field); color: var(--text); }

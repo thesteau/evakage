@@ -48,6 +48,13 @@ import { saveStream, streamSaveAvailable, StreamSaveUnavailable } from './savest
  * '#qrBtn': HTMLButtonElement,
  * '#addDeviceDialog': HTMLDialogElement,
  * '#addDeviceBtn': HTMLButtonElement,
+ * '#deviceFilter': HTMLInputElement,
+ * '#deviceScope': HTMLSelectElement,
+ * '#deviceSort': HTMLSelectElement,
+ * '#roomFilter': HTMLInputElement,
+ * '#roomSort': HTMLSelectElement,
+ * '#usageBtn': HTMLButtonElement,
+ * '#usageDialog': HTMLDialogElement,
  * '#qrPairingCode': HTMLElement,
  * '#qrDialog': HTMLDialogElement,
  * '#serverQr': HTMLCanvasElement,
@@ -267,6 +274,8 @@ async function updateAccountPeers(message) {
     if (!verified) continue;
     accountPeerIds.add(peer.id);
     recordDevice(peer, true);
+    if (deviceTrust(peer.id)?.blocked) blockDevice(peer.id, false);
+    if (deviceTrust(peer.id)?.hidden) hideDevice(peer.id, peer.name, false);
     state.peers.set(peer.id, peer);
     ensureConversation(directConvId(peer.id), 'direct', peer.id);
   }
@@ -281,7 +290,7 @@ async function updateAccountPeers(message) {
   for (const id of accountPeerIds) {
     ensureConversationLinks(ensureConversation(directConvId(id), 'direct', id));
   }
-  renderPeers(); renderSession();
+  renderKnownDevices(); renderPeers(); renderSession();
   const candidates = [...accountPeerIds].filter(id => deviceAllowed(id) && !deviceTrust(id)?.hidden);
   // Keep an existing chat selected; with several devices the list is the picker.
   if (candidates.length === 1 && !state.activeConvId) openSession(candidates[0]);
@@ -291,7 +300,7 @@ async function updateAccountPeers(message) {
 function deviceAllowed(id) {
   if (id === state.self?.id) return true;
   const trust = deviceTrust(id);
-  return !signingOut && !trust?.blocked && (accountPeerIds.has(id) || !!trust?.pairedAt) && (!state.verifiedOnly || !!trust?.verifiedAt);
+  return !signingOut && (accountPeerIds.has(id) || (!trust?.blocked && !!trust?.pairedAt && (!state.verifiedOnly || !!trust?.verifiedAt)));
 }
 
 /** @param {string[]} ids */
@@ -3114,7 +3123,8 @@ function renderPeersNow() {
     nameTd.append(nameWrap);
     if (accountPeerIds.has(peer.id)) {
       const badge = document.createElement('span');
-      badge.className = 'trust-badge'; badge.textContent = 'Your account';
+      badge.className = 'trust-badge'; badge.textContent = 'This is yours';
+      badge.title = 'Signed into the same account as this device';
       nameWrap.append(badge);
     }
 
@@ -3155,7 +3165,24 @@ function renderPeersNow() {
 
   const offline = offlineDevicesToList();
   for (const record of offline) peerRows.append(renderOfflineRow(record));
-  emptyPeers.classList.toggle('hidden', peers.length + offline.length > 0);
+  const query = $('#deviceFilter').value.trim().toLowerCase();
+  const scope = $('#deviceScope').value;
+  const sort = $('#deviceSort').value;
+  const rows = [...peerRows.rows];
+  rows.sort((a, b) => {
+    const column = sort === 'platform' ? 2 : sort === 'status' ? 3 : 0;
+    const nameOf = (/** @type {HTMLTableRowElement} */ row) => column === 0 ? row.querySelector('.device-name > span:nth-child(2)')?.textContent || row.cells[0].textContent || '' : row.cells[column].textContent || '';
+    return nameOf(a).localeCompare(nameOf(b)) * (sort === 'name-desc' ? -1 : 1);
+  });
+  for (const row of rows) {
+    const id = row.dataset.dropTarget;
+    const own = id === state.self?.id || accountPeerIds.has(id);
+    row.hidden = !(row.textContent || '').toLowerCase().includes(query)
+      || (scope === 'yours' && !own) || (scope === 'online' && row.classList.contains('offline'))
+      || (scope === 'offline' && !row.classList.contains('offline'));
+    peerRows.append(row);
+  }
+  emptyPeers.classList.toggle('hidden', rows.some(row => !row.hidden));
 }
 
 // Offline devices worth listing: seen within the window, and ones this browser
@@ -3204,7 +3231,7 @@ function rowActions(peerId, label, link) {
     exit.addEventListener('click', () => forgetConversation(directConvId(peerId)));
     actions.append(exit);
   }
-  if (peerId !== state.self?.id) {
+  if (peerId !== state.self?.id && !accountPeerIds.has(peerId)) {
     const hide = document.createElement('button');
     hide.type = 'button';
     hide.className = 'ghost';
@@ -3274,7 +3301,12 @@ function renderRooms() {
 
 function renderRoomsNow() {
   roomRows.textContent = '';
-  const rooms = [...state.rooms.values()].sort((a, b) => a.createdAt - b.createdAt);
+  const query = $('#roomFilter').value.trim().toLowerCase();
+  const sort = $('#roomSort').value;
+  const rooms = [...state.rooms.values()].filter(room => `${room.name} ${room.code}`.toLowerCase().includes(query))
+    .sort((a, b) => sort === 'name' || sort === 'name-desc'
+      ? a.name.localeCompare(b.name) * (sort === 'name-desc' ? -1 : 1)
+      : (a.createdAt - b.createdAt) * (sort === 'newest' ? -1 : 1));
   emptyRooms.classList.toggle('hidden', rooms.length > 0);
   for (const room of rooms) {
     const joined = state.joinedRoomIds.has(room.id);
@@ -3986,6 +4018,12 @@ function renderQrCodes() {
   $('#qrFingerprint').textContent = state.self.id;
   $('#qrPairingCode').textContent = state.self.pairingCode;
 }
+$('#deviceFilter').addEventListener('input', renderPeers);
+$('#deviceScope').addEventListener('change', renderPeers);
+$('#deviceSort').addEventListener('change', renderPeers);
+$('#roomFilter').addEventListener('input', renderRooms);
+$('#roomSort').addEventListener('change', renderRooms);
+$('#usageBtn').addEventListener('click', () => openDialog($('#usageDialog')));
 $('#addDeviceBtn').addEventListener('click', () => openDialog($('#addDeviceDialog')));
 $('#qrBtn').addEventListener('click', () => {
   try { renderQrCodes(); } catch (err) { return toast(err.message); }
@@ -4220,7 +4258,9 @@ function renderKnownDevices() {
       hideDevice(fingerprint, record.name, !record.hidden);
       renderKnownDevices(); renderPeers();
     });
-    row.append(main, verify, hide, block, forget);
+    row.append(main, verify);
+    if (!accountPeerIds.has(fingerprint)) row.append(hide, block);
+    row.append(forget);
     knownDeviceList.append(row);
   }
 }

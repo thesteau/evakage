@@ -159,6 +159,6 @@ export async function joinRoom(page, owner, name) {
   const row = owner.locator('#roomRows tr').filter({ hasText: name });
   const code = await row.locator('.peer-code').innerText();
   await page.locator('#roomCodeInput').fill(code);
-  await page.locator('#joinRoomForm').getByRole('button', { name: 'Join by code' }).click();
+  await page.locator('#joinRoomForm').getByRole('button', { name: 'Join' }).click();
   await expect(page.locator('#sessionTitle')).toHaveText(name);
 }

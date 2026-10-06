@@ -29,7 +29,7 @@ test('room creation stays visible, login errors use toasts, and replacing a room
   await expect(bob.locator('#roomRows tr')).toHaveCount(0);
   await expect(bob.locator('#toastRegion')).toContainText('First room was destroyed');
   await bob.locator('#roomCodeInput').fill(oldCode);
-  await bob.locator('#joinRoomForm').getByRole('button', { name: 'Join by code', exact: true }).click();
+  await bob.locator('#joinRoomForm').getByRole('button', { name: 'Join', exact: true }).click();
   await expect(bob.locator('#toastRegion')).toContainText('Unable to join with this invitation');
   await joinRoom(bob, alice, 'Third room');
   await expect(bob.locator('#sessionTitle')).toHaveText('Third room');

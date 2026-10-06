@@ -34,7 +34,7 @@ test('fresh profiles are private; room details appear only after code join', asy
     await expect(second.locator('#roomRows tr')).toHaveCount(0);
     const code = await first.locator('#roomRows .peer-code').innerText();
     await second.locator('#roomCodeInput').fill(code);
-    await second.locator('#joinRoomForm').getByRole('button', { name: 'Join by code' }).click();
+    await second.locator('#joinRoomForm').getByRole('button', { name: 'Join' }).click();
     await expect(second.locator('#roomRows tr')).toHaveCount(1);
     await second.locator('#leaveRoomBtn').click();
     await expect(second.locator('#roomRows tr')).toHaveCount(0);
@@ -86,7 +86,7 @@ test('camera QR scanning pairs in the app and stops camera tracks', async ({ bro
       Object.defineProperty(navigator.mediaDevices, 'getUserMedia', { configurable: true, value: async () => stream });
     }, `${base}/#${new URLSearchParams({ pair: code, device: device || '' })}`);
     await first.locator('#addDeviceBtn').click();
-    await first.getByRole('button', { name: 'Scan a QR code', exact: true }).click();
+    await first.getByRole('button', { name: 'Scan QR Code', exact: true }).click();
     await expect(first.locator('#sessionPanel')).toBeVisible();
     await expect(first.locator('#scanQrDialog')).not.toBeVisible();
     await expect(first.locator('#addDeviceDialog')).not.toBeVisible();
