@@ -19,7 +19,12 @@ description: "Environment variables for self-hosting Evakage."
 | `BLOB_SOLO_MAX_MS` | `10800000` (3h) | How long a one-to-one conversation may sit with only one device present before its items expire. Rooms are exempt. Also how long an offline device stays listed as reachable, and how long an away member keeps its room seat. |
 | `BLOB_MAX_AGE_MS` | `259200000` (3 days) | Absolute ceiling from offer creation, however alive the session is. |
 | `BLOB_SWEEP_MS` | `60000` (1 min) | How often the sweep runs. It also removes any empty conversation directory. |
-| `BLOB_STORE_BYTES` | `4294967296` (4 GiB) | Total space all buffered transfers may use together. |
+| `BLOB_STORE_BYTES` | `4294967296` (4 GiB) | Total temporary relay capacity, including encrypted envelopes and space reserved for accepted uploads. Older completed pending items are removed when needed; active uploads and downloads are protected from capacity eviction. |
+| `BLOB_TEXT_RESERVE_BYTES` | `1073741824` (1 GiB) | Separate text budget, capped at one quarter of total relay capacity. Files cannot consume this space, so file saturation does not prevent chat. |
+| `BLOB_CHAT_FILE_BYTES` | `53687091200` (50 GiB) | File ceiling per conversation, including ciphertext and envelopes. The smaller server-wide file budget still applies. |
+| `BLOB_CHAT_TEXT_BYTES` | `1073741824` (1 GiB) | Text ceiling per conversation, measured as encrypted envelope bytes. Text and files have independent eviction budgets. |
+| `MAX_DEVICES` | `200` | Maximum connected registered device identities across the server. Replacing an existing device connection does not require another slot. |
+| `MAX_ROOMS` | `50` | Maximum active rooms across the server. Each account can still own two rooms; creating a third replaces its oldest room. |
 | `BLOB_PER_DEVICE` | `32` | Files one device may have waiting on the server at once. |
 | `BLOB_MESSAGES_PER_DEVICE` | `2000` | Messages one device may have waiting on the server at once. |
 | `ROOM_MAX_MEMBERS` | `20` | Seats per room, clamped to 2–64. Rooms of up to six use the direct mesh; larger ones run entirely through the relay. |

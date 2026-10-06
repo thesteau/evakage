@@ -57,6 +57,21 @@ regardless:
 two devices, or the same room, always share one; a new pairing or room gets a
 new one.
 
+**Temporary capacity.** The relay is a delivery buffer, not retained file storage.
+Files and text have separate budgets so pending files cannot fill the space
+reserved for messages. Per-chat ceilings are 50 GiB for files and 1 GiB for text;
+the server-wide limit is smaller by default: 4 GiB total, with 1 GiB reserved for
+text and 3 GiB for files. Operators can change these limits in
+[configuration](/hosting/configuration).
+
+Online participants receive a warning at 80% of a chat or server budget. When
+space is needed, the relay removes expired items first, then the oldest completed
+pending items of the same kind, and notifies affected online participants.
+Active uploads and downloads are protected from capacity eviction. A new item
+is rejected if it is too large or protected transfers leave insufficient space.
+Save files you need to keep; a pending server copy can disappear before you save
+it. Copies already delivered to a device are not removed by relay cleanup.
+
 An item lives with its conversation rather than on a fixed clock. It is deleted
 at the first of:
 

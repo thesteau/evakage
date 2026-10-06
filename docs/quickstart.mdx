@@ -3,7 +3,7 @@ title: "Quick start"
 description: "Run Evakage and connect two browsers."
 ---
 
-Evakage is in prerelease development. If you already have access to an instance,
+If you already have access to an instance,
 open its URL in both browsers and skip to **Connect devices** below.
 
 ## Host your own instance
@@ -56,9 +56,7 @@ a device's owner.
 
 The [deployment setup](/hosting/deployment) pulls `ghcr.io/thesteau/evakage:latest`
 by default. `latest` tracks tested `main` commits.
-For a stable release, edit the deployment Compose image tag to an actually published `vX.Y.Z` tag.
-The prepared pipeline starts at `v1.0.0`; its configuration does not mean that
-version is already available.
+For a stable release, pin a published `vX.Y.Z` tag in the deployment Compose file.
 
 Learn about [privacy and storage](/hosting/privacy), [configuration](/hosting/configuration)
 and [mobile limitations](/guides/mobile) before relying on a deployment.

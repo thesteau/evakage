@@ -27,7 +27,6 @@ const SHARE_DRAIN_LIMIT = 8 * 1024 * 1024;
 // single item can sensibly address.
 const ROOM_MEMBERS_CEILING = 64;
 const DEFAULT_ROOM_MAX_MEMBERS = 20;
-const MAX_ROOMS = 64;
 const MAX_ROOMS_PER_ACCOUNT = 2;
 
 // Version of the peer-to-peer application protocol spoken over the DataChannel.
@@ -684,7 +683,11 @@ export function createEvakageServer({
   rejoinGraceMs = 10000,
   maxRecentDevices = 10000,
   maxRoomMembers = Number(process.env.ROOM_MAX_MEMBERS || DEFAULT_ROOM_MAX_MEMBERS),
+  maxDevices = Number(process.env.MAX_DEVICES || 200),
+  maxRooms = Number(process.env.MAX_ROOMS || 50),
 } = {}) {
+  if (!Number.isSafeInteger(maxDevices) || maxDevices < 1 || !Number.isSafeInteger(maxRooms) || maxRooms < 1)
+    {throw new Error('MAX_DEVICES and MAX_ROOMS must be positive integers.');}
   const deviceAllowlist = new Set(allowedDevices);
   if ([...deviceAllowlist].some((id) => !/^[A-Za-z0-9_-]{43}$/.test(id)))
     {throw new Error('DEVICE_ALLOWLIST must contain full device fingerprints.');}
@@ -890,6 +893,8 @@ export function createEvakageServer({
             iceServers,
             maxFileBytes,
             maxRoomMembers: roomCap,
+            maxDevices,
+            maxRooms,
             roomMeshMax: MESH_MAX_MEMBERS,
             protocol: PROTOCOL_VERSION,
             relay: {
@@ -901,6 +906,10 @@ export function createEvakageServer({
               idleGraceMs: blobStore.config.idleGraceMs,
               soloMaxMs: blobStore.config.soloMaxMs,
               maxAgeMs: blobStore.config.maxAgeMs,
+              maxStoreBytes: blobStore.config.maxStoreBytes,
+              textReserveBytes: Math.min(blobStore.config.textReserveBytes, Math.floor(blobStore.config.maxStoreBytes / 4)),
+              maxConversationFileBytes: blobStore.config.maxConversationFileBytes,
+              maxConversationTextBytes: blobStore.config.maxConversationTextBytes,
             },
           }),
         );
@@ -963,6 +972,8 @@ export function createEvakageServer({
             'cache-control': 'no-store',
           });
           const stream = fs.createReadStream(opened.blob.path, { start: offset });
+          const finishDownload = blobStore.beginDownload(opened.blob.id);
+          res.once('close', finishDownload);
           stream.on('error', () => res.destroy());
           stream.pipe(res);
           return;
@@ -1414,6 +1425,10 @@ export function createEvakageServer({
         if (!bucket.take()) return disconnect(1008, 'Registration rate limit exceeded');
 
         const previous = clients.get(deviceId);
+        if (!previous && clients.size >= maxDevices) {
+          json(ws, { type: 'error', context: 'register', message: `This server has reached its ${maxDevices}-device limit. Try again after a device disconnects.` });
+          return disconnect(1008, 'Server device limit reached');
+        }
         if (previous && previous.ws !== ws) {
           try {
             previous.ws.close(4001, 'Replaced by reconnect');
@@ -1518,7 +1533,7 @@ export function createEvakageServer({
           .filter((room) => room.ownerAccount === ownerAccount)
           .sort((a, b) => a.createdAt - b.createdAt);
         const oldest = owned.length >= MAX_ROOMS_PER_ACCOUNT ? owned[0] : null;
-        if (rooms.size >= MAX_ROOMS && !oldest) {
+        if (rooms.size >= maxRooms && !oldest) {
           json(ws, {
             type: 'error',
             context: 'create-room',
@@ -1880,8 +1895,15 @@ export function createEvakageServer({
     ws.on('error', () => {});
   });
 
-  // As soon as an item is ready — a message on arrival, a file once uploaded —
-  // tell whichever recipients are online. The rest get it when they register.
+  // Capacity notices go only to participants, never the public device list.
+  blobStore.onNotice = (participants, message) => {
+    for (const id of participants) {
+      const client = clients.get(id);
+      if (client) json(client.ws, { type: 'relay-notice', message });
+    }
+  };
+
+  // Once an item is ready, tell online recipients. Others get it on registration.
   blobStore.onAvailable = (blob) => {
     for (const recipient of blob.recipients) {
       const client = clients.get(recipient);

@@ -14,7 +14,7 @@
 // DOM lib does not know about.
 const worker = self as unknown as ServiceWorkerGlobalScope;
 
-const CACHE = 'evakage-v46';
+const CACHE = 'evakage-v48';
 
 const SHELL = [
   '/',
