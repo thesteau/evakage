@@ -156,7 +156,6 @@ button { cursor: pointer; }
 }
 h1, h2, p { margin-top: 0; }
 h1 { margin-bottom: 0; font-size: clamp(1.8rem, 5vw, 2.8rem); letter-spacing: -.04em; }
-.app-tagline { margin: 4px 0 0; font-size: .8rem; }
 h2 { margin-bottom: 8px; letter-spacing: -.02em; }
 .eyebrow { text-transform: uppercase; letter-spacing: .16em; font-size: .68rem; color: var(--muted); font-weight: 700; }
 .muted { color: var(--muted); }
@@ -229,6 +228,9 @@ button.ghost:hover { background: var(--panel-2); filter: none; }
 /* Keep each input with its action; wrap whole forms when space runs out. */
 .room-forms { display: flex; flex-wrap: wrap; gap: 8px 16px; flex: 1 1 560px; min-width: 0; }
 .room-forms .inline-field { flex: 1 1 260px; min-width: 0; grid-template-columns: minmax(0, 1fr) auto; }
+/* Join by code, then scan a room QR, side by side. */
+#joinRoomForm { grid-template-columns: minmax(0, 1fr) auto auto; }
+.room-forms .room-scan { width: auto; }
 .room-forms button { width: 100%; }
 .room-forms > .table-filter-button { width: auto; flex: 0 0 auto; }
 #roomFeedback:empty { display: none; }
@@ -259,8 +261,8 @@ tbody tr.offline .device-name { color: var(--muted); font-weight: 600; }
 .room-code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .04em; }
 .icon-button.copy-inline { display: inline-grid; place-items: center; padding: 4px; min-width: 0; min-height: 0; color: var(--muted); }
 .icon-button.copy-inline:hover { color: var(--accent); }
-.icon-button.copy-inline svg, .room-scan svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
-.room-scan { display: inline-grid; place-items: center; padding: 8px 10px; }
+.icon-button.copy-inline svg, .room-scan svg, .device-qr svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.room-scan, .device-qr { display: inline-grid; place-items: center; padding: 8px 10px; }
 /* aria-checked already tells assistive tech; the mark is decoration only. */
 .device-menu [role="menuitemradio"]::before { content: "✓" / ""; display: inline-block; width: 1.2em; color: var(--accent); visibility: hidden; }
 .device-menu [role="menuitemradio"][aria-checked="true"]::before { visibility: visible; }
@@ -313,10 +315,14 @@ td.danger, .file-meta.danger { color: var(--danger); }
   width: min(520px, calc(100vw - 36px));
   border: 1px solid var(--line);
   border-radius: 22px;
-  background: var(--panel-solid);
+  /* Fully opaque: the panel's colour over the page colour, so nothing behind shows through. */
+  background: linear-gradient(var(--panel-solid), var(--panel-solid)), var(--bg);
   box-shadow: var(--shadow-strong);
-  display: grid;
-  grid-template-rows: auto auto auto minmax(0, 1fr) auto;
+  /* A column, not fixed grid rows: optional bars (join requests) can come and
+     go, and the timeline still takes the spare height with the composer docked
+     at the bottom. */
+  display: flex;
+  flex-direction: column;
   transform: translateX(calc(100% + 40px));
   transition: transform .2s ease;
   overflow: hidden;
@@ -324,6 +330,7 @@ td.danger, .file-meta.danger { color: var(--danger); }
 .session-panel[hidden] { display: none; }
 .session-panel.open { transform: translateX(0); }
 
+.session-header, .session-toolbar, .join-requests { flex: none; }
 .session-header { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; padding: 20px; border-bottom: 1px solid var(--line); }
 .session-header h2 { margin: 4px 0; }
 .session-meta { font-size: .8rem; color: var(--muted); }
@@ -393,7 +400,7 @@ td.danger, .file-meta.danger { color: var(--danger); }
 .secure-state.ready { color: var(--accent-2); }
 .secure-state.unverified { color: var(--warn); }
 
-.timeline { padding: 18px; overflow-y: auto; display: flex; flex-direction: column; gap: 10px; }
+.timeline { flex: 1; min-height: 0; padding: 18px; overflow-y: auto; display: flex; flex-direction: column; gap: 10px; }
 .timeline-empty { margin: auto; text-align: center; color: var(--muted); max-width: 280px; line-height: 1.5; }
 .message-item { display: flex; flex-direction: column; max-width: 86%; gap: 4px; }
 .message-item.self { margin-left: auto; align-items: flex-end; }
@@ -413,7 +420,9 @@ td.danger, .file-meta.danger { color: var(--danger); }
 .file-actions { display: grid; grid-template-columns: 1fr auto auto; align-items: center; gap: 10px; }
 progress { width: 100%; accent-color: var(--accent-2); }
 
-.message-form { display: grid; grid-template-columns: 1fr auto; gap: 8px; padding: 14px; border-top: 1px solid var(--line); }
+/* Send sits under the text box, never beside it. */
+.message-form { flex: none; display: grid; grid-template-columns: 1fr; gap: 8px; padding: 14px; border-top: 1px solid var(--line); }
+.message-form button[type="submit"] { justify-self: end; min-width: 96px; }
 .message-form textarea { resize: vertical; min-height: 46px; max-height: 160px; }
 
 /* Shown only while a file is dragged over the panel. */
@@ -630,9 +639,8 @@ tbody tr.offline td.expiring {
 
 @media (max-width: 760px) {
   .topbar { align-items: flex-start; }
-  .session-panel { inset: 0; width: 100vw; border-radius: 0; }
+  .session-panel { inset: 0; width: auto; border-radius: 0; }
   .drop-hint { border-radius: 0; }
-  .message-form { grid-template-columns: 1fr; }
 }
 
 /* ---------- phones ---------- */
