@@ -319,7 +319,7 @@ test('a prototype-polluting room name or device id cannot poison lookups', async
         resolve(msg.room);
       }
     });
-    ws.send(JSON.stringify({ type: 'create-room', name: '__proto__' }));
+    ws.send(JSON.stringify({ type: 'create-room', access: 'protected', name: '__proto__' }));
   });
 
   assert.equal(joined.name, '__proto__');

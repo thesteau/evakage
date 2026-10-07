@@ -9,7 +9,7 @@ const repositoryRoot = fileURLToPath(new URL('../', import.meta.url));
 // drives WebSocket and fetch).
 export default [
   {
-    ignores: ['node_modules/**', 'dist/**', '**/*.tmp.mjs', '**/*.cts', 'app/client/assets/**', 'test-results/**', 'playwright-report/**']
+    ignores: ['**/node_modules/**', '**/dist/**', '**/.local/**', '**/*.tmp.mjs', '**/*.cts', 'app/client/assets/**', '**/test-results/**', '**/playwright-report/**']
   },
   {
     files: ['**/*.js', '**/*.mjs', '**/*.ts'],

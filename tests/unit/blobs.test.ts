@@ -186,6 +186,9 @@ test('an upload crossing the expiry deadline is not published', async (t) => {
   const request = new PassThrough();
   const receiving = app.blobStore.receive(result.blob.id, result.blob.uploadToken, request);
   request.write(Buffer.alloc(64));
+  // Wait for the HTTP upload to start before advancing the injected clock.
+  for (let i = 0; i < 100 && !app.blobStore.blobs.get(result.blob.id)?.uploading; i++) await settle(5);
+  assert.equal(app.blobStore.blobs.get(result.blob.id)?.uploading, true);
   now = 2000;
   request.end(Buffer.alloc(64));
   assert.equal((await receiving).status, 410);
@@ -362,7 +365,7 @@ test('a half-open direct session expires on its own clock; a room with one membe
   const b = await register(wsBase, 'device_solo_bbbb01', 'B');
 
   const created = waitFor(a, (m) => m.type === 'room-joined');
-  a.send(JSON.stringify({ type: 'create-room', name: 'Room' }));
+  a.send(JSON.stringify({ type: 'create-room', access: 'protected', name: 'Room' }));
   const room = (await created).room;
   const bJoined = waitFor(b, (m) => m.type === 'room-joined');
   b.send(JSON.stringify({ type: 'join-room', code: room.code }));
@@ -442,7 +445,7 @@ test('the same two devices share one directory whichever sends; others get their
 
   // A room gets its own directory, distinct from any pair within it.
   const created = waitFor(a, (m) => m.type === 'room-joined');
-  a.send(JSON.stringify({ type: 'create-room', name: 'R' }));
+  a.send(JSON.stringify({ type: 'create-room', access: 'protected', name: 'R' }));
   const room = (await created).room;
   const bJoined = waitFor(b, (m) => m.type === 'room-joined');
   b.send(JSON.stringify({ type: 'join-room', code: room.code }));
@@ -570,7 +573,7 @@ test('a sender cannot address devices it has no session with', async (t) => {
 
   const b = await register(wsBase, 'device_member_0007', 'B');
   const created = waitFor(b, (m) => m.type === 'room-joined');
-  b.send(JSON.stringify({ type: 'create-room', name: 'Private' }));
+  b.send(JSON.stringify({ type: 'create-room', access: 'protected', name: 'Private' }));
   const room = (await created).room;
   assert.equal(
     (await offer(a, 'device_member_0007', 0, { kind: 'message', conv: `room:${room.id}` })).reply
@@ -615,13 +618,14 @@ test('file and message quotas are separate, and the file size limit holds', asyn
 
 test('starting the server erases everything a previous process left, directories included', async (t) => {
   const dir = path.join(os.tmpdir(), `evakage-stale-${crypto.randomBytes(6).toString('hex')}`);
-  await fsp.mkdir(path.join(dir, 'd-leftover'), { recursive: true });
-  await fsp.writeFile(path.join(dir, 'd-leftover', 'item.bin'), 'orphaned bytes');
+  const conversation = `d-${'a'.repeat(32)}`;
+  await fsp.mkdir(path.join(dir, conversation), { recursive: true });
+  await fsp.writeFile(path.join(dir, conversation, `${crypto.randomUUID()}.bin`), 'orphaned bytes');
   await startServer(t, { blobs: { dir } });
   assert.deepEqual(await onDisk(dir), { directories: [], files: [] });
 });
 
-test('`node app/server/server.js --sweep-blobs` removes only items past the age, then emptied directories', async (t) => {
+test('`evakage --sweep-blobs` removes only items past the age, then emptied directories', async (t) => {
   const dir = path.join(os.tmpdir(), `evakage-cron-${crypto.randomBytes(6).toString('hex')}`);
   t.after(() => fsp.rm(dir, { recursive: true, force: true }));
 
@@ -639,7 +643,7 @@ test('`node app/server/server.js --sweep-blobs` removes only items past the age,
   }
   await fsp.writeFile(path.join(liveDir, 'b.env.json'), 'x');
 
-  const result = spawnSync(process.execPath, ['app/server/server.js', '--sweep-blobs'], {
+  const result = spawnSync(path.join(ROOT, process.platform === 'win32' ? 'evakage.exe' : 'evakage'), ['--sweep-blobs'], {
     cwd: ROOT,
     env: { ...process.env, BLOB_DIR: dir },
     encoding: 'utf8',

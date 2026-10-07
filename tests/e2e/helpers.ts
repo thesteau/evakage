@@ -109,7 +109,7 @@ export const test = base.extend({
       alice: Page;
       bob: Page;
       disconnect: (name: string) => void;
-      server: ReturnType<typeof import('../../app/server/server.js').createEvakageServer>;
+      server: ReturnType<typeof import('../support/go-server.js').createEvakageServer>;
     };
     appPatch: AppPatch;
     autoPair: boolean;
@@ -173,9 +173,12 @@ export async function openPeer(page: Page, name: string) {
   await expect(page.locator('#secureState')).toContainText('Encrypted');
 }
 
-/** Sign in only the room creator; guests remain anonymous. */
-export async function signInRoomOwner(page: Page) {
+/** Sign in only the room creator; guests remain anonymous. Rooms default to
+ * protected here so tests about other behavior join by code alone; pass
+ * 'private' to have the creator approve each join. */
+export async function signInRoomOwner(page: Page, access: 'private' | 'protected' = 'protected') {
   if (await page.locator('#sessionPanel.open').count()) await page.locator('#closeSession').click();
+  await page.evaluate((value) => localStorage.setItem('evakage-room-access', value), access);
   await page.locator('#accountBtn').click();
   if (await page.locator('#accountForm').isVisible()) {
     await page
@@ -232,10 +235,25 @@ export async function sendFile(
   expect(await fs.readFile(await download.path())).toEqual(buffer);
 }
 
+/** The room list does not show codes; a member reads it from the open room. */
+export async function roomCode(page: Page, name: string) {
+  const meta = () => page.locator('#roomCodeText').innerText();
+  const panelOpen = await page.locator('#sessionPanel').isVisible();
+  // Leave the member's view as it was: read an open room in place.
+  if (panelOpen && (await page.locator('#sessionTitle').innerText()) === name) {
+    return meta();
+  }
+  if (panelOpen) await page.locator('#closeSession').click();
+  await page.getByRole('button', { name: `Open room ${name}`, exact: true }).click();
+  await expect(page.locator('#sessionTitle')).toHaveText(name);
+  const code = await meta();
+  await page.locator('#closeSession').click();
+  return code;
+}
+
 /** Join using an invitation shared by a current member. */
 export async function joinRoom(page: Page, owner: Page, name: string) {
-  const row = owner.locator('#roomRows tr').filter({ hasText: name });
-  const code = await row.locator('.peer-code').innerText();
+  const code = await roomCode(owner, name);
   await page.locator('#roomCodeInput').fill(code);
   await page.locator('#joinRoomForm').getByRole('button', { name: 'Join' }).click();
   await expect(page.locator('#sessionTitle')).toHaveText(name);

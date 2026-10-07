@@ -1,5 +1,6 @@
 import { setupAccounts, accountSocketTicket } from './preferences.js';
-import { setupScanner, pairingInvitation } from './scanner.js';
+import { setTip, setupTips } from './tips.js';
+import { setupScanner, pairingInvitation, roomInvitation, roomInvitationLink } from './scanner.js';
 import { drawQr } from './qr.js';
 import { signMessage, verifyMessage, messageScope, historyFrames, messageKey } from './messages.js';
 import { parseFrame, CONTROL_KIND, FILE_CHUNK_KIND } from './frames.js';
@@ -59,6 +60,11 @@ type AppElements = {
   '#aboutDialog': HTMLDialogElement;
   '#qrPairingCode': HTMLElement;
   '#qrDialog': HTMLDialogElement;
+  '#roomQrDialog': HTMLDialogElement;
+  '#roomQrBtn': HTMLElementTagNameMap['button'];
+  '#roomQr': HTMLCanvasElement;
+  '#roomQrCode': HTMLElementTagNameMap['strong'];
+  '#roomQrName': HTMLElementTagNameMap['span'];
   '#deviceQr': HTMLCanvasElement;
   '#qrInvitation': HTMLInputElement;
   '#copyInvitationBtn': HTMLButtonElement;
@@ -71,6 +77,7 @@ type AppElements = {
   '#pairingFeedback': HTMLElement;
   '#pairingCancel': HTMLButtonElement;
   '#verifiedOnlyInput': HTMLInputElement;
+  '#roomApprovalInput': HTMLInputElement;
   '#peerRows': HTMLElementTagNameMap['tbody'];
   '#emptyPeers': HTMLElementTagNameMap['div'];
   '#roomRows': HTMLElementTagNameMap['tbody'];
@@ -79,6 +86,9 @@ type AppElements = {
   '#sessionPanel': HTMLElementTagNameMap['aside'];
   '#sessionTitle': HTMLElementTagNameMap['h2'];
   '#sessionMeta': HTMLElementTagNameMap['div'];
+  '#roomCodeLine': HTMLElementTagNameMap['div'];
+  '#roomCodeText': HTMLElementTagNameMap['strong'];
+  '#joinRequests': HTMLElementTagNameMap['div'];
   '#sessionKind': HTMLElementTagNameMap['div'];
   '#sessionMembers': HTMLElementTagNameMap['div'];
   '#leaveRoomBtn': HTMLElementTagNameMap['button'];
@@ -117,7 +127,7 @@ type AppElements = {
   '#devicesBtn': HTMLElementTagNameMap['button'];
   '#refreshBtn': HTMLElementTagNameMap['button'];
   '#installBtn': HTMLElementTagNameMap['button'];
-  '#installStatus': HTMLElementTagNameMap['p'];
+  '#installTip': HTMLElementTagNameMap['span'];
   '#updateBanner': HTMLElementTagNameMap['div'];
   '#reloadBtn': HTMLElementTagNameMap['button'];
   '#shareBanner': HTMLElementTagNameMap['div'];
@@ -161,7 +171,7 @@ const pickTargetHint = $('#pickTargetHint');
 const themeBtn = $('#themeBtn');
 const themeIcon = $('#themeIcon');
 
-import type { Room } from './types.js';
+import type { Room, RoomAccess } from './types.js';
 
 import type { Device } from './types.js';
 
@@ -344,11 +354,6 @@ async function updateAccountPeers(message: { signedIn: boolean; peers: Device[] 
   renderKnownDevices();
   renderPeers();
   renderSession();
-  const candidates = [...accountPeerIds].filter(
-    (id) => deviceAllowed(id) && !deviceTrust(id)?.hidden,
-  );
-  // Keep an existing chat selected; with several devices the list is the picker.
-  if (candidates.length === 1 && !state.activeConvId) openSession(candidates[0]);
 }
 
 function deviceAllowed(id: string) {
@@ -651,6 +656,7 @@ function connectWebSocket() {
 
     if (msg.type === 'rooms') {
       state.rooms = new Map(msg.rooms.map((room: Room) => [room.id, room]));
+      announceJoinRequests();
       for (const room of state.rooms.values()) {
         for (const member of room.away || []) {
           if (!state.peers.has(member.id)) recordDevice(member, false);
@@ -685,7 +691,7 @@ function connectWebSocket() {
       const conv = ensureConversation(roomConvId(msg.room.id), 'room', msg.room.id);
       conv.lastKnownName = msg.room.name;
       conv.lastKnownCode = msg.room.code;
-      roomFeedback.textContent = msg.created ? '' : `Joined ${msg.room.name} · ${msg.room.code}`;
+      roomFeedback.textContent = msg.created ? '' : `Joined ${msg.room.name}`;
       if (msg.created) {
         $('#roomNameInput').value = '';
         toast(
@@ -706,6 +712,13 @@ function connectWebSocket() {
       // items set aside because they arrived before this rejoin landed.
       wsSend({ type: 'blobs-request' });
       requestRoomHistory(msg.room.id);
+      return;
+    }
+
+    if (msg.type === 'room-pending') {
+      state.pendingOpenRoomId = msg.roomId;
+      roomFeedback.textContent = `Waiting for approval to join ${msg.name}`;
+      toast(`Asked to join ${msg.name}. The room's creator must approve.`);
       return;
     }
 
@@ -2238,7 +2251,7 @@ async function sendChat(conv: Conversation, text: string) {
   const direct: any[] = [];
 
   const viaRelay: string[] = [...offline];
-  const relayOnly = canRelay && (state.forceRelay || isRelayRoom(conv));
+  const relayOnly = canRelay && (viaServerChosen(conv) || isRelayRoom(conv));
   await Promise.all(
     recipients.map(async (peerId) => {
       const link = state.links.get(peerId);
@@ -2407,7 +2420,7 @@ async function sendFiles(conv: Conversation, fileList: FileList | File[]) {
 
   const canRelay = relayEnabled();
   // A large room is relay-only: one upload serves every member.
-  const skipDirect = canRelay && (state.forceRelay || isRelayRoom(conv));
+  const skipDirect = canRelay && (viaServerChosen(conv) || isRelayRoom(conv));
 
   let links: any[] = [];
   if (!skipDirect && recipients.length) {
@@ -3738,9 +3751,110 @@ function offlineDevicesToList() {
     .sort((a, b) => (b.lastSeen || 0) - (a.lastSeen || 0));
 }
 
-/** * Every device row offers the same two things: open the conversation, or end
- * it. The session panel carries text and file sending, so a row does not need
- * its own buttons for them. */
+const ICONS = {
+  gear: '<path d="M9 3h6l1 3 3 1 2 5-2 5-3 1-1 3H9l-1-3-3-1-2-5 2-5 3-1z"/><circle cx="12" cy="12" r="3"/>',
+  trash:
+    '<path d="M4 7h16M10 11v6M14 11v6M5 7l1 13a1 1 0 0 0 1 1h10a1 1 0 0 0 1-1l1-13M9 7V4h6v3"/>',
+};
+
+function iconButton(icon: keyof typeof ICONS, label: string) {
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.className = 'ghost row-icon';
+  button.title = label;
+  button.setAttribute('aria-label', label);
+  button.innerHTML = `<svg viewBox="0 0 24 24" aria-hidden="true">${ICONS[icon]}</svg>`;
+  return button;
+}
+
+/** Per-device adjustments, kept out of the row until asked for. */
+type MenuItem = { text: string; run: () => void; checked?: boolean };
+
+function deviceMenuItems(peerId: string, label: string) {
+  const items: MenuItem[] = [];
+  if (peerId === state.self?.id) return items;
+  const record = deviceTrust(peerId);
+  if (record && !record.blocked) {
+    items.push({
+      text: record.verifiedAt ? 'Compare code' : 'Verify',
+      run: () => openPairing(peerId),
+    });
+  }
+  // Your account's devices always stay listed and reachable.
+  if (!accountPeerIds.has(peerId)) {
+    items.push({
+      text: 'Hide',
+      run: () => {
+        hideDevice(peerId, label, true);
+        renderKnownDevices();
+        renderPeers();
+      },
+    });
+    if (record) {
+      items.push({
+        text: record.blocked ? 'Unblock' : 'Block',
+        run: () => {
+          blockDevice(peerId, !record.blocked);
+          releaseIdleLinks();
+          renderKnownDevices();
+          renderPeers();
+          renderSession();
+        },
+      });
+    }
+  }
+  return items;
+}
+
+let deviceMenu: HTMLElement | null = null;
+
+/** A small menu under a row's gear. Items with `checked` are a choice of one. */
+function openRowMenu(anchor: HTMLButtonElement, menuLabel: string, entries: MenuItem[]) {
+  if (!deviceMenu) {
+    deviceMenu = document.createElement('div');
+    deviceMenu.className = 'device-menu';
+    deviceMenu.setAttribute('popover', 'auto');
+    deviceMenu.setAttribute('role', 'menu');
+    deviceMenu.addEventListener('keydown', (event) => {
+      const items = [...deviceMenu!.querySelectorAll('button')];
+      const at = items.indexOf(document.activeElement as HTMLButtonElement);
+      const step = { ArrowDown: 1, ArrowUp: -1 }[event.key];
+      if (!step) return;
+      event.preventDefault();
+      items[(at + step + items.length) % items.length]?.focus();
+    });
+    document.body.append(deviceMenu);
+  }
+  const menu = deviceMenu;
+  menu.textContent = '';
+  menu.setAttribute('aria-label', menuLabel);
+  for (const item of entries) {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'ghost';
+    if (item.checked === undefined) button.setAttribute('role', 'menuitem');
+    else {
+      button.setAttribute('role', 'menuitemradio');
+      button.setAttribute('aria-checked', String(item.checked));
+    }
+    button.textContent = item.text;
+    button.addEventListener('click', () => {
+      menu.hidePopover();
+      item.run();
+    });
+    menu.append(button);
+  }
+  menu.showPopover();
+  const rect = anchor.getBoundingClientRect();
+  const gap = 6;
+  menu.style.left = `${Math.max(gap, Math.min(rect.right - menu.offsetWidth, innerWidth - menu.offsetWidth - gap))}px`;
+  menu.style.top = `${rect.bottom + menu.offsetHeight + gap > innerHeight ? rect.top - menu.offsetHeight - gap : rect.bottom + gap}px`;
+  menu.querySelector('button')?.focus();
+}
+
+/** Every device row offers the same three things: open the conversation,
+ * adjust the device, or delete the conversation. The session panel carries
+ * text and file sending, so a row does not need its own buttons for them. */
 function rowActions(peerId: string, label: string, link: Link | null | undefined) {
   const actions = document.createElement('div');
   actions.className = 'row-actions';
@@ -3758,30 +3872,22 @@ function rowActions(peerId: string, label: string, link: Link | null | undefined
   });
   actions.append(open);
 
-  // Keep the action present so starting or deleting a conversation does not resize the row.
-  const exit = document.createElement('button');
-  exit.type = 'button';
-  exit.className = 'ghost';
+  // Every row keeps all three controls, so rows line up and never resize.
+  const settings = iconButton('gear', `Settings for ${label}`);
+  settings.setAttribute('aria-haspopup', 'menu');
+  settings.dataset.focusKey = `peer:${peerId}:settings`;
+  settings.disabled = deviceMenuItems(peerId, label).length === 0;
+  settings.addEventListener('click', () =>
+    openRowMenu(settings, `Settings for ${label}`, deviceMenuItems(peerId, label)),
+  );
+  actions.append(settings);
+
+  const exit = iconButton('trash', `Delete conversation with ${label}`);
   exit.title =
     'Delete local conversation history and disconnect unused links. Stored pairing remains.';
-  exit.textContent = 'Delete';
   exit.dataset.focusKey = `peer:${peerId}:exit`;
-  exit.setAttribute('aria-label', `Delete conversation with ${label}`);
   exit.addEventListener('click', () => forgetConversation(directConvId(peerId)));
   actions.append(exit);
-  if (peerId !== state.self?.id && !accountPeerIds.has(peerId)) {
-    const hide = document.createElement('button');
-    hide.type = 'button';
-    hide.className = 'ghost';
-    hide.textContent = 'Hide';
-    hide.setAttribute('aria-label', `Hide ${label}`);
-    hide.dataset.focusKey = `peer:${peerId}:hide`;
-    hide.addEventListener('click', () => {
-      hideDevice(peerId, label, true);
-      renderPeers();
-    });
-    actions.append(hide);
-  }
   return actions;
 }
 
@@ -3849,6 +3955,81 @@ function renderRooms() {
   withPreservedFocus(renderRoomsNow);
 }
 
+/** The account-wide default for rooms this device creates. */
+function newRoomAccess(): RoomAccess {
+  try {
+    return localStorage.getItem('evakage-room-access') === 'protected' ? 'protected' : 'private';
+  } catch {
+    return 'private';
+  }
+}
+
+const ROOM_ACCESS: Array<{ value: RoomAccess; text: string }> = [
+  { value: 'private', text: 'Private · approve who joins' },
+  { value: 'protected', text: 'Protected · anyone with the code' },
+  { value: 'public', text: 'Public · listed for everyone' },
+];
+
+function roomAccessItems(room: Room): MenuItem[] {
+  return ROOM_ACCESS.map(({ value, text }) => ({
+    text,
+    checked: (room.access || 'private') === value,
+    run: () => wsSend({ type: 'room-access', roomId: room.id, access: value }),
+  }));
+}
+
+const announcedRequests = new Set<string>();
+
+/** Tell the creator once about each new request; the room shows it until answered. */
+function announceJoinRequests() {
+  const current = new Set<string>();
+  for (const room of state.rooms.values()) {
+    for (const device of room.requests || []) {
+      const key = `${room.id}:${device.id}`;
+      current.add(key);
+      if (announcedRequests.has(key)) continue;
+      announcedRequests.add(key);
+      const conv = activeConversation();
+      if (conv?.kind !== 'room' || conv.roomId !== room.id) {
+        toast(`${device.name} wants to join ${room.name}. Open the room to approve.`);
+      }
+    }
+  }
+  for (const key of announcedRequests) if (!current.has(key)) announcedRequests.delete(key);
+}
+
+function answerJoinRequest(roomId: string, deviceId: string, approve: boolean) {
+  wsSend({ type: 'room-approve', roomId, deviceId, approve });
+}
+
+/** Requests to join appear at the top of the creator's room chat. */
+function renderJoinRequests(conv: Conversation) {
+  const box = $('#joinRequests');
+  const room = conv.kind === 'room' ? state.rooms.get(conv.roomId) : undefined;
+  const requests = room?.requests || [];
+  box.hidden = !requests.length;
+  box.textContent = '';
+  for (const device of requests) {
+    const row = document.createElement('div');
+    row.className = 'join-request';
+    const text = document.createElement('span');
+    text.textContent = `${device.name} wants to join`;
+    const approve = document.createElement('button');
+    approve.type = 'button';
+    approve.textContent = 'Approve';
+    approve.setAttribute('aria-label', `Approve ${device.name}`);
+    approve.addEventListener('click', () => answerJoinRequest(room!.id, device.id, true));
+    const decline = document.createElement('button');
+    decline.type = 'button';
+    decline.className = 'ghost';
+    decline.textContent = 'Decline';
+    decline.setAttribute('aria-label', `Decline ${device.name}`);
+    decline.addEventListener('click', () => answerJoinRequest(room!.id, device.id, false));
+    row.append(text, approve, decline);
+    box.append(row);
+  }
+}
+
 function renderRoomsNow() {
   roomRows.textContent = '';
   // Oldest first is the natural order; the column headers sort from there.
@@ -3877,25 +4058,32 @@ function renderRoomsNow() {
     const name = document.createElement('span');
     name.textContent = room.name;
     nameWrap.append(pip, name);
+    if (room.access && (joined || room.access === 'public')) {
+      const badge = document.createElement('span');
+      badge.className = 'trust-badge';
+      badge.textContent = room.access;
+      badge.title = ROOM_ACCESS.find((option) => option.value === room.access)?.text || '';
+      nameWrap.append(badge);
+    }
     nameTd.append(nameWrap);
 
-    const codeTd = document.createElement('td');
-    codeTd.className = 'peer-code';
-    codeTd.dataset.label = 'Code';
-    codeTd.textContent = room.code;
-
+    // A room code is a private invitation: it is shared from the open room,
+    // not shown in the list.
     const away = room.away || [];
 
-    // Away members keep their seat, so they count toward the size.
-    const seats = room.members.length + away.length;
+    // Away members keep their seat, so they count toward the size. A listing
+    // for a non-member carries the count without the members.
+    const seats = room.seats ?? room.members.length + away.length;
     const countTd = document.createElement('td');
     countTd.dataset.label = 'Size';
     countTd.textContent = `${seats} / ${room.maxMembers}`;
 
     const statusTd = document.createElement('td');
     statusTd.dataset.label = 'Links';
-    if (!joined) {
-      statusTd.textContent = 'Not joined';
+    if (room.awaiting) {
+      statusTd.textContent = 'Waiting for approval';
+    } else if (!joined) {
+      statusTd.textContent = room.access === 'public' ? 'Public · not joined' : 'Not joined';
     } else {
       const others = conv ? onlineMembers(conv) : [];
       const secured = others.filter((id) => isSecure(state.links.get(id))).length;
@@ -3906,7 +4094,10 @@ function renderRoomsNow() {
             ? `${secured} / ${others.length} encrypted`
             : 'Waiting for members';
       const awayOthers = away.filter((m) => m.id !== state.self?.id).length;
-      statusTd.textContent = awayOthers ? `${base} · ${awayOthers} away` : base;
+      const waiting = room.requests?.length || 0;
+      statusTd.textContent = [base, awayOthers && `${awayOthers} away`, waiting && `${waiting} waiting`]
+        .filter(Boolean)
+        .join(' · ');
     }
 
     const actionsTd = document.createElement('td');
@@ -3920,10 +4111,12 @@ function renderRoomsNow() {
     open.setAttribute('aria-label', `Open room ${room.name}`);
     if (joined) {
       open.addEventListener('click', () => openRoom(room.id));
+    } else if (room.awaiting) {
+      open.disabled = true;
     } else {
       // Joining and opening are one action: nobody joins a room in order not to
       // look at it. The panel opens when the server confirms the seat.
-      open.disabled = room.members.length + (room.away || []).length >= room.maxMembers;
+      open.disabled = seats >= room.maxMembers;
       open.addEventListener('click', () => {
         state.pendingOpenRoomId = room.id;
         wsSend({ type: 'join-room', roomId: room.id });
@@ -3931,18 +4124,27 @@ function renderRoomsNow() {
     }
     actions.append(open);
 
-    if (joined) {
-      const exit = document.createElement('button');
-      exit.type = 'button';
-      exit.className = 'ghost';
-      exit.textContent = 'Delete';
+    // Room settings belong to its creator; nobody else sees the gear.
+    if (joined && room.owned) {
+      const settings = iconButton('gear', `Settings for room ${room.name}`);
+      settings.setAttribute('aria-haspopup', 'menu');
+      settings.dataset.focusKey = `room:${room.id}:settings`;
+      settings.addEventListener('click', () =>
+        openRowMenu(settings, `Who can join ${room.name}`, roomAccessItems(room)),
+      );
+      actions.append(settings);
+    }
+    if (joined || room.awaiting) {
+      const exit = iconButton(
+        'trash',
+        room.awaiting ? `Cancel request to join ${room.name}` : `Delete local room ${room.name}`,
+      );
       exit.dataset.focusKey = `room:${room.id}:exit`;
-      exit.setAttribute('aria-label', `Delete local room ${room.name}`);
       exit.addEventListener('click', () => leaveRoom(room.id));
       actions.append(exit);
     }
     actionsTd.append(actions);
-    tr.append(nameTd, codeTd, countTd, statusTd, actionsTd);
+    tr.append(nameTd, countTd, statusTd, actionsTd);
     roomRows.append(tr);
   }
   const visible = applyTableView(roomRows);
@@ -4013,30 +4215,35 @@ function renderSessionNow() {
       ? 'temporary room · end-to-end encrypted'
       : 'temporary session · end-to-end encrypted';
   leaveRoomBtn.classList.toggle('hidden', conv.kind !== 'room');
-  // Only a room has a code worth sharing from here, and self-notes always go
-  // through the server, so neither control means anything elsewhere.
-  $('#copyCodeBtn').classList.toggle('hidden', conv.kind !== 'room');
-  $('#relayToggle').classList.toggle('hidden', !relayEnabled() || isSelfConversation(conv));
+  // Self-notes always go through the server, so the toggle means nothing there.
+  $('#relayToggle').classList.toggle(
+    'hidden',
+    !relayEnabled() || isSelfConversation(conv) || (conv.kind === 'room' && !ownsRoom(conv)),
+  );
 
   if (conv.kind === 'direct') {
     const peer = getPeer(conv.peerId);
     const offlineRecord = !state.peers.has(conv.peerId)
       ? state.deviceRecords.get(conv.peerId)
       : null;
+    sessionMeta.hidden = false;
+    $('#roomCodeLine').hidden = true;
     sessionMeta.textContent = isSelfConversation(conv)
       ? 'Only this browser can read these.'
       : offlineRecord
         ? `${peer.platform} · ${peer.browser} · ${state.ws?.readyState === WebSocket.OPEN ? 'offline' : 'status unknown'}, seen ${formatAgo(offlineRecord.lastSeen)}`
         : `${peer.platform} · ${peer.browser} · ${peer.code}`;
   } else {
+    // Members only ever see the code here, never in the room list.
     const room = state.rooms.get(conv.roomId);
-    const away = room?.away?.length || 0;
-    sessionMeta.textContent = room
-      ? `${room.code} · ${room.members.length + away} of ${room.maxMembers} devices${away ? ` · ${away} away` : ''}`
-      : 'This room is unavailable';
+    sessionMeta.hidden = Boolean(room);
+    sessionMeta.textContent = room ? '' : 'This room is unavailable';
+    $('#roomCodeLine').hidden = !room;
+    $('#roomCodeText').textContent = room?.code || '';
   }
 
   renderMembers(conv);
+  renderJoinRequests(conv);
 
   const others = onlineMembers(conv);
   if (conv.kind === 'direct') {
@@ -4529,18 +4736,33 @@ $('#createRoomForm').addEventListener('submit', (event: Event) => {
   const input = $('#roomNameInput');
   const name = input.value.trim() || `${state.self?.name || 'New'} room`;
   roomFeedback.textContent = '';
-  wsSend({ type: 'create-room', name });
+  wsSend({ type: 'create-room', name, access: newRoomAccess() });
 });
 
-$('#joinRoomForm').addEventListener('submit', (event: Event) => {
-  event.preventDefault();
-  const input = $('#roomCodeInput');
-  const code = input.value.trim().toUpperCase();
+/** One path for a typed code, a scanned room QR and an opened room link. */
+function joinRoomByCode(code: string) {
+  code = code.trim().toUpperCase();
   if (!code) return;
   state.pendingOpenRoomCode = code;
   roomFeedback.textContent = 'Joining room…';
   wsSend({ type: 'join-room', code });
+}
+
+$('#joinRoomForm').addEventListener('submit', (event: Event) => {
+  event.preventDefault();
+  const input = $('#roomCodeInput');
+  joinRoomByCode(input.value);
   input.value = '';
+});
+
+$('#roomQrBtn').addEventListener('click', () => {
+  const conv = activeConversation();
+  const room = conv?.kind === 'room' ? state.rooms.get(conv.roomId) : undefined;
+  if (!room?.code) return;
+  $('#roomQrName').textContent = room.name;
+  $('#roomQrCode').textContent = room.code;
+  drawQr($('#roomQr'), roomInvitationLink(room.code, location.href));
+  openDialog($('#roomQrDialog'));
 });
 
 messageForm.addEventListener('submit', async (event: Event) => {
@@ -4609,40 +4831,74 @@ function setupSettings() {
     });
   }
   const verifiedOnlyInput = $('#verifiedOnlyInput');
-  try {
-    state.verifiedOnly = localStorage.getItem('evakage-verified-only') === '1';
-  } catch {}
-  verifiedOnlyInput.checked = state.verifiedOnly;
   verifiedOnlyInput.addEventListener('change', () => {
     state.verifiedOnly = verifiedOnlyInput.checked;
     try {
       localStorage.setItem('evakage-verified-only', state.verifiedOnly ? '1' : '0');
     } catch {}
     renderSession();
+    accountUI.push();
+  });
+  const roomApproval = $('#roomApprovalInput');
+  roomApproval.addEventListener('change', () => {
+    try {
+      localStorage.setItem('evakage-room-access', roomApproval.checked ? 'private' : 'protected');
+    } catch {}
+    accountUI.push();
   });
   const dialog = $('#settingsDialog');
-  const radios = [...dialog.querySelectorAll('input[name="incomingPolicy"]')];
-  try {
-    const stored = localStorage.getItem('evakage-incoming') || '';
-    if (INCOMING_POLICIES.includes(stored)) state.incomingPolicy = stored;
-  } catch {}
+  const radios = incomingRadios();
   for (const radio of radios) {
-    if (!(radio instanceof HTMLInputElement)) continue;
-    radio.checked = radio.value === state.incomingPolicy;
     radio.addEventListener('change', () => {
       if (!radio.checked) return;
       state.incomingPolicy = radio.value;
       try {
         localStorage.setItem('evakage-incoming', radio.value);
       } catch {}
+      accountUI.push();
     });
   }
   $('#settingsBtn').addEventListener('click', () => {
-    openDialog(
-      dialog,
-      radios.find((radio) => radio instanceof HTMLInputElement && radio.checked) || radios[0],
-    );
+    openDialog(dialog, radios.find((radio) => radio.checked) || radios[0]);
+    accountUI.pull();
   });
+}
+
+function incomingRadios() {
+  return [
+    ...$('#settingsDialog').querySelectorAll<HTMLInputElement>('input[name="incomingPolicy"]'),
+  ];
+}
+
+/** (Re)applies the account-synced settings from localStorage. */
+function loadSyncedPreferences() {
+  const stored = (key: string) => {
+    try {
+      return localStorage.getItem(key);
+    } catch {
+      return null;
+    }
+  };
+  applyTheme(stored('evakage-theme') || 'system');
+  const incoming = stored('evakage-incoming') || '';
+  if (INCOMING_POLICIES.includes(incoming)) state.incomingPolicy = incoming;
+  for (const radio of incomingRadios()) radio.checked = radio.value === state.incomingPolicy;
+  state.verifiedOnly = stored('evakage-verified-only') === '1';
+  $('#verifiedOnlyInput').checked = state.verifiedOnly;
+  $('#roomApprovalInput').checked = newRoomAccess() === 'private';
+  state.forceRelay = stored('evakage-force-relay') === '1';
+  $('#forceRelayInput').checked = state.forceRelay;
+  renderSession();
+}
+
+/** Whether this device created the room, and so may manage it. */
+function ownsRoom(conv: Conversation) {
+  return conv.kind === 'room' && Boolean(state.rooms.get(conv.roomId)?.owned);
+}
+
+/** "Via server" is the creator's choice in a room; members never see it. */
+function viaServerChosen(conv: Conversation) {
+  return state.forceRelay && (conv.kind !== 'room' || ownsRoom(conv));
 }
 
 function setupRelayToggle() {
@@ -4650,15 +4906,12 @@ function setupRelayToggle() {
   const input = $('#forceRelayInput');
   // Only offered when the server actually runs the relay.
   toggle.classList.toggle('hidden', !relayEnabled());
-  try {
-    state.forceRelay = localStorage.getItem('evakage-force-relay') === '1';
-  } catch {}
-  input.checked = state.forceRelay;
   input.addEventListener('change', () => {
     state.forceRelay = input.checked;
     try {
       localStorage.setItem('evakage-force-relay', input.checked ? '1' : '0');
     } catch {}
+    accountUI.push();
   });
 }
 
@@ -4768,6 +5021,7 @@ function setupTheme() {
   applyTheme(stored);
   themeBtn.addEventListener('click', () => {
     applyTheme(THEMES[(THEMES.indexOf(state.theme) + 1) % THEMES.length]);
+    accountUI.push();
   });
 }
 
@@ -4847,6 +5101,12 @@ window.addEventListener('hashchange', () => {
 
 async function handlePairingLink() {
   const params = new URLSearchParams(location.hash.slice(1));
+  const room = params.get('room');
+  if (room) {
+    history.replaceState(null, '', location.pathname + location.search);
+    joinRoomByCode(room);
+    return;
+  }
   const code = params.get('pair');
   if (!code) return;
   const id = params.get('device');
@@ -5274,7 +5534,7 @@ async function updateWakeLock() {
  */
 function setupInstallPrompt() {
   const installBtn = $('#installBtn');
-  const status = $('#installStatus');
+  const status = $('#installTip');
 
   let deferred: any = null;
 
@@ -5285,7 +5545,7 @@ function setupInstallPrompt() {
     (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
 
   const show = (text: string, offer: boolean = false) => {
-    status.textContent = text;
+    setTip(status, text);
     installBtn.hidden = !offer;
   };
 
@@ -5518,6 +5778,8 @@ async function boot() {
   setupPasteToSend();
   setupRelayToggle();
   setupSettings();
+  loadSyncedPreferences();
+  setupTips();
   connectWebSocket();
   state.statsTimer = setInterval(refreshStats, 3000);
   state.wakeLockTimer = setInterval(updateWakeLock, 2000);
@@ -5526,13 +5788,16 @@ async function boot() {
 
 boot();
 
-setupScanner(async (code, id) => {
-  const peer = await resolveCode(code, id);
-  if (peer) {
-    $('#addDeviceDialog').close();
-    toast(`Paired with ${peer.name}`);
-    openSession(peer.id);
-  } else toast('Pairing code invalid, expired, or device unavailable.');
+setupScanner({
+  async pair(code, id) {
+    const peer = await resolveCode(code, id);
+    if (peer) {
+      $('#addDeviceDialog').close();
+      toast(`Paired with ${peer.name}`);
+      openSession(peer.id);
+    } else toast('Pairing code invalid, expired, or device unavailable.');
+  },
+  joinRoom: joinRoomByCode,
 });
 // focus-existing launches deliver URLs through the Launch Queue rather than
 // navigating the already-open app. Handle the invitation in that app instance.
@@ -5541,6 +5806,14 @@ const launchWindow = window as Window & {
 };
 launchWindow.launchQueue?.setConsumer((launch) => {
   if (!launch.targetURL) return;
+  try {
+    location.hash = new URLSearchParams({
+      room: roomInvitation(launch.targetURL, location.origin).code,
+    }).toString();
+    return;
+  } catch {
+    /* Not a room invitation; it may be a device one. */
+  }
   try {
     const invitation = pairingInvitation(launch.targetURL, location.origin);
     location.hash = new URLSearchParams({
@@ -5559,4 +5832,5 @@ const accountUI = setupAccounts({
     wsSend({ type: 'account-connect', token });
   },
   onSignOut: clearSignedOutDevice,
+  onPreferences: loadSyncedPreferences,
 });

@@ -76,7 +76,7 @@ test('rooms keep membership private, cap size, and close when their last member 
   const b = await register(wsBase, 'device_B_12345678', 'Phone');
 
   const created = waitFor(a, (m) => m.type === 'room-joined');
-  a.send(JSON.stringify({ type: 'create-room', name: 'Kitchen table' }));
+  a.send(JSON.stringify({ type: 'create-room', access: 'protected', name: 'Kitchen table' }));
   const room = (await created).room;
   assert.equal(room.name, 'Kitchen table');
   assert.match(room.code, /^[A-Z0-9]{4}-[A-Z0-9]{4}$/);
@@ -141,7 +141,7 @@ test('a room owner keeps two rooms and each new room replaces the oldest', async
   const hog = await register(wsBase, 'device_hog_12345678', 'Hog');
   for (let i = 0; i < 8; i++) {
     const created = waitFor(hog, (m) => m.type === 'room-joined');
-    hog.send(JSON.stringify({ type: 'create-room', name: `Room ${i}` }));
+    hog.send(JSON.stringify({ type: 'create-room', access: 'protected', name: `Room ${i}` }));
     await created;
   }
   assert.equal(app.rooms.size, 2);
@@ -153,7 +153,7 @@ test('a room owner keeps two rooms and each new room replaces the oldest', async
   // Another device is unaffected.
   const other = await register(wsBase, 'device_other_1234567', 'Other');
   const ok = waitFor(other, (m) => m.type === 'room-joined');
-  other.send(JSON.stringify({ type: 'create-room', name: 'Mine' }));
+  other.send(JSON.stringify({ type: 'create-room', access: 'protected', name: 'Mine' }));
   await ok;
   assert.equal(app.rooms.size, 3);
 
@@ -165,7 +165,7 @@ test('rooms past the mesh size switch to the relay, up to the configured cap', a
   const { wsBase } = await startServer(t, { maxRoomMembers: 8 });
   const owner = await register(wsBase, 'device_large_owner0', 'Owner');
   const created = waitFor(owner, (m) => m.type === 'room-joined');
-  owner.send(JSON.stringify({ type: 'create-room', name: 'Big' }));
+  owner.send(JSON.stringify({ type: 'create-room', access: 'protected', name: 'Big' }));
   const room = (await created).room;
   assert.equal(room.maxMembers, 8);
   assert.equal(room.transport, 'mesh', 'a small room is a direct mesh');

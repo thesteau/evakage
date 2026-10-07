@@ -25,7 +25,7 @@ flowchart LR
     E -->|Approved merge| F[Stable release and image]
 ```
 
-`release-state` holds the changelog, version manifest, and approved production commit. Release metadata stays out of application branches. Release tags identify stable versions; `package.json` does not.
+`release-state` holds the changelog, version manifest, and approved production commit. Release metadata stays out of application branches. Release tags identify stable versions; `app/package.json` does not.
 
 Stable images are published for amd64 and arm64 after source, browser, container, and vulnerability checks. They do not change `latest`.
 

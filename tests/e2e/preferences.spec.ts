@@ -45,7 +45,16 @@ test('account deletion confirms the password and clears chats on all signed-in d
         .getByRole('button', { name: 'Close', exact: true })
         .click();
     }
-    for (const page of pages) await expect(page.locator('#secureState')).toContainText('Encrypted');
+    for (const [page, other] of [
+      [first, second],
+      [second, first],
+    ]) {
+      const name = (await other.locator('#selfCode').getAttribute('data-device-name')) || '';
+      const row = page.locator('#peerRows tr').filter({ hasText: listedName(name) });
+      await expect(row).toContainText('This is yours');
+      await row.getByRole('button', { name: /^Open conversation with/ }).click();
+      await expect(page.locator('#secureState')).toContainText('Encrypted');
+    }
     await chat(first, second, 'Temporary account chat');
     await openAccount(first);
     await first.locator('#accountDeleteDetails summary').click();
@@ -83,7 +92,12 @@ peerTest(
     const { alice } = devices;
     const name = deviceNames.get('Bob') || '';
     const device = alice.locator('#peerRows tr').filter({ hasText: listedName(name) });
-    await device.getByRole('button', { name: `Hide ${name}`, exact: true }).click();
+    // The trash icon deletes the conversation; Hide lives in the gear menu.
+    await expect(
+      device.getByRole('button', { name: `Delete conversation with ${name}`, exact: true }),
+    ).toBeVisible();
+    await device.getByRole('button', { name: `Settings for ${name}`, exact: true }).click();
+    await alice.getByRole('menuitem', { name: 'Hide', exact: true }).click();
     await expect(device).toHaveCount(0);
     await alice.getByRole('button', { name: 'Known devices', exact: true }).click();
     const record = alice.locator('#knownDeviceList > div').filter({ hasText: name });
@@ -142,11 +156,27 @@ test('account devices connect privately, exchange content, and sign-out destroys
     }, ownPhoneId);
     await computer.reload();
     await expect(computer.locator('#selfCode')).not.toHaveText('----');
+    const openOwnDevice = async (page: import('@playwright/test').Page, name: string) => {
+      await page
+        .locator('#peerRows tr')
+        .filter({ hasText: listedName(name) })
+        .getByRole('button', { name: /^Open conversation with/ })
+        .click();
+      await expect(page.locator('#sessionPanel')).toBeVisible();
+    };
+    const phoneName = (await phone.locator('#selfCode').getAttribute('data-device-name')) || '';
+    const computerName =
+      (await computer.locator('#selfCode').getAttribute('data-device-name')) || '';
     await signIn(computer, true);
     await signIn(phone);
-    for (const page of [computer, phone]) {
-      await expect(page.locator('#sessionPanel')).toBeVisible();
+    for (const [page, other] of [
+      [computer, phoneName],
+      [phone, computerName],
+    ] as const) {
       await expect(page.locator('#peerRows')).toContainText('This is yours');
+      // Signing in lists your devices; it does not open a chat by itself.
+      await expect(page.locator('#sessionPanel')).toBeHidden();
+      await openOwnDevice(page, other);
       expect(await page.evaluate(() => localStorage.getItem('evakage-discoverable'))).toBeNull();
       await expect(page.locator('#secureState')).toContainText('Encrypted');
     }
@@ -158,12 +188,19 @@ test('account devices connect privately, exchange content, and sign-out destroys
         return { blocked: trust.blocked, hidden: trust.hidden };
       }, ownPhoneId),
     ).toEqual({ blocked: false, hidden: false });
-    await expect(computer.locator('#peerRows').getByRole('button', { name: /^Hide / })).toHaveCount(
-      0,
-    );
+    // Your own account's devices cannot be hidden.
+    await computer.locator('#closeSession').click();
+    await computer
+      .locator('#peerRows tr')
+      .filter({ hasText: listedName(phoneName) })
+      .getByRole('button', { name: /^Settings for / })
+      .click();
+    await expect(computer.getByRole('menu')).toBeVisible();
+    await expect(computer.getByRole('menuitem', { name: 'Hide' })).toHaveCount(0);
+    await computer.keyboard.press('Escape');
+    await openOwnDevice(computer, phoneName);
     await expect(outsider.locator('#peerRows tr')).toHaveCount(1);
     const phoneId = await phone.locator('#selfCode').getAttribute('data-device-id');
-    const phoneName = (await phone.locator('#selfCode').getAttribute('data-device-name')) || '';
     await chat(computer, phone, 'Before sign-out: private text');
     await sendFile(computer, phone, 'account-file.txt', Buffer.from('private account file'));
     await phone.locator('#messageInput').fill('unsent private draft');
@@ -185,7 +222,11 @@ test('account devices connect privately, exchange content, and sign-out destroys
     await expect(computer.locator('#connectDialog')).toBeVisible();
     await computer.locator('#connectCancel').click();
     await signIn(phone);
-    await expect(phone.locator('#sessionPanel')).toBeVisible();
+    await openOwnDevice(phone, computerName);
+    await expect(
+      computer.locator('#peerRows tr').filter({ hasText: listedName(phoneName) }),
+    ).toContainText('This is yours');
+    await openOwnDevice(computer, phoneName);
     await expect(phone.locator('#secureState')).toContainText('Encrypted');
     await chat(computer, phone, 'After sign-in: fresh chat');
     await expect(phone.locator('#timeline')).not.toContainText('Before sign-out: private text');
@@ -251,29 +292,43 @@ test('optional account preferences sync between profiles without merging identit
         .getByRole('button', { name: page === first ? 'Create account' : 'Sign in', exact: true })
         .click();
       await expect(page.locator('#accountStatus')).toContainText('Signed in as sync_owner');
-      if (page === first) {
-        await page.evaluate(() => {
-          localStorage.setItem('evakage-theme', 'dark');
-          localStorage.setItem('evakage-incoming', 'always');
-          localStorage.setItem('evakage-discoverable', '1');
-        });
-        await page.locator('#accountSave').click();
-        await expect(page.locator('#accountStatus')).toContainText('Preferences saved');
-        await page.locator('#accountDialog').getByRole('button', { name: 'Close' }).click();
-      }
+      await page.locator('#accountDialog').getByRole('button', { name: 'Close' }).click();
     }
-    await Promise.all([second.waitForEvent('load'), second.locator('#accountLoad').click()]);
-    await expect(second.locator('#selfCode')).toHaveAttribute('data-device-id', secondId || '');
-    await expect
-      .poll(() => second.evaluate(() => localStorage.getItem('evakage-theme')))
-      .toBe('dark');
-    expect(await second.evaluate(() => localStorage.getItem('evakage-discoverable'))).toBeNull();
-    await expect(second.locator('#sessionPanel')).toBeVisible();
-    await second.locator('#closeSession').click();
+    const saved = (page: import('@playwright/test').Page, key: string) =>
+      page.evaluate(
+        async (key) =>
+          (await (await fetch('/account/session', { cache: 'no-store' })).json()).preferences?.[
+            key
+          ],
+        key,
+      );
+    const setIncoming = async (page: import('@playwright/test').Page, value: string) => {
+      await page.getByRole('button', { name: 'Settings', exact: true }).click();
+      await page.locator(`input[name="incomingPolicy"][value="${value}"]`).check();
+      await page.locator('#settingsDialog').getByRole('button', { name: 'Close' }).click();
+    };
+    // A change is saved to the account as soon as it is made.
+    await first.evaluate(() => localStorage.setItem('evakage-discoverable', '1'));
+    await setIncoming(first, 'always');
+    while ((await first.evaluate(() => document.documentElement.dataset.theme)) !== 'dark')
+      {await first.locator('#themeBtn').click();}
+    await expect.poll(() => saved(first, 'evakage-incoming')).toBe('always');
+    await expect.poll(() => saved(first, 'evakage-theme')).toBe('dark');
+    // Opening Settings picks up the latest saved settings in place, without a reload.
     await second.getByRole('button', { name: 'Settings', exact: true }).click();
     await expect(second.locator('input[value="always"]')).toBeChecked();
+    await expect(second.locator('html')).toHaveAttribute('data-theme', 'dark');
     await expect(second.locator('#discoverableInput')).not.toBeChecked();
     await second.locator('#settingsDialog').getByRole('button', { name: 'Close' }).click();
+    expect(await second.evaluate(() => localStorage.getItem('evakage-discoverable'))).toBeNull();
+    await expect(second.locator('#selfCode')).toHaveAttribute('data-device-id', secondId || '');
+    await expect(second.locator('#sessionPanel')).toBeHidden();
+    // The most recent save wins, whichever device made it.
+    await setIncoming(second, 'auto');
+    await expect.poll(() => saved(second, 'evakage-incoming')).toBe('auto');
+    await first.getByRole('button', { name: 'Settings', exact: true }).click();
+    await expect(first.locator('input[value="auto"]')).toBeChecked();
+    await first.locator('#settingsDialog').getByRole('button', { name: 'Close' }).click();
     await openAccount(second);
     await expect(second.locator('#accountStatus')).toContainText('Signed in as sync_owner');
     await Promise.all([second.waitForEvent('load'), second.locator('#accountLogout').click()]);

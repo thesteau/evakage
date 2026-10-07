@@ -6,7 +6,8 @@ open until an external reviewer records findings against an identified revision.
 
 ## Scope
 
-Review `app/server/server.ts`, `app/server/blobstore.ts` and the browser protocol in `app/client/ts/app.ts`,
+Review the Go backend in `app/server/`, including `server.go`, `socket.go`,
+`protocol.go`, `accounts.go`, and `blobs.go`, and the browser protocol in `app/client/ts/app.ts`,
 `identity.ts`, `messages.ts`, `relay.ts`, `frames.ts`, `sha256.ts` and `sw.ts`.
 Use [SECURITY.md](../SECURITY.md) for the trust boundaries and deployment assumptions.
 Record the reviewed commit and any uncommitted patch; the local checkout currently
@@ -33,7 +34,7 @@ Verify these properties independently:
 
 ## Reproduce and report
 
-Run `npm ci`, `npm run check`, `npm run test:e2e` and
+From `app/`, run `npm ci`, `npm run check`, `npm run test:e2e` and
 `npm run test:e2e:platform`. Adversarial browser tests are in `tests/e2e/history.spec.ts`,
 `pairing.spec.ts`, `security-controls.spec.ts`, `relay-restart.spec.ts` and
 `receiving-validation.spec.ts`, plus `transfer.spec.ts`. Unit tests exercise parser fuzzing, signatures, expiration,

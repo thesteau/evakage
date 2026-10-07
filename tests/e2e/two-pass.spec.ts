@@ -6,11 +6,8 @@ import type { Page } from '@playwright/test';
 
 /** Counts body downloads as the server sees them, whatever the browser routes. */
 function countDownloads(server: any) {
-  const seen = { gets: 0 };
-  server.server.on('request', (req: import('node:http').IncomingMessage) => {
-    if (req.method === 'GET' && req.url?.startsWith('/blob/')) seen.gets++;
-  });
-  return seen;
+  const initial = server.downloads;
+  return { get gets() { return server.downloads - initial; } };
 }
 
 const storedFiles = (server: any) =>

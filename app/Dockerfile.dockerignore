@@ -14,7 +14,11 @@ app/Dockerfile.dockerignore
 app/compose.yaml
 deploy
 node_modules
+**/node_modules
 dist
+app/dist
+app/test-results
+app/playwright-report
 test-results
 playwright-report
 test-results-*

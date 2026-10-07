@@ -102,10 +102,10 @@ test('room cap rejects another owner without removing existing rooms', async (t)
   const second = await register(wsBase, 'owner-two');
   t.after(() => { first.close(); second.close(); });
   const joined = waitFor(first, (m) => m.type === 'room-joined');
-  first.send(JSON.stringify({ type: 'create-room', name: 'First' }));
+  first.send(JSON.stringify({ type: 'create-room', access: 'protected', name: 'First' }));
   await joined;
   const denied = waitFor(second, (m) => m.type === 'error' && m.context === 'create-room');
-  second.send(JSON.stringify({ type: 'create-room', name: 'Second' }));
+  second.send(JSON.stringify({ type: 'create-room', access: 'protected', name: 'Second' }));
   assert.match((await denied).message, /maximum number of rooms/);
   assert.equal(app.rooms.size, 1);
 });

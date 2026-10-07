@@ -6,7 +6,8 @@ import path from 'node:path';
 import { startServer, openWs, waitFor } from './helpers.js';
 import { fingerprintOf, signTranscript, bytesToBase64 } from '../../app/client/ts/identity.js';
 
-test('room creation requires login, anonymous guests can join, and account-wide replacement destroys the oldest room', async (t) => {
+/** A server with accounts, a signed-in owner account and a device factory. */
+async function roomWorld(t: import('node:test').TestContext) {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'evakage-room-policy-'));
   const { base, wsBase, app } = await startServer(t, {
     accountsDb: path.join(dir, 'accounts.sqlite'),
@@ -57,16 +58,21 @@ test('room creation requires login, anonymous guests can join, and account-wide 
     return { id, ws };
   }
 
-  async function create(device: { ws: WebSocket }, name: string) {
+  async function create(device: { ws: WebSocket }, name: string, access = 'protected') {
     const joined = waitFor(device.ws, (m) => m.type === 'room-joined');
-    device.ws.send(JSON.stringify({ type: 'create-room', name }));
+    device.ws.send(JSON.stringify({ type: 'create-room', access, name }));
     return joined;
   }
+  return { app, device, create };
+}
+
+test('room creation requires login, anonymous guests can join, and account-wide replacement destroys the oldest room', async (t) => {
+  const { app, device, create } = await roomWorld(t);
   const first = await device(true);
   const second = await device(true);
   const guest = await device(false);
   const denied = waitFor(guest.ws, (m) => m.type === 'error' && m.context === 'create-room');
-  guest.ws.send(JSON.stringify({ type: 'create-room', name: 'Anonymous room' }));
+  guest.ws.send(JSON.stringify({ type: 'create-room', access: 'protected', name: 'Anonymous room' }));
   assert.match((await denied).message, /Log in to create a room/);
   assert.equal(app.rooms.size, 0);
   const oldest = (await create(first, 'First')).room;
@@ -116,4 +122,102 @@ test('room creation requires login, anonymous guests can join, and account-wide 
     [...app.rooms.values()].map((room) => room.name),
     ['Third', 'Fourth'],
   );
+});
+
+test('private rooms wait for the creator, protected rooms admit by code, public rooms are listed without the code', async (t) => {
+  const { device, create } = await roomWorld(t);
+  const owner = await device(true);
+  const guest = await device(false);
+  const other = await device(false);
+  const rooms = (ws: WebSocket, test: (rooms: any[]) => boolean) =>
+    waitFor(ws, (m) => m.type === 'rooms' && test(m.rooms));
+
+  // An omitted access setting is the safe default: private.
+  const created = waitFor(owner.ws, (m) => m.type === 'room-joined');
+  owner.ws.send(JSON.stringify({ type: 'create-room', name: 'Default' }));
+  const room = (await created).room;
+  assert.equal(room.access, 'private');
+  assert.equal(room.owned, true);
+
+  // A code join waits; the requester sees only the name, the creator sees who.
+  const pending = waitFor(guest.ws, (m) => m.type === 'room-pending');
+  const ownerSees = rooms(owner.ws, (list) => list[0]?.requests?.length === 1);
+  const guestSees = rooms(guest.ws, (list) => list[0]?.awaiting === true);
+  guest.ws.send(JSON.stringify({ type: 'join-room', code: room.code }));
+  assert.equal((await pending).roomId, room.id);
+  assert.equal((await ownerSees).rooms[0].requests[0].id, guest.id);
+  const listing = (await guestSees).rooms[0];
+  assert.equal(listing.code, undefined);
+  assert.deepEqual(listing.members, []);
+
+  // Only the creator's account may answer or change access.
+  const otherWaits = waitFor(other.ws, (m) => m.type === 'room-pending');
+  other.ws.send(JSON.stringify({ type: 'join-room', code: room.code }));
+  await otherWaits;
+  guest.ws.send(JSON.stringify({ type: 'room-approve', roomId: room.id, deviceId: other.id, approve: true }));
+  guest.ws.send(JSON.stringify({ type: 'room-access', roomId: room.id, access: 'public' }));
+
+  const declined = waitFor(other.ws, (m) => m.type === 'error' && m.context === 'join-room');
+  owner.ws.send(JSON.stringify({ type: 'room-approve', roomId: room.id, deviceId: other.id, approve: false }));
+  assert.match((await declined).message, /declined/);
+  const admitted = waitFor(guest.ws, (m) => m.type === 'room-joined');
+  owner.ws.send(JSON.stringify({ type: 'room-approve', roomId: room.id, deviceId: guest.id, approve: true }));
+  const seated = (await admitted).room;
+  assert.equal(seated.code, room.code);
+  assert.equal(seated.owned, undefined);
+  assert.equal(seated.members.length, 2);
+
+  // Switching off approval admits whoever is still waiting.
+  const otherAsks = waitFor(other.ws, (m) => m.type === 'room-pending');
+  other.ws.send(JSON.stringify({ type: 'join-room', code: room.code }));
+  await otherAsks;
+  const opened = waitFor(other.ws, (m) => m.type === 'room-joined');
+  owner.ws.send(JSON.stringify({ type: 'room-access', roomId: room.id, access: 'protected' }));
+  assert.equal((await opened).room.id, room.id);
+
+  // A protected room admits by code straight away.
+  const protectedRoom = (await create(owner, 'Open door', 'protected')).room;
+  const direct = waitFor(other.ws, (m) => m.type === 'room-joined' && m.room.id === protectedRoom.id);
+  other.ws.send(JSON.stringify({ type: 'join-room', code: protectedRoom.code }));
+  await direct;
+
+  // A public room is listed to everyone, joinable without the code, and never shows it.
+  const stranger = await device(false);
+  const listed = rooms(stranger.ws, (list) =>
+    list.some((r) => r.id === protectedRoom.id && r.access === 'public'),
+  );
+  owner.ws.send(JSON.stringify({ type: 'room-access', roomId: protectedRoom.id, access: 'public' }));
+  const shown = (await listed).rooms.find((r: any) => r.id === protectedRoom.id);
+  assert.equal(shown.code, undefined);
+  assert.deepEqual(shown.members, []);
+  assert.equal(shown.seats, 2);
+  const joinedPublic = waitFor(stranger.ws, (m) => m.type === 'room-joined');
+  stranger.ws.send(JSON.stringify({ type: 'join-room', roomId: protectedRoom.id }));
+  assert.equal((await joinedPublic).room.code, protectedRoom.code);
+});
+
+test('a pending request ends when the requester cancels or disconnects', async (t) => {
+  const { app, device, create } = await roomWorld(t);
+  const owner = await device(true);
+  const room = (await create(owner, 'Quiet', 'private')).room;
+  const guest = await device(false);
+  // Every wait starts before the action it waits for: replies can arrive at once.
+  const requests = (count: number) =>
+    waitFor(owner.ws, (m) => m.type === 'rooms' && m.rooms[0].requests.length === count);
+  let asked = requests(1);
+  const pending = waitFor(guest.ws, (m) => m.type === 'room-pending');
+  guest.ws.send(JSON.stringify({ type: 'join-room', code: room.code }));
+  await Promise.all([pending, asked]);
+  const cancelled = waitFor(guest.ws, (m) => m.type === 'room-left' && m.roomId === room.id);
+  const cleared = requests(0);
+  guest.ws.send(JSON.stringify({ type: 'leave-room', roomId: room.id }));
+  await Promise.all([cancelled, cleared]);
+  assert.ok(app.rooms.has(room.id));
+
+  asked = requests(1);
+  guest.ws.send(JSON.stringify({ type: 'join-room', code: room.code }));
+  await asked;
+  const gone = waitFor(owner.ws, (m) => m.type === 'rooms' && !m.rooms[0].requests.length);
+  guest.ws.close();
+  await gone;
 });

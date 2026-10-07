@@ -17,13 +17,18 @@ async function rebuild() {
   if (building) { pending = true; return; }
   building = true;
   try {
+    if (process.platform === 'win32' && server && server.exitCode === null) {
+      const exited = new Promise(resolve => server.once('exit', resolve));
+      server.kill();
+      await exited;
+    }
     if (await runBuild() && !stopping) {
       if (server && server.exitCode === null) {
         const exited = new Promise(resolve => server.once('exit', resolve));
         server.kill();
         await exited;
       }
-      server = spawn(process.execPath, ['dist/app/server/server.js'], { cwd: root, stdio: 'inherit' });
+      server = spawn(fileURLToPath(new URL(`../app/dist/evakage${process.platform === 'win32' ? '.exe' : ''}`, import.meta.url)), [], { cwd: fileURLToPath(new URL('../app/', import.meta.url)), stdio: 'inherit' });
       server.on('error', error => console.error(error));
     }
   } catch (error) { console.error(error); }
@@ -32,7 +37,7 @@ async function rebuild() {
     if (pending && !stopping) { pending = false; void rebuild(); }
   }
 }
-const watchers = ['app/client', 'app/server', 'app/tsconfig.json'].map(dir => watch(new URL(`../${dir}`, import.meta.url), { recursive: true }, () => {
+const watchers = ['app/client', 'app/server', 'app/cmd', 'app/go.mod', 'app/go.sum', 'app/tsconfig.json'].map(dir => watch(new URL(`../${dir}`, import.meta.url), { recursive: true }, () => {
   clearTimeout(timer);
   timer = setTimeout(() => void rebuild(), 150);
 }));
