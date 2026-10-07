@@ -5,7 +5,7 @@
   "description": "Temporary, end-to-end encrypted browser chat and file sharing for trusted networks.",
   "license": "MIT",
   "author": "thesteau",
-  "homepage": "https://github.com/thesteau/evakage#readme",
+  "homepage": "https://evakage.docs.thesteau.com",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/thesteau/evakage.git"
