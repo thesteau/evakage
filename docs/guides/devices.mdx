@@ -5,19 +5,19 @@ description: "Connect, verify, and manage your devices."
 
 ## Pair a device
 
-Choose **Connect**, then scan the other device's QR invitation or enter its private pairing code.
+Choose **Connect**, then scan the other device's QR invitation, or enter its private pairing code and choose **Join**. On the other device, the QR icon next to **Connect** shows both the invitation and the code.
 
-Share invitations only with people you want to connect. Private codes expire after three days and change after a server restart. Existing pairings survive both.
+Share invitations only with people you want to connect to. Private codes expire after three days and change after a server restart. Devices that are already paired stay paired.
 
 Device names come from their codes and cannot be renamed.
 
 ## Verify a device
 
-1. Open **Known devices** and choose **Verify**.
+1. Open **Known devices** and choose **Verify** beside the device you want to check.
 2. Contact the owner outside Evakage, such as by phone or in person.
-3. Compare safety codes and enter the code the other owner reads to you.
+3. Ask them to open **Known devices**, choose your device, and read its safety code. Enter that code in your verification dialog and choose **Verify**.
 
-Verification is remembered in this browser. A new identity needs verification again.
+Verification is remembered in this browser. If the other device's identity changes, verify it again.
 
 Enable **Verified devices only** in Settings to require verification. For a room, every recipient must be verified before you can send.
 
@@ -40,10 +40,10 @@ Advertising is off by default. Enabling it makes your device discoverable but do
 
 ## Send and receive
 
-Open a device to send text or use **Send file**. You can also drop a file onto a device or room, or paste with **Ctrl/Cmd+V**.
+Choose **Open** beside a device to start a conversation. Type a message or choose **Send file**. You can also drop a file onto a device or room, or paste with **Ctrl/Cmd+V**.
 
-Settings controls incoming files: **Ask for new devices**, **Always ask**, or **Accept automatically**. When asked, a file waits for **Accept** or **Decline**. Messages do not need this approval.
+In **Settings**, choose how to handle incoming files: **Ask for new devices**, **Always ask**, or **Accept automatically**. When approval is required, choose **Accept** or **Decline** for each file. Messages do not need this approval.
 
-Hover **Status** for connection details. Active transfers show speed and estimated time remaining.
+Hover over **Status** for connection details. Active transfers show speed and estimated time remaining.
 
-Administrators can restrict server access with `AUTH_TOKEN` or `DEVICE_ALLOWLIST`. See [configuration](/hosting/configuration).
+Administrators can restrict server access with `AUTH_TOKEN` or `DEVICE_ALLOWLIST`. See the [access settings](/hosting/configuration#server-and-access).

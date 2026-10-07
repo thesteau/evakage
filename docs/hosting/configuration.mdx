@@ -9,7 +9,7 @@ For Docker, edit the `.env` file beside your Compose file and recreate the conta
 docker compose up -d --force-recreate
 ```
 
-For local Node commands, set variables in your shell.
+When running from source with `npm run dev` or `npm start`, set environment variables in your shell. These commands do not load `app/.env`.
 
 ## Server and access
 
@@ -48,7 +48,7 @@ If signup shows **“Same-origin JSON request required”**, check these setting
 | `MAX_ROOMS` | `50` | Active rooms across the server |
 | `ROOM_MAX_MEMBERS` | `20` | Members per room; allowed range 2–64 |
 
-Replacing a device connection does not need another slot. Each account can own two rooms; creating a third replaces its oldest. Rooms switch to server relay above six members.
+Reconnecting an existing device does not use an extra slot. Each account can own two rooms; creating a third replaces its oldest room. Rooms with more than six members use the server relay, including members whose seats are temporarily held while they are offline.
 
 ## File and text budgets
 
@@ -66,14 +66,14 @@ Byte limits include encrypted content and envelopes. Accepted uploads reserve th
 
 The smaller global budgets take precedence over per-chat ceilings. Files cannot consume the text budget.
 
-At capacity, older completed pending items of the same kind may be removed. Active uploads and downloads are protected from capacity eviction. Online participants receive warnings and removal notices.
+When a budget is full, the server may remove older items of the same kind whose uploads are complete but which are still waiting for recipients. Active uploads and downloads are protected from capacity cleanup. Online participants receive warnings and removal notices.
 
 ## Relay expiry
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
 | `BLOB_IDLE_GRACE_MS` | `900000` (15 min) | Grace after everyone disconnects |
-| `BLOB_SOLO_MAX_MS` | `10800000` (3 hours) | Direct chat with only one device present; also the away-seat window |
+| `BLOB_SOLO_MAX_MS` | `10800000` (3 hours) | Expiry for a direct chat with only one device online; also how long a disconnected room member keeps a seat |
 | `BLOB_MAX_AGE_MS` | `259200000` (3 days) | Maximum item age |
 | `BLOB_SWEEP_MS` | `60000` (1 min) | Physical cleanup interval |
 
@@ -88,4 +88,4 @@ Rooms are exempt from the one-device expiry rule. Self-chat has a 24-hour offlin
 
 Keep accounts in their separate named volume. **Do not mount a persistent relay volume.**
 
-Local Node accounts are disabled unless `ACCOUNTS_DB` is set. Local relay data defaults to `evakage-blobs` under the OS temporary directory.
+When running from source, accounts are disabled unless you set `ACCOUNTS_DB`. Local relay data defaults to an `evakage-blobs` directory inside your operating system's temporary directory.

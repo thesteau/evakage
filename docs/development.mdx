@@ -3,7 +3,7 @@ title: "Development"
 description: "Run the app and its checks from source."
 ---
 
-For everyday hosting, use [deployment](/hosting/deployment). This page is for contributors.
+This guide covers local development, builds, and checks. For hosting with the published Docker image, follow the [deployment guide](/hosting/deployment).
 
 ## Run locally
 
@@ -18,7 +18,7 @@ npm run dev
 
 Open `http://localhost:3000`. The development server rebuilds and restarts when source files change.
 
-Node commands read your shell environment; they do not load `app/.env`. To enable local accounts:
+The development commands read environment variables from your shell; they do not load `app/.env`. To enable accounts locally, run these commands from `app/`:
 
 ```bash
 export ACCOUNTS_DB=./data/accounts.sqlite
@@ -40,6 +40,8 @@ Open `http://localhost:3712`. This setup reads `app/.env` and preserves accounts
 
 ## Run checks
 
+Run these commands from `app/`:
+
 ```bash
 npm run check
 npx playwright install chromium firefox webkit
@@ -49,13 +51,13 @@ npm run test:e2e:platform
 
 | Command | Checks |
 | --- | --- |
-| `npm run check` | Lint, type checks, unit tests, and release tests |
+| `npm run check` | Lint, type checks, Go vet and tests, browser unit tests, and release tests |
 | `npm run test:e2e` | Main browser suite |
 | `npm run test:e2e:platform` | Chromium, Firefox, and WebKit smoke tests |
 | `npm run build` | Build the Go binaries, compile browser TypeScript, and assemble assets |
 | `npm run test:go` | Backend Go tests |
 
-Test commands build automatically. Release tests use mocked APIs and temporary repositories; they do not publish real releases.
+The unit and browser test commands build the app automatically. Release tests use mocked APIs and temporary repositories; they do not publish real releases.
 
 Run npm commands from `app/`. Browser traces are saved under `app/test-results/`.
 Open one with `npx playwright show-trace <path-to-trace.zip>`.
@@ -69,7 +71,7 @@ Open one with `npx playwright show-trace <path-to-trace.zip>`.
 | `app/client/` | Browser markup, styles, TypeScript, and assets |
 | `tests/` | Unit, browser, and release tests |
 | `scripts/` | Build, release, and benchmark scripts |
-| `deploy/` | Published-image hosting |
+| `deploy/` | Docker setup for the published image |
 | `docs/` | Mintlify documentation |
 | `maintainer/` | Security review and measurements |
 | `app/dist/` | Generated output; not committed |
@@ -94,4 +96,4 @@ npx mint validate
 npx mint broken-links
 ```
 
-See [releases](/releases) for publishing and contribution rules.
+Read the [release guide](/releases) for PR title requirements and the publishing process.

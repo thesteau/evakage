@@ -8,7 +8,7 @@ push, pull request, release and scheduled events.
 
 | Branch | Purpose |
 | --- | --- |
-| `main` | Integration code; successful app CI publishes `latest` and a full-SHA image. |
+| `main` | Integration branch; after app checks pass, publish `latest` and an image tagged with the full commit SHA. |
 | `prod` | Reviewed production code; promotion preserves Conventional Commit history. |
 | `release-state` | Orphan branch containing only version manifest, changelog and `release.json`. |
 
@@ -33,9 +33,9 @@ under its MIT license.
 
 | File | Purpose |
 | --- | --- |
-| `ci.yml` | App checks for PRs and prod pushes; reusable source, release, browser, container smoke and Trivy checks for main/stable images. |
+| `ci.yml` | App checks for PRs and `prod` pushes; shared source, release, browser, container smoke and Trivy checks for main and stable images. |
 | `ci-repository.yml` | actionlint and hadolint. |
-| `codeql.yml` | Existing CodeQL security gate and SARIF artifacts. |
+| `codeql.yml` | CodeQL analysis for Go and TypeScript, with SARIF artifacts and optional code-scanning uploads. |
 | `image-latest.yml` | On main pushes (or manual retries), run shared app CI, then publish `latest` and `sha-<full SHA>` if the commit is still current. |
 | `pr-title.yml` | Validate Conventional Commit titles into `main`. |
 | `pr-prod-source.yml` | Accept only same-repository `main` promotions into `prod`. |
@@ -105,5 +105,5 @@ and reviewed notes. If `prod` is reset, retained stable tags identify commits
 already shipped; rebased or squashed copies with new SHAs may count again.
 Review the proposed version and notes before approving.
 
-Run `npm run check` before committing automation changes. Release tests use mocked
+Run `npm run check` from `app/` before committing automation changes. Release tests use mocked
 GitHub APIs and temporary local repositories; they do not create real releases.

@@ -9,25 +9,27 @@ description: "Create a temporary group chat and invite devices."
 2. Open the room. Its header shows **Code:** with buttons to copy the code or show it as a QR code.
 3. Others enter the code and choose **Join**, or scan the QR with the button next to **Join**. No account is needed to join.
 
-The code is a private invitation, so the Rooms list does not show it; it appears only inside the open room. Only joined members see the room's details.
+The code is a private invitation. It appears inside the open room, and only members can see it and the member list.
 
 ## Who can join
 
 | Access | Joining |
 | --- | --- |
-| **Private** (default) | A code join waits until the room's creator approves it |
+| **Private** (default) | A device joining by code waits for the room owner's approval |
 | **Protected** | Anyone with the code joins straight away |
-| **Public** | Also listed in everyone's Rooms list and joinable without a code; the code and members stay hidden until they join |
+| **Public** | Listed in everyone's Rooms list; anyone can join without a code |
 
-Join requests appear at the top of the creator's room chat, with **Approve** and **Decline**. While waiting, the requester's Rooms list shows **Waiting for approval**; the trash icon cancels the request. A request also ends when the requester disconnects.
+The account that creates a room owns it. Any joined device signed into that account can approve requests and change access.
 
-Only the room's creator sees its gear icon in Rooms, where access can be changed at any time. Switching away from Private admits everyone still waiting. To choose the default for new rooms, use **Approve who joins my rooms** in Settings: on for Private, off for Protected.
+Join requests appear at the top of the owner's room chat, with **Approve** and **Decline** buttons. While you wait to join, your Rooms list shows **Waiting for approval**. Choose the trash icon to cancel your request. Disconnecting also cancels it.
+
+To change access, choose the room's gear icon in **Rooms** on an owner's device. Switching from **Private** to **Protected** or **Public** admits waiting devices until the room is full. In **Settings**, enable **Approve who joins my rooms** to make new rooms Private, or disable it to make them Protected.
 
 Each account can own **two active rooms**. Creating a third removes its oldest room and that room's pending server content.
 
 ## Send to the group
 
-Open the room to chat, see its members, or send a file. Dropping a file on a joined room sends it to every member. In a room, only the creator sees the **Via server** switch.
+Open the room to chat, see its members, or send a file. Dropping a file on a room you have joined sends it to every member. Only devices signed into the owner's account see the room's **Via server** switch.
 
 Content is end-to-end encrypted in both delivery modes:
 
@@ -36,15 +38,15 @@ Content is end-to-end encrypted in both delivery modes:
 | Up to 6 members | Direct connections where possible, with server fallback |
 | More than 6 members | Encrypted server relay; each file is uploaded once |
 
-The default maximum is **20 members per room**. Operators can change it in [configuration](/hosting/configuration).
+The default maximum is **20 members per room**. Devices marked **away** still count toward the member limit and delivery mode while their seats are held. Operators can change the member limit in the [configuration guide](/hosting/configuration#device-and-room-limits).
 
 ## Leave or reconnect
 
 - A disconnected member appears **away** and keeps a seat for up to three hours by default.
 - Choosing **Leave room** gives up the seat immediately.
-- After a reload, rejoin to keep your seat.
+- After a reload, rejoin from the same browser profile before your seat expires.
 - A room ends when its last seat is released or expires. A server restart also removes rooms.
 
 Returning members can recover history that others still hold. File entries may return without the file itself; **Gone** means no available copy remains.
 
-See [messages and files](/guides/transfers) for saving and expiry.
+Read the [transfer guide](/guides/transfers) for instructions on saving files and checking when server copies expire.
