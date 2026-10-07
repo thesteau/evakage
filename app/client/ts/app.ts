@@ -4819,6 +4819,15 @@ $('#roomQrBtn').addEventListener('click', () => {
   openDialog($('#roomQrDialog'));
 });
 
+// Keep the keyboard and viewport steady until Safari delivers the tap's click.
+// Cancelling mousedown prevents the focus change, while the native click still
+// submits or opens the file picker with the original user activation.
+messageForm.addEventListener('mousedown', (event: MouseEvent) => {
+  if (event.button !== 0 || document.activeElement !== messageInput) return;
+  const button = event.target instanceof Element ? event.target.closest('button') : null;
+  if (button?.form === messageForm && !button.disabled) event.preventDefault();
+});
+
 messageForm.addEventListener('submit', async (event: Event) => {
   event.preventDefault();
   const conv = activeConversation();

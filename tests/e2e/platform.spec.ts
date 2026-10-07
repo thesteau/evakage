@@ -155,3 +155,56 @@ for (const twoPass of [false, true]) {
     );
   });
 }
+
+test('mobile composer sends and opens attachments with one tap while typing', async ({
+  browser,
+  browserName,
+  platformServer,
+}) => {
+  test.skip(browserName === 'firefox', 'Firefox does not support mobile touch emulation.');
+  const context = await browser.newContext({
+    viewport: { width: 390, height: 844 },
+    isMobile: true,
+    hasTouch: true,
+    serviceWorkers: 'block',
+  });
+  try {
+    const page = await context.newPage();
+    await page.goto(platformServer.base);
+    await expect(page.locator('#serverState')).toHaveClass(/\bonline\b/);
+    await page.getByRole('button', { name: 'Open conversation with yourself', exact: true }).tap();
+    await expect(page.locator('#secureState')).toHaveText('Encrypted');
+    await expect(page.locator('#closeSession')).toBeFocused();
+
+    const input = page.locator('#messageInput');
+    const send = page.locator('#messageForm').getByRole('button', { name: 'Send', exact: true });
+    for (const text of ['First mobile note', 'Second mobile note']) {
+      await input.fill(text);
+      await expect(input).toBeFocused();
+      await send.tap();
+      await expect(page.locator('#timeline').getByText(text, { exact: true })).toHaveCount(1);
+      // Keep typing without reopening the keyboard after every message.
+      await expect(input).toBeFocused();
+      await expect(input).toHaveValue('');
+    }
+
+    await input.fill('Draft alongside an attachment');
+    const [chooser] = await Promise.all([
+      page.waitForEvent('filechooser'),
+      page.getByRole('button', { name: 'Attach File', exact: true }).tap(),
+    ]);
+    expect(chooser.isMultiple()).toBe(true);
+    await chooser.setFiles({
+      name: 'mobile.txt',
+      mimeType: 'text/plain',
+      buffer: Buffer.from('Attached with one tap'),
+    });
+    await expect(page.locator('#timeline .file-item')).toContainText('mobile.txt');
+    await expect(page.locator('#timeline .file-item')).toContainText('SHA-256');
+    await expect(input).toHaveValue('Draft alongside an attachment');
+    // Smaller fields make Safari zoom the page when the keyboard opens.
+    expect(await input.evaluate((element) => parseFloat(getComputedStyle(element).fontSize))).toBeGreaterThanOrEqual(16);
+  } finally {
+    await context.close();
+  }
+});
