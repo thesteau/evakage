@@ -15,17 +15,18 @@
   },
   "type": "module",
   "scripts": {
-    "start": "npm run build && node dist/app/server/server.js",
-    "dev": "node scripts/dev.mjs",
-    "test": "npm run build && node --test \"dist/tests/unit/*.test.js\"",
+    "start": "npm run build && node ../scripts/start.mjs",
+    "dev": "node ../scripts/dev.mjs",
+    "test": "npm run build && npm run test:go && node --test \"dist/tests/unit/*.test.js\"",
+    "test:go": "node ../scripts/go.mjs -C ../tests/go test -tags testbridge ./...",
     "test:e2e": "npm run build && playwright test --config dist/app/playwright.config.js",
     "test:e2e:platform": "npm run build && playwright test --config dist/app/playwright.platform.config.js",
-    "lint": "eslint --config app/eslint.config.js .",
-    "typecheck": "tsc --noEmit -p app/tsconfig.json",
-    "typecheck:release": "tsc --noEmit -p scripts/tsconfig.json",
-    "test:release": "node --test \"tests/release/*.test.cts\"",
-    "check": "npm run lint && npm run typecheck && npm run typecheck:release && npm test && npm run test:release",
-    "build": "node scripts/build.mjs"
+    "lint": "eslint --config eslint.config.js ..",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "typecheck:release": "tsc --noEmit -p ../scripts/tsconfig.json",
+    "test:release": "node ../scripts/test-release.mjs",
+    "check": "npm run lint && npm run typecheck && npm run typecheck:release && node ../scripts/go.mjs vet ./... && npm test && npm run test:release",
+    "build": "node ../scripts/build.mjs"
   },
   "engines": {
     "node": ">=22.13.0"

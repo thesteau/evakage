@@ -1,10 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createPairingCodes, PAIRING_CODE_MAX_AGE_MS } from '../../app/server/server.js';
+import { createPairingCodes, PAIRING_CODE_MAX_AGE_MS } from '../support/go-server.js';
 
-test('private invitation codes resolve before expiry and are refused at the exact boundary', () => {
+test('private invitation codes resolve before expiry and are refused at the exact boundary', async (t) => {
   let now = 1000;
-  const codes = createPairingCodes(() => now);
+  const codes = await createPairingCodes(() => now);
+  t.after(() => codes.app.stop());
   const entry = codes.issue('device-a');
   assert.match(entry.code, /^[A-Z2-9]{4}-[A-Z2-9]{4}$/);
   assert.equal(entry.expiresAt, now + PAIRING_CODE_MAX_AGE_MS);
@@ -19,9 +20,10 @@ test('private invitation codes resolve before expiry and are refused at the exac
   assert.equal(codes.resolve(next.code), 'device-a');
 });
 
-test('invitation codes are unique across devices and pruning invalidates expired records', () => {
+test('invitation codes are unique across devices and pruning invalidates expired records', async (t) => {
   let now = 1;
-  const codes = createPairingCodes(() => now);
+  const codes = await createPairingCodes(() => now);
+  t.after(() => codes.app.stop());
   const entries = Array.from({ length: 100 }, (_, i) => codes.issue(`device-${i}`));
   assert.equal(new Set(entries.map((entry) => entry.code)).size, entries.length);
   entries.forEach((entry, i) => assert.equal(codes.resolve(entry.code), `device-${i}`));

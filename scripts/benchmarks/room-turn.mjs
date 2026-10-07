@@ -25,8 +25,8 @@ try {
     '--log-file=stdout', '--simple-log'], { cwd: root, timeout: 120000, stdio: ['ignore', 'pipe', 'pipe'] });
   const port = execFileSync('docker', ['port', name, '3478/tcp'], { encoding: 'utf8' }).trim().split(':').pop();
   const code = await new Promise((resolve, reject) => {
-    const child = spawn(process.execPath, [path.join(root, 'node_modules/@playwright/test/cli.js'),
-      'test', '--config', 'dist/app/playwright.config.js', 'dist/tests/e2e/room-churn.spec.js', '--grep', 'file transfers', '--workers=1',
+    const child = spawn(process.execPath, [path.join(root, 'app/node_modules/@playwright/test/cli.js'),
+      'test', '--config', 'app/dist/app/playwright.config.js', 'app/dist/tests/e2e/room-churn.spec.js', '--grep', 'file transfers', '--workers=1',
       `--repeat-each=${repeat}`, '--output', output], {
       cwd: root, stdio: 'inherit', env: { ...process.env,
         ARIA_CHURN_TURN_URL: `turn:127.0.0.1:${port}?transport=tcp`,

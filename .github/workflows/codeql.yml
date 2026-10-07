@@ -25,7 +25,8 @@ jobs:
       - name: Initialize CodeQL
         uses: github/codeql-action/init@v4
         with:
-          languages: javascript-typescript
+          languages: javascript-typescript, go
+          build-mode: autobuild
           queries: security-and-quality
           # The tests deliberately build URLs from fixture data and write to the
           # OS temp dir; they are never shipped, so their findings are noise.
@@ -41,7 +42,7 @@ jobs:
       - name: Analyse
         uses: github/codeql-action/analyze@v4
         with:
-          category: /language:javascript-typescript
+          category: /language:javascript-typescript-go
           output: sarif-results
           upload: ${{ vars.CODE_SCANNING_ENABLED == 'true' && 'always' || 'never' }}
 

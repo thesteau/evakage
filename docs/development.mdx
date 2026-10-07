@@ -7,9 +7,11 @@ For everyday hosting, use [deployment](/hosting/deployment). This page is for co
 
 ## Run locally
 
-Use Node 24 or newer. The Docker image uses Node 26.
+Use Go 1.26 or newer for the backend and Node 24 or newer for browser builds
+and release tooling. The production image runs the Go binary without Node.
 
 ```bash
+cd app
 npm ci
 npm run dev
 ```
@@ -50,26 +52,35 @@ npm run test:e2e:platform
 | `npm run check` | Lint, type checks, unit tests, and release tests |
 | `npm run test:e2e` | Main browser suite |
 | `npm run test:e2e:platform` | Chromium, Firefox, and WebKit smoke tests |
-| `npm run build` | Compile TypeScript and assemble browser assets |
+| `npm run build` | Build the Go binaries, compile browser TypeScript, and assemble assets |
+| `npm run test:go` | Backend Go tests |
 
 Test commands build automatically. Release tests use mocked APIs and temporary repositories; they do not publish real releases.
 
-Browser traces are saved under `test-results/`. Open one with `npx playwright show-trace <path-to-trace.zip>`.
+Run npm commands from `app/`. Browser traces are saved under `app/test-results/`.
+Open one with `npx playwright show-trace <path-to-trace.zip>`.
 
 ## Find the code
 
 | Directory | Contents |
 | --- | --- |
-| `app/server/` | HTTP, WebSockets, accounts, and relay |
+| `app/server/` | Go HTTP, WebSockets, accounts, and relay |
+| `app/cmd/evakage/` | Production server entry point |
 | `app/client/` | Browser markup, styles, TypeScript, and assets |
 | `tests/` | Unit, browser, and release tests |
 | `scripts/` | Build, release, and benchmark scripts |
 | `deploy/` | Published-image hosting |
 | `docs/` | Mintlify documentation |
 | `maintainer/` | Security review and measurements |
-| `dist/` | Generated output; not committed |
+| `app/dist/` | Generated output; not committed |
 
-The application is TypeScript; builds produce JavaScript ES modules. Browser assets are assembled in `dist/app/public/`.
+The backend builds to `app/dist/evakage` (`app/dist/evakage.exe` on Windows). Browser
+TypeScript builds produce JavaScript ES modules in `app/dist/app/public/`.
+The production Go module lives in `app/`. Go tests live in the separate
+`tests/go/` module, which uses the local application through a `replace` directive.
+The protocol and browser suites run the Go backend through a test-only runner
+(`tests/go/cmd/evakage-test/`, built with the `testbridge` tag). Its authenticated control
+listener is absent from the production binary.
 
 ## Documentation
 

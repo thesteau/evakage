@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createPairingCodes, PAIRING_CODE_MAX_AGE_MS } from '../../app/server/server.js';
+import { createPairingCodes, PAIRING_CODE_MAX_AGE_MS } from '../support/go-server.js';
 import { fingerprintOf, bytesToBase64, signTranscript } from '../../app/client/ts/identity.js';
 import { startServer, openWs, waitFor } from './helpers.js';
 
@@ -49,9 +49,10 @@ async function pair(ws: WebSocket, code: string, targetId?: string) {
   return reply;
 }
 
-test('pairing codes expire exactly at three days, rotate lazily and persist within their window', () => {
+test('pairing codes expire exactly at three days, rotate lazily and persist within their window', async (t) => {
   let now = 1000;
-  const codes = createPairingCodes(() => now);
+  const codes = await createPairingCodes(() => now);
+  t.after(() => codes.app.stop());
   const first = codes.issue('alice');
   assert.equal(PAIRING_CODE_MAX_AGE_MS, 259200000);
   assert.equal(first.expiresAt, now + PAIRING_CODE_MAX_AGE_MS);

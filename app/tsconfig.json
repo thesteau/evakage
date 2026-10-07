@@ -12,8 +12,12 @@
     "types": [
       "node"
     ],
+    "paths": {
+      "@playwright/test": ["./node_modules/@playwright/test"],
+      "jsqr": ["./node_modules/jsqr"]
+    },
     "rootDir": "..",
-    "outDir": "../dist",
+    "outDir": "./dist",
     "declaration": true,
     "noEmitOnError": true,
     "noImplicitAny": true,
@@ -31,14 +35,14 @@
     "useUnknownInCatchVariables": false
   },
   "include": [
-    "server/**/*.ts",
     "client/ts/**/*.ts",
     "../tests/unit/**/*.ts",
+    "../tests/support/**/*.ts",
     "../tests/e2e/**/*.ts",
     "playwright*.config.ts"
   ],
   "exclude": [
-    "../node_modules",
-    "../dist"
+    "node_modules",
+    "dist"
   ]
 }

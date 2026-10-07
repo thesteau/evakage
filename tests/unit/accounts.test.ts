@@ -188,6 +188,11 @@ test('accounts are optional; durable preferences sync with conflict protection a
   );
   assert.deepEqual(synced.preferences, preferences);
   assert.equal(
+    (await request(base, 'preferences', { preferences: { 'evakage-theme': 'system light' }, revision: 1 }, cookie, 'PUT')).status,
+    400,
+    'preference values must match one choice exactly',
+  );
+  assert.equal(
     (await request(base, 'preferences', { preferences, revision: 0 }, otherCookie, 'PUT')).status,
     409,
   );

@@ -21,7 +21,7 @@ Release Please calculates the next stable version, starting at `v1.0.0`.
 `scripts/release-state.cts` records the production commit being approved and
 tags that exact commit when the metadata PR merges. It uses Release Please's
 `simple` strategy, retaining only its changelog update; version metadata stays
-off the code branches. `package.json` remains the development package version,
+off the code branches. `app/package.json` remains the development package version,
 not the authoritative stable version. Containers carry the release version and
 commit in OCI labels. Release tooling requires Node 24+.
 

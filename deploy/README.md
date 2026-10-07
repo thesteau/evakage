@@ -74,12 +74,12 @@ empty, and exits:
 
 ```cron
 # m h  dom mon dow  command
-0 3 * * * docker exec evakage node app/server/server.js --sweep-blobs
+0 3 * * * docker exec evakage evakage --sweep-blobs
 ```
 
 The one-shot mode judges age by file mtime, since it runs in a separate process
 with no knowledge of which sessions are alive; it uses the 3-day cap unless you
-pass an age in milliseconds, e.g. `node app/server/server.js --sweep-blobs 600000` for
+pass an age in milliseconds, e.g. `evakage --sweep-blobs 600000` for
 anything over ten minutes.
 
 ## Checking on it

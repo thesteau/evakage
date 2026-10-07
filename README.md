@@ -84,9 +84,11 @@ Maintainer measurements and security review material are in [maintainer/](mainta
 These instructions are for contributors working on the source. To run an instance
 for everyday use, follow the deployment instructions above.
 
-Use Node 24+ for development and release tooling; Docker uses Node 26.
+Use Go 1.26+ for the backend and Node 24+ for browser builds and release tooling.
+The production container runs the Go binary without Node.
 
 ```bash
+cd app
 npm ci
 npm run check
 npx playwright install chromium firefox webkit
@@ -95,11 +97,12 @@ npm run test:e2e:platform
 npm run dev
 ```
 
-Open `http://localhost:3000`. TypeScript server code lives in `app/server/`.
+Open `http://localhost:3000`. Go server code lives in `app/server/`, with its
+entry point in `app/cmd/evakage/`. Run `npm run test:go` for the Go tests.
 Browser sources live in `app/client/`; tests live in `tests/`.
 
-`npm run build` type checks and compiles sources into `dist/`, assembling browser
-assets in `dist/app/public/`. Start and test commands build automatically.
+`npm run build` type checks and compiles sources into `app/dist/`, assembling browser
+assets in `app/dist/app/public/`. Start and test commands build automatically.
 `npm run dev` watches the client and server sources, rebuilds, and restarts the
 server after successful compilation. Build before running the standalone scripts
 in `scripts/benchmarks/`.

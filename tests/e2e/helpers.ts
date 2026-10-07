@@ -109,7 +109,7 @@ export const test = base.extend({
       alice: Page;
       bob: Page;
       disconnect: (name: string) => void;
-      server: ReturnType<typeof import('../../app/server/server.js').createEvakageServer>;
+      server: ReturnType<typeof import('../support/go-server.js').createEvakageServer>;
     };
     appPatch: AppPatch;
     autoPair: boolean;

@@ -1,8 +1,8 @@
 // Local WebCrypto memory/timing measurement. Run modes in separate processes.
 // node --expose-gc scripts/benchmarks/relay.mjs [buffered|chunked] [MiB]
 import { performance } from 'node:perf_hooks';
-import { hashBlob } from '../../dist/app/public/sha256.js';
-import { encryptBody, encryptBodyChunks, generateContentKey } from '../../dist/app/public/relay.js';
+import { hashBlob } from '../../app/dist/app/public/sha256.js';
+import { encryptBody, encryptBodyChunks, generateContentKey } from '../../app/dist/app/public/relay.js';
 const mode = process.argv[2] || 'chunked';
 const mib = Number(process.argv[3] || 64);
 if (!['buffered', 'chunked'].includes(mode) || !Number.isInteger(mib) || mib < 1 || mib > 256) throw new Error('Invalid benchmark parameters');
