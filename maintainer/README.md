@@ -1,7 +1,7 @@
 # Maintainer evidence
 
 These documents retain implementation measurements and revision-specific validation
-records. They are separate from the public Mintlify documentation in `docs/`.
+records. They are separate from the [public documentation](https://evakage.docs.thesteau.com).
 
 - [Independent security review scope](security-review.md): the remaining review task.
 - [Security and receiving validation](security-validation.md): local regressions and their limits.

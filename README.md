@@ -45,7 +45,7 @@ docker compose pull
 docker compose up -d
 ```
 
-Open `http://localhost:3712`. See [the deployment guide](deploy/README.md) for
+Open `http://localhost:3712`. See [the deployment guide](https://evakage.docs.thesteau.com/hosting/deployment) for
 configuration, updates and account backups. `latest` tracks tested `main`
 builds; pin an available `vX.Y.Z` tag when you need a stable version.
 
@@ -65,7 +65,7 @@ An account lets you create rooms or connect your signed-in devices;
 chatting, transferring files and joining a room by invitation work without one.
 
 Save files you want to keep before closing the browser. See the
-[device guide](docs/guides/devices.mdx) and [transfer guide](docs/guides/transfers.mdx)
+[device guide](https://evakage.docs.thesteau.com/guides/devices) and [transfer guide](https://evakage.docs.thesteau.com/guides/transfers)
 for more details.
 
 ## What to expect
@@ -81,20 +81,19 @@ Messages and direct file copies live in browser memory. Relay ciphertext is
 temporary and disappears on expiry or server restart. Only the separate account
 database persists in Docker; never mount relay storage. Browser identity keys,
 trust records and preferences persist locally. Evakage has not undergone an
-independent security audit; see [SECURITY.md](SECURITY.md).
+independent security audit; see the [privacy and security guide](https://evakage.docs.thesteau.com/hosting/privacy).
 
 ## Documentation
 
 Read the [hosted documentation](https://evakage.docs.thesteau.com).
-The [documentation source](https://github.com/thesteau/evakage/tree/main/docs)
-is also available in this repository:
 
-- [Quick start](docs/quickstart.mdx)
-- [Pairing devices](docs/guides/devices.mdx), [rooms](docs/guides/rooms.mdx), and [transfers](docs/guides/transfers.mdx)
-- [Accounts and preferences](docs/guides/accounts.mdx) and [mobile use](docs/guides/mobile.mdx)
-- [Deployment](docs/hosting/deployment.mdx), [configuration](docs/hosting/configuration.mdx), and [privacy](docs/hosting/privacy.mdx)
-- [Development](docs/development.mdx) and [releases](docs/releases.mdx)
+- [Quick start](https://evakage.docs.thesteau.com/quickstart)
+- [Pairing devices](https://evakage.docs.thesteau.com/guides/devices), [rooms](https://evakage.docs.thesteau.com/guides/rooms), and [transfers](https://evakage.docs.thesteau.com/guides/transfers)
+- [Accounts and preferences](https://evakage.docs.thesteau.com/guides/accounts) and [mobile use](https://evakage.docs.thesteau.com/guides/mobile)
+- [Deployment](https://evakage.docs.thesteau.com/hosting/deployment), [configuration](https://evakage.docs.thesteau.com/hosting/configuration), and [privacy](https://evakage.docs.thesteau.com/hosting/privacy)
+- [Development](https://evakage.docs.thesteau.com/development) and [releases](https://evakage.docs.thesteau.com/releases)
 
+Documentation source is in [docs/](docs/).
 Maintainer measurements and security review material are in [maintainer/](maintainer/README.md).
 
 ## Development
@@ -125,11 +124,11 @@ assets in `app/dist/app/public/`. Start and test commands build automatically.
 server after successful compilation. Build before running the standalone scripts
 in `scripts/benchmarks/`.
 
-See [the development guide](docs/development.mdx) for more details and
+See [the development guide](https://evakage.docs.thesteau.com/development) for more details and
 [RELEASING.md](RELEASING.md) for the maintainer's release workflow. You do not
 need to reproduce that workflow to use or self-host Evakage.
 To build a Docker image from source, follow the
-[local container instructions](docs/development.mdx#build-a-local-container).
+[local container instructions](https://evakage.docs.thesteau.com/development#build-a-local-container).
 
 ## Author
 
