@@ -151,8 +151,9 @@ test('private rooms wait for the creator, protected rooms admit by code, public 
   assert.deepEqual(listing.members, []);
 
   // Only the creator's account may answer or change access.
+  const otherWaits = waitFor(other.ws, (m) => m.type === 'room-pending');
   other.ws.send(JSON.stringify({ type: 'join-room', code: room.code }));
-  await waitFor(other.ws, (m) => m.type === 'room-pending');
+  await otherWaits;
   guest.ws.send(JSON.stringify({ type: 'room-approve', roomId: room.id, deviceId: other.id, approve: true }));
   guest.ws.send(JSON.stringify({ type: 'room-access', roomId: room.id, access: 'public' }));
 
@@ -167,8 +168,9 @@ test('private rooms wait for the creator, protected rooms admit by code, public 
   assert.equal(seated.members.length, 2);
 
   // Switching off approval admits whoever is still waiting.
+  const otherAsks = waitFor(other.ws, (m) => m.type === 'room-pending');
   other.ws.send(JSON.stringify({ type: 'join-room', code: room.code }));
-  await waitFor(other.ws, (m) => m.type === 'room-pending');
+  await otherAsks;
   const opened = waitFor(other.ws, (m) => m.type === 'room-joined');
   owner.ws.send(JSON.stringify({ type: 'room-access', roomId: room.id, access: 'protected' }));
   assert.equal((await opened).room.id, room.id);
@@ -199,16 +201,22 @@ test('a pending request ends when the requester cancels or disconnects', async (
   const owner = await device(true);
   const room = (await create(owner, 'Quiet', 'private')).room;
   const guest = await device(false);
+  // Every wait starts before the action it waits for: replies can arrive at once.
+  const requests = (count: number) =>
+    waitFor(owner.ws, (m) => m.type === 'rooms' && m.rooms[0].requests.length === count);
+  let asked = requests(1);
+  const pending = waitFor(guest.ws, (m) => m.type === 'room-pending');
   guest.ws.send(JSON.stringify({ type: 'join-room', code: room.code }));
-  await waitFor(guest.ws, (m) => m.type === 'room-pending');
+  await Promise.all([pending, asked]);
   const cancelled = waitFor(guest.ws, (m) => m.type === 'room-left' && m.roomId === room.id);
+  const cleared = requests(0);
   guest.ws.send(JSON.stringify({ type: 'leave-room', roomId: room.id }));
-  await cancelled;
-  await waitFor(owner.ws, (m) => m.type === 'rooms' && !m.rooms[0].requests.length);
+  await Promise.all([cancelled, cleared]);
   assert.ok(app.rooms.has(room.id));
 
+  asked = requests(1);
   guest.ws.send(JSON.stringify({ type: 'join-room', code: room.code }));
-  await waitFor(owner.ws, (m) => m.type === 'rooms' && m.rooms[0].requests.length === 1);
+  await asked;
   const gone = waitFor(owner.ws, (m) => m.type === 'rooms' && !m.rooms[0].requests.length);
   guest.ws.close();
   await gone;
