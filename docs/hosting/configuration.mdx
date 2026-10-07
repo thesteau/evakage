@@ -1,45 +1,91 @@
 ---
 title: "Configuration"
-description: "Environment variables for self-hosting Evakage."
+description: "Configure access, capacity, and temporary delivery."
 ---
 
-| Environment variable | Default | Purpose |
+For Docker, edit the `.env` file beside your Compose file and recreate the container after changes:
+
+```bash
+docker compose up -d --force-recreate
+```
+
+For local Node commands, set variables in your shell.
+
+## Server and access
+
+| Variable | Default | Purpose |
 | --- | --- | --- |
-| `PORT` | `3000` | HTTP/WebSocket listen port |
+| `PORT` | `3000` | Server port |
 | `HOST` | `0.0.0.0` | Listen address |
-| `MAX_FILE_BYTES` | `536870912` | Per-file limit advertised to browsers and enforced for server relay offers |
-| `ICE_SERVERS_JSON` | `[]` | JSON array of standard `RTCIceServer` objects for STUN/TURN |
-| `AUTH_TOKEN` | *(unset)* | When set, the whole server needs this token. Open `https://host/?token=THE_TOKEN` once and the server trades it for an `HttpOnly; SameSite=Strict` session cookie that also authorises the WebSocket upgrade. `/healthz` stays open for the container healthcheck. |
-| `DEVICE_ALLOWLIST` | *(unset)* | Comma-separated full device fingerprints permitted to register. Each must prove possession of its signing key using a fresh socket challenge. Remove a fingerprint and restart to revoke its server access. |
-| `ALLOWED_ORIGINS` | *(same host)* | Comma-separated exact origins permitted to open the WebSocket. Unset means "must match the request's own host", which is what you want behind a normal reverse proxy. |
-| `TRUST_PROXY` | `0` | Set to `1` only when a proxy you control sits in front. It makes the server believe `X-Forwarded-Host` (for origin checks) and `X-Forwarded-For` (for per-address limits). Leave it off if clients can reach the port directly, or they can spoof both. |
-| `ACCOUNTS_DB` | `/home/node/evakage-accounts/accounts.sqlite` in Docker; unset for Node | Optional SQLite account database path. Use a separate persistent account volume; no text or files are stored here. |
-| `BLOB_DIR` | `/tmp/evakage-blobs` in the image; `evakage-blobs` under the OS temporary directory for Node | Where relayed messages and files wait, one subdirectory per conversation. Keep it inside the container; do not mount a volume here. |
-| `BLOB_IDLE_GRACE_MS` | `900000` (15 min) | How long an item outlives the moment every device party to it disconnected. |
-| `BLOB_SOLO_MAX_MS` | `10800000` (3h) | How long a one-to-one conversation may sit with only one device present before its items expire. Rooms are exempt. Also how long an offline device stays listed as reachable, and how long an away member keeps its room seat. |
-| `BLOB_MAX_AGE_MS` | `259200000` (3 days) | Absolute ceiling from offer creation, however alive the session is. |
-| `BLOB_SWEEP_MS` | `60000` (1 min) | How often the sweep runs. It also removes any empty conversation directory. |
-| `BLOB_STORE_BYTES` | `4294967296` (4 GiB) | Total temporary relay capacity, including encrypted envelopes and space reserved for accepted uploads. Older completed pending items are removed when needed; active uploads and downloads are protected from capacity eviction. |
-| `BLOB_TEXT_RESERVE_BYTES` | `1073741824` (1 GiB) | Separate text budget, capped at one quarter of total relay capacity. Files cannot consume this space, so file saturation does not prevent chat. |
-| `BLOB_CHAT_FILE_BYTES` | `53687091200` (50 GiB) | File ceiling per conversation, including ciphertext and envelopes. The smaller server-wide file budget still applies. |
-| `BLOB_CHAT_TEXT_BYTES` | `1073741824` (1 GiB) | Text ceiling per conversation, measured as encrypted envelope bytes. Text and files have independent eviction budgets. |
-| `MAX_DEVICES` | `200` | Maximum connected registered device identities across the server. Replacing an existing device connection does not require another slot. |
-| `MAX_ROOMS` | `50` | Maximum active rooms across the server. Each account can still own two rooms; creating a third replaces its oldest room. |
-| `BLOB_PER_DEVICE` | `32` | Files one device may have waiting on the server at once. |
-| `BLOB_MESSAGES_PER_DEVICE` | `2000` | Messages one device may have waiting on the server at once. |
-| `ROOM_MAX_MEMBERS` | `20` | Seats per room, clamped to 2–64. Rooms of up to six use the direct mesh; larger ones run entirely through the relay. |
+| `AUTH_TOKEN` | Unset | Require a token to access the app |
+| `DEVICE_ALLOWLIST` | Unset | Allow only listed full device fingerprints |
+| `ALLOWED_ORIGINS` | Same host | Allowed WebSocket origins, comma-separated |
+| `TRUST_PROXY` | `0` | Trust forwarded host and client-IP headers |
+| `ICE_SERVERS_JSON` | `[]` | STUN/TURN servers as a JSON array |
 
-On the same LAN, host ICE candidates are usually sufficient. If peers are separated by routed networks, restrictive firewalls, or VPN topology, configure TURN.
+With `AUTH_TOKEN` set, open `https://host/?token=THE_TOKEN` once to establish an access cookie. The health endpoint remains open.
 
-The mesh size (6), per-server room cap (64) and per-account room cap (2) are
-constants in `app/server/server.ts`, not environment variables. Rate limits and
-defensive budgets live next to them in `DEFAULT_LIMITS`.
+For `DEVICE_ALLOWLIST`, copy full fingerprints from **QR code → Connection details** or **Known devices**. Devices must prove they hold the matching key. Remove a fingerprint and restart to revoke access.
+
+If direct connections fail across networks or firewalls, configure TURN. Encrypted server relay remains the fallback.
 
 ## HTTPS reverse proxies
 
-Set `TRUST_PROXY=1` only behind a proxy you control and prevent clients from
-reaching the backend port directly. Preserve the public `Host` header or send
-it as `X-Forwarded-Host`, including a non-default port when applicable.
-Account changes must have an HTTPS Origin matching that public host, and account
-cookies are Secure. `ALLOWED_ORIGINS` controls WebSocket access; it does not
-override the same-origin account check.
+Set `TRUST_PROXY=1` only behind a proxy you control.
+
+- Keep the backend port private.
+- Preserve the public `Host` header or send `X-Forwarded-Host`, including any non-default port.
+- Account changes require an HTTPS Origin matching that host. Account cookies are Secure.
+- `ALLOWED_ORIGINS` affects WebSockets, not the account origin check.
+
+If signup shows **“Same-origin JSON request required”**, check these settings first.
+
+## Device and room limits
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `MAX_DEVICES` | `200` | Connected registered device identities |
+| `MAX_ROOMS` | `50` | Active rooms across the server |
+| `ROOM_MAX_MEMBERS` | `20` | Members per room; allowed range 2–64 |
+
+Replacing a device connection does not need another slot. Each account can own two rooms; creating a third replaces its oldest. Rooms switch to server relay above six members.
+
+## File and text budgets
+
+Byte limits include encrypted content and envelopes. Accepted uploads reserve their declared size.
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `MAX_FILE_BYTES` | `536870912` (512 MiB) | Maximum size of one file |
+| `BLOB_STORE_BYTES` | `4294967296` (4 GiB) | Total relay budget |
+| `BLOB_TEXT_RESERVE_BYTES` | `1073741824` (1 GiB) | Separate text budget; capped at one quarter of the total |
+| `BLOB_CHAT_FILE_BYTES` | `53687091200` (50 GiB) | Per-chat file ceiling |
+| `BLOB_CHAT_TEXT_BYTES` | `1073741824` (1 GiB) | Per-chat text ceiling |
+| `BLOB_PER_DEVICE` | `32` | Pending files per sender |
+| `BLOB_MESSAGES_PER_DEVICE` | `2000` | Pending messages per sender |
+
+The smaller global budgets take precedence over per-chat ceilings. Files cannot consume the text budget.
+
+At capacity, older completed pending items of the same kind may be removed. Active uploads and downloads are protected from capacity eviction. Online participants receive warnings and removal notices.
+
+## Relay expiry
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `BLOB_IDLE_GRACE_MS` | `900000` (15 min) | Grace after everyone disconnects |
+| `BLOB_SOLO_MAX_MS` | `10800000` (3 hours) | Direct chat with only one device present; also the away-seat window |
+| `BLOB_MAX_AGE_MS` | `259200000` (3 days) | Maximum item age |
+| `BLOB_SWEEP_MS` | `60000` (1 min) | Physical cleanup interval |
+
+Rooms are exempt from the one-device expiry rule. Self-chat has a 24-hour offline window and a maximum age of three days. See [relay lifetimes](/guides/transfers#how-long-server-copies-last).
+
+## Storage paths
+
+| Variable | Docker default | Purpose |
+| --- | --- | --- |
+| `ACCOUNTS_DB` | `/home/node/evakage-accounts/accounts.sqlite` | Persistent accounts and saved settings |
+| `BLOB_DIR` | `/tmp/evakage-blobs` | Temporary encrypted relay buffer |
+
+Keep accounts in their separate named volume. **Do not mount a persistent relay volume.**
+
+Local Node accounts are disabled unless `ACCOUNTS_DB` is set. Local relay data defaults to `evakage-blobs` under the OS temporary directory.

@@ -2,7 +2,7 @@
   "name": "evakage",
   "version": "0.1.0",
   "private": true,
-  "description": "Browser-first ephemeral peer chat and file transfer for trusted networks.",
+  "description": "Temporary, end-to-end encrypted browser chat and file sharing for trusted networks.",
   "license": "MIT",
   "author": "thesteau",
   "homepage": "https://github.com/thesteau/evakage#readme",

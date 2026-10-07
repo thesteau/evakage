@@ -1,64 +1,47 @@
 ---
 title: "Releases"
-description: "How main builds become reviewed, tagged stable releases."
+description: "Choose an image or publish an official release."
 ---
 
-## Choosing an image
+## Choose an image
 
-For self-hosting, use the [deployment setup](/hosting/deployment). `latest` follows
-tested `main` builds; pin an available `vX.Y.Z` image tag for a stable version.
-You do not need to run release automation to use Evakage or build your own fork.
+| Tag | Use |
+| --- | --- |
+| `latest` | Tested builds from `main` |
+| `vX.Y.Z` | A fixed stable release |
 
-## Maintainer publishing workflow
+Set the image tag in your deployment Compose file. See [deployment](/hosting/deployment).
 
-The following describes how this repository's maintainer publishes official images
-and releases. Fork owners can choose their own publishing process.
+## Official publishing workflow
 
-`latest` belongs to `main`; stable releases use immutable `vX.Y.Z` tags.
+Contributors open PRs into `main`. Maintainers promote reviewed code to `prod`, approve release metadata, and publish the recorded commit.
 
 ```mermaid
 flowchart LR
     A[Feature PR] -->|Squash merge| B[main]
     B -->|Successful CI| C[latest image]
-    B -->|Reviewed promotion, merge commit| D[prod]
+    B -->|Reviewed promotion| D[prod]
     D --> E[Release metadata PR]
-    E -->|Reviewed merge| F[Tag recorded prod commit]
-    F --> G[GitHub Release and versioned image]
+    E -->|Approved merge| F[Stable release and image]
 ```
 
-`release-state` holds only the version manifest, changelog and recorded production
-commit. Release metadata never merges into application branches.
-The development `package.json` version is not the stable release
-source of truth; the tag and container OCI labels identify released code.
+`release-state` holds the changelog, version manifest, and approved production commit. Release metadata stays out of application branches. Release tags identify stable versions; `package.json` does not.
 
-## PR titles and versions
+Stable images are published for amd64 and arm64 after source, browser, container, and vulnerability checks. They do not change `latest`.
 
-Use `<type>[(scope)][!]: <summary>` for PRs into `main`, because squash merges use
-the PR title as the commit message.
+## PR titles
 
-| Type | Version effect |
+Use `<type>[(scope)][!]: <summary>` for PRs into `main`.
+
+| Type | Version change |
 | --- | --- |
 | `feat:` | Minor |
 | `fix:`, `perf:`, `revert:` | Patch |
-| Any accepted type with `!` | Major |
-| `docs:`, `chore:`, `refactor:`, `test:`, `build:`, `ci:`, `style:`, `deps:` | No release on their own; included with the next releasable change |
+| An accepted type with `!` | Major |
+| `docs:`, `chore:`, `refactor:`, `test:`, `build:`, `ci:`, `style:`, `deps:` | Included with the next releasable change |
 
-For example, `fix(relay): reject expired downloads` produces a patch bump.
-`feat(protocol)!: require a new handshake` produces a major bump. The largest
-bump among unshipped commits determines the version.
+For example: `fix(relay): reject expired downloads`. The largest change since the last release determines the version.
 
-Promotions into `prod` and approvals into `release-state` use merge commits.
-Each release tags the production SHA recorded in the approved metadata, even if
-newer work has reached `prod` while review was pending.
+PRs into `main` use squash merges. Promotions to `prod` and metadata approvals use merge commits.
 
-## Image versions
-
-`latest` is published from successful `main` CI runs. Stable releases publish
-`ghcr.io/thesteau/evakage:vX.Y.Z` for amd64 and arm64 after source, browser,
-container smoke and vulnerability checks. Stable image retries skip existing tags.
-
-Edit the image tag in the [deployment Compose file](/hosting/deployment) to pin
-a published stable release. Stable releases do not move `latest`.
-
-Maintainers: GitHub settings, retries and metadata recovery are covered
-in [RELEASING.md](https://github.com/thesteau/evakage/blob/main/RELEASING.md).
+Maintainers: see [RELEASING.md](https://github.com/thesteau/evakage/blob/main/RELEASING.md) for repository setup, retries, and recovery.
