@@ -11,4 +11,4 @@ records. They are separate from the public Mintlify documentation in `docs/`.
 
 Machine-readable records remain in `validation/`. File paths in recorded evidence
 describe the revision measured; moving source files does not extend that evidence
-to a newer revision. Release operations and workflow activation are in [RELEASING.md](../RELEASING.md).
+to a newer revision. Release operations and repository setup are in [RELEASING.md](../RELEASING.md).

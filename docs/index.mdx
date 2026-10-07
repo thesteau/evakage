@@ -1,40 +1,27 @@
 ---
 title: "Evakage"
-description: "Private browser chat and file sharing for trusted networks."
+description: "Temporary, end-to-end encrypted chat and file sharing."
 ---
 
-**Evakage is in prerelease development.**
+**Temporary conversations. End-to-end encrypted messages and files.**
 
-Evakage is a self-hosted app for encrypted text, links and files between browsers, directly or in small rooms. It runs in one Docker container and works as a browser page or installed PWA.
+Connect browsers by code or QR, chat directly, or invite a group into a room. Use Evakage in your browser or install it as an app.
 
 ![Evakage device list and private rooms](/images/devices-and-rooms.png)
 
-- Keeps devices private by default; advertising in Settings is opt-in. Paired devices and fellow room members can still see one another.
-- Shows device name, short code, platform/browser and connection state, with connection path and RTT available by hovering Status.
-- Opens a conversation from the device table; the session panel provides text and file controls.
-- Provides **Connect** for private pairing codes, invitation links and QR scanning.
-- Hosts **ephemeral rooms** (up to 20 devices by default), joined by invitation code.
-- Uses WebRTC DataChannels for peer payload transport.
-- Adds an application-layer ephemeral ECDH/AES-GCM encryption layer on top of WebRTC transport encryption.
-- Displays a short safety code derived from both devices' long-lived identity keys, stable across sessions.
-- Installs as a PWA on phones, tablets, and desktops, with an offline app shell, and appears in the phone's share sheet for files, text and links.
-- Keeps local messages and completed direct file copies in browser memory; relayed ciphertext is buffered temporarily on the server.
-- Re-syncs chat/file metadata from any surviving peer when a browser reconnects with the same local device identity.
-- Allows a returned peer to request an in-memory file again from whichever peer still holds the bytes.
-- Falls back to a **server relay** for messages and files when a direct connection cannot be made — sealed so the server cannot read them. Copies are removed when recipients release them or expiry is reached; self-chat keeps read copies until expiry.
-- Asks before receiving files from a device you have not met (configurable).
-- Chat, files and joining rooms work without accounts. An account is required to create rooms and can also connect your online devices privately and sync selected preferences.
-- Verifies every device's long-lived identity key and shows a stable safety code.
-- Works as an ordinary browser page too — installing is optional.
+## What to expect
 
-Start with the [quick start](/quickstart). Learn about [storage and privacy](/hosting/privacy) before deploying.
+- **Private content.** Your devices encrypt and decrypt messages and files. The server cannot read relayed content.
+- **Temporary delivery.** Chat lives in browser memory. Server copies expire and disappear on restart. Save files you want to keep.
+- **Simple connections.** Pair devices with a private code or QR invitation. Advertising is off by default.
+- **Optional accounts.** Chat, send files, and join rooms without signing up. An account lets you create rooms and connect your signed-in devices.
 
-For everyday use, connect to an existing instance or follow the
-[deployment guide](/hosting/deployment) to host your own. Contributors can use
-the [development guide](/development); [release automation](/releases) describes
-the maintainer's publishing process.
+## Get started
 
-Created and maintained by [thesteau](https://github.com/thesteau).
-You can [buy me a coffee](https://buymeacoffee.com/thesteau) to support development.
-Read [usage and responsibility](/hosting/privacy#usage-and-responsibility) for
-the responsibilities of users and instance operators.
+1. Open an existing instance or [host your own](/hosting/deployment).
+2. [Connect two devices](/quickstart#connect-devices).
+3. [Send messages and files](/guides/transfers) or [create a room](/guides/rooms).
+
+Read [privacy and storage](/hosting/privacy) to understand what stays and what disappears.
+
+Created by [thesteau](https://github.com/thesteau). [Buy me a coffee](https://buymeacoffee.com/thesteau).

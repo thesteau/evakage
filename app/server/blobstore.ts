@@ -46,6 +46,9 @@ export const BLOB_DEFAULTS = {
   dir: process.env.BLOB_DIR || path.join(os.tmpdir(), 'evakage-blobs'),
   maxBlobBytes: Number(process.env.MAX_FILE_BYTES || 512 * 1024 * 1024),
   maxStoreBytes: Number(process.env.BLOB_STORE_BYTES || 4 * 1024 * 1024 * 1024),
+  textReserveBytes: Number(process.env.BLOB_TEXT_RESERVE_BYTES || 1024 * 1024 * 1024),
+  maxConversationFileBytes: Number(process.env.BLOB_CHAT_FILE_BYTES || 50 * 1024 * 1024 * 1024),
+  maxConversationTextBytes: Number(process.env.BLOB_CHAT_TEXT_BYTES || 1024 * 1024 * 1024),
   maxBlobsPerDevice: Number(process.env.BLOB_PER_DEVICE || 32),
   // Messages are small and frequent, so they get their own, larger budget.
   maxMessagesPerDevice: Number(process.env.BLOB_MESSAGES_PER_DEVICE || 2000),
@@ -93,6 +96,7 @@ type BlobRecord = {
   envelopeBytes: number;
   written: number;
   complete: boolean;
+  activeDownloads: number;
   createdAt: number;
   idleSince: number | null;
   soloSince: number | null;
@@ -131,6 +135,8 @@ async function removeIfEmpty(dir: string) {
 
 export function createBlobStore(options: BlobStoreOptions = {}) {
   const config = { ...BLOB_DEFAULTS, ...options };
+  for (const key of ['maxStoreBytes', 'textReserveBytes', 'maxConversationFileBytes', 'maxConversationTextBytes'] as const)
+    {if (!Number.isSafeInteger(config[key]) || config[key] <= 0) throw new Error(`${key} must be a positive integer.`);}
   // Never written anywhere: names on disk mean nothing once this process ends.
   const diskSecret = crypto.randomBytes(32);
   const now = options.now || Date.now;
@@ -191,6 +197,44 @@ export function createBlobStore(options: BlobStoreOptions = {}) {
   let storeBytes = 0;
   /** Called with an item record once it is ready to deliver. */
   let onAvailable: (blob: BlobRecord) => void = (): void => {};
+  let onNotice: (participants: Set<string>, message: string) => void = () => {};
+  let offerQueue: Promise<unknown> = Promise.resolve();
+  const warned = new Set<string>();
+
+  const reservedBytes = (blob: BlobRecord) => blob.bytes + blob.envelopeBytes;
+  function usage(kind: BlobRecord['kind'], convDir?: string) {
+    return [...blobs.values()].filter((blob) => blob.kind === kind && (!convDir || blob.convDir === convDir))
+      .reduce((sum, blob) => sum + reservedBytes(blob), 0);
+  }
+  // Reserve declared upload sizes before accepting another offer. Serialize only
+  // admission, never file transfers, so simultaneous offers cannot overbook disk.
+  function offer(input: Parameters<typeof offerInner>[0]) {
+    const result = offerQueue.then(() => offerInner(input));
+    offerQueue = result.catch(() => {});
+    return result;
+  }
+
+  async function makeSpace(kind: BlobRecord['kind'], incoming: number, limit: number, convDir?: string, checkOnly = false) {
+    if (incoming > limit) return false;
+    const candidates = [...blobs.values()].filter((blob) =>
+      blob.kind === kind && (!convDir || blob.convDir === convDir) && blob.complete && !blob.activeDownloads && !activeUploads.has(blob.id),
+    ).sort((a, b) => Number(expired(b)) - Number(expired(a)) || a.createdAt - b.createdAt);
+    // Do not discard pending content if protected uploads/downloads mean the
+    // new item cannot fit even after eviction.
+    if (usage(kind, convDir) + incoming - candidates.reduce((sum, blob) => sum + reservedBytes(blob), 0) > limit)
+      {return false;}
+    if (checkOnly) return true;
+    const affected = new Set<string>();
+    for (const blob of candidates) {
+      if (usage(kind, convDir) + incoming <= limit) break;
+      if (!blobs.has(blob.id) || blob.activeDownloads || activeUploads.has(blob.id)) continue;
+      await remove(blob.id);
+      for (const id of blob.participants) affected.add(id);
+    }
+    if (affected.size)
+      {onNotice(affected, `Older pending ${kind === 'file' ? 'files' : 'messages'} were removed from the temporary relay to make room. Save files you need to keep.`);}
+    return usage(kind, convDir) + incoming <= limit;
+  }
 
   async function ready() {
     await fsp.mkdir(config.dir, { recursive: true });
@@ -214,6 +258,7 @@ export function createBlobStore(options: BlobStoreOptions = {}) {
       } catch {}
     }
     blobs.clear();
+    warned.clear();
     storeBytes = 0;
     return { removed, reason };
   }
@@ -222,6 +267,8 @@ export function createBlobStore(options: BlobStoreOptions = {}) {
     const blob = blobs.get(id);
     if (!blob) return false;
     blobs.delete(id);
+    if (![...blobs.values()].some((other) => other.convDir === blob.convDir && other.kind === blob.kind))
+      {warned.delete(`${blob.convDir}:${blob.kind}`);}
     storeBytes = Math.max(0, storeBytes - blob.written - blob.envelopeBytes);
     await fsp.rm(blob.path, { force: true }).catch(() => {});
     await fsp.rm(blob.envelopePath, { force: true }).catch(() => {});
@@ -243,7 +290,7 @@ export function createBlobStore(options: BlobStoreOptions = {}) {
   /** * Reserves an item. `envelopes` maps recipient device id -> sealed box; the
    * server treats each box as opaque. A message is complete on arrival; a file
    * waits for its body to be uploaded. */
-  async function offer({
+  async function offerInner({
     senderId,
     conv,
     kind = 'file',
@@ -286,9 +333,6 @@ export function createBlobStore(options: BlobStoreOptions = {}) {
       ),
     );
     const envelopeBytes = Buffer.byteLength(envelopeJson);
-    if (storeBytes + bytes + envelopeBytes > config.maxStoreBytes) {
-      return { error: 'The server relay is full. Try again shortly.' };
-    }
 
     const owned = [...blobs.values()].filter(
       (blob) => blob.senderId === senderId && blob.kind === kind,
@@ -308,6 +352,20 @@ export function createBlobStore(options: BlobStoreOptions = {}) {
     const id = crypto.randomUUID();
     const participants = new Set([senderId, ...recipients]);
     const convDir = path.join(config.dir, conversationKey(conv, participants, diskSecret));
+    if (!authorized()) return { error: 'This connection is no longer authorized.' };
+    const incoming = bytes + envelopeBytes;
+    const chatLimit = isMessage ? config.maxConversationTextBytes : config.maxConversationFileBytes;
+    // Files cannot consume the reserved text capacity; text has its own budget.
+    const reserve = Math.min(config.textReserveBytes, Math.floor(config.maxStoreBytes / 4));
+    const globalLimit = isMessage ? reserve : config.maxStoreBytes - reserve;
+    if (incoming > chatLimit || incoming > globalLimit)
+      {return { error: 'This item exceeds the temporary relay capacity. Use a smaller file or message.' };}
+    if (!(await makeSpace(kind, incoming, chatLimit, convDir, true)) || !(await makeSpace(kind, incoming, globalLimit, undefined, true)))
+      {return { error: 'The temporary relay is busy with active transfers. Try again shortly.' };}
+    if (!authorized()) return { error: 'This connection is no longer authorized.' };
+    if (!(await makeSpace(kind, incoming, chatLimit, convDir)) || !(await makeSpace(kind, incoming, globalLimit)))
+      {return { error: 'The temporary relay is busy with active transfers. Try again shortly.' };}
+    if (!authorized()) return { error: 'This connection is no longer authorized.' };
     const blob = {
       id,
       kind,
@@ -327,6 +385,7 @@ export function createBlobStore(options: BlobStoreOptions = {}) {
       envelopeBytes,
       written: 0,
       complete: isMessage,
+      activeDownloads: 0,
       createdAt: now(),
       idleSince: null,
       soloSince: null,
@@ -351,6 +410,12 @@ export function createBlobStore(options: BlobStoreOptions = {}) {
     assess(blob, blob.createdAt);
     blobs.set(id, blob);
     storeBytes += envelopeBytes;
+    const warningKey = `${convDir}:${kind}`;
+    const nearLimit = usage(kind, convDir) >= chatLimit * .8 || usage(kind) >= globalLimit * .8;
+    if (nearLimit && !warned.has(warningKey)) {
+      warned.add(warningKey);
+      onNotice(participants, `Temporary ${isMessage ? 'message' : 'file'} delivery capacity is nearly full. Older pending items may be removed; save files you need to keep.`);
+    } else if (!nearLimit) warned.delete(warningKey);
     if (isMessage) onAvailable(blob);
     return { blob };
   }
@@ -630,6 +695,8 @@ export function createBlobStore(options: BlobStoreOptions = {}) {
       files: all.filter((blob) => blob.kind === 'file').length,
       messages: all.filter((blob) => blob.kind === 'message').length,
       bytes: storeBytes,
+      reservedFileBytes: usage('file'),
+      reservedTextBytes: usage('message'),
       dir: config.dir,
     };
   }
@@ -645,6 +712,15 @@ export function createBlobStore(options: BlobStoreOptions = {}) {
     uploadStatus,
     claim,
     openForDownload,
+    beginDownload(id: string) {
+      const blob = blobs.get(id);
+      if (blob) blob.activeDownloads++;
+      let finished = false;
+      return () => {
+        if (!finished && blob) blob.activeDownloads = Math.max(0, blob.activeDownloads - 1);
+        finished = true;
+      };
+    },
     release,
     remove,
     pendingFor,
@@ -668,6 +744,9 @@ export function createBlobStore(options: BlobStoreOptions = {}) {
     stats,
     set onAvailable(handler: (blob: BlobRecord) => void) {
       onAvailable = typeof handler === 'function' ? handler : () => {};
+    },
+    set onNotice(handler: (participants: Set<string>, message: string) => void) {
+      onNotice = handler;
     },
   };
 }

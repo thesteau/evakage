@@ -5,7 +5,9 @@ RUN npm ci
 COPY app ./app
 COPY tests ./tests
 COPY scripts/build.mjs ./scripts/build.mjs
-RUN npm run build
+ARG VERSION=dev
+ARG REVISION=unknown
+RUN VERSION=$VERSION REVISION=$REVISION npm run build
 
 FROM node:26-alpine
 

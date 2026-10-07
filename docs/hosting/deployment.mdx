@@ -1,102 +1,89 @@
 ---
 title: "Deployment"
-description: "Run published images, retain account data and monitor the server."
+description: "Run Evakage with Docker, HTTPS, and account backups."
 ---
 
-The repository's `deploy/` folder runs a **published image**. It never builds
-from source; for that, use `app/compose.yaml`. Evakage
-is currently in prerelease development.
+## Start the server
+
+Install Docker, then run:
 
 ```bash
-cd deploy
-cp .env.example .env        # required
+git clone https://github.com/thesteau/evakage.git
+cd evakage/deploy
+cp .env.example .env
 docker compose pull
 docker compose up -d
 ```
 
-Then open `http://SERVER-IP:3712`. Put it behind a reverse proxy with TLS for
-anything beyond `localhost` — phones need a secure context for WebCrypto,
-service workers, and installing the app.
+Open `http://localhost:3712` on the host. The `.env` file is required; edit it before starting if you need different settings.
 
-## The image
+The default image is `ghcr.io/thesteau/evakage:latest`, built from tested `main` commits. To pin a stable version, replace `latest` in the Compose file with a published `vX.Y.Z` tag.
 
-The compose file runs `ghcr.io/thesteau/evakage:latest`, which is what the
-main image workflow publishes from tested `main` commits. To pin
-a stable deployment, edit the Compose image tag to a published `vX.Y.Z` tag.
-The pipeline is prepared for `v1.0.0`, but no stable release is implied by this setup.
+## Use HTTPS for other devices
 
-## Accounts and preferences
+Put Evakage behind a reverse proxy with a certificate trusted by your devices.
 
-SQLite accounts are enabled by default. The Docker-managed `account-data` volume
-stores the database at `/home/node/evakage-accounts/accounts.sqlite`, preserving
-accounts and preferences across container replacement. An account is required
-to create rooms; chat, files and joining by code work without one. Text, files
-and device private keys never enter this database.
+1. Set `TRUST_PROXY=1` in `deploy/.env`.
+2. Preserve the public `Host` header or send it as `X-Forwarded-Host`, including any non-default port.
+3. Keep the backend port accessible only through your proxy.
+4. Recreate the container after changing settings:
 
-Set `ACCOUNTS_DB=` in `.env` to disable accounts. Behind an HTTPS reverse proxy,
-set `TRUST_PROXY=1` so account session cookies are Secure.
-Preserve the public `Host` header or send it as `X-Forwarded-Host`; see
-[proxy configuration](/hosting/configuration#https-reverse-proxies).
-
-## Relayed messages and files
-
-Messages and files that cannot go directly between devices are temporarily buffered by the
-server as sealed ciphertext. They are stored **inside the container**
-(`/tmp/evakage-blobs`), one directory per conversation, and there is
-intentionally no relay volume, so they are never exposed on the host and cannot
-outlive the container.
-
-A relayed item is removed at the first of:
-
-1. every recipient has received it;
-2. every device party to it has been gone for the grace period (15 minutes by
-   default), so a device that comes back sooner still gets it;
-3. a one-to-one conversation has sat with only one device present for 3 hours;
-   rooms are exempt from this one;
-4. it reaches the absolute cap of 3 days;
-5. the server restarts;
-6. the container is recreated.
-
-Self-chat is an exception: reading an item keeps its server copy available.
-It expires after 24 hours offline or at its age limit (at most three days from
-creation), whichever comes first. See [Message yourself](/guides/transfers#message-yourself).
-For streamed relay files, the recipient releases its copy after Save completes.
-
-When a conversation's directory is left empty it is removed too, so a
-conversation with nothing waiting leaves nothing behind.
-
-Access expires on those rules regardless of the sweep: expired items cannot be
-listed, claimed, uploaded, or newly downloaded. Downloads opened before the
-deadline may finish afterward. Physical deletion waits for the next sweep,
-which normally runs every minute but can be delayed; no cron is needed.
-If you also want one driven from the host — say, nightly — the server has a
-one-shot mode that removes items past the maximum age, then any directory left
-empty, and exits:
-
-```cron
-# m h  dom mon dow  command
-0 3 * * * docker exec evakage node app/server/server.js --sweep-blobs
+```bash
+docker compose up -d --force-recreate
 ```
 
-The one-shot mode judges age by file mtime, since it runs in a separate process
-with no knowledge of which sessions are alive; it uses the 3-day cap unless you
-pass an age in milliseconds, e.g. `node app/server/server.js --sweep-blobs 600000` for
-anything over ten minutes.
+HTTPS or localhost is required for encryption features, camera access, and installation.
+
+**“Same-origin JSON request required” when signing up?** Check `TRUST_PROXY` and the forwarded host. See [proxy configuration](/hosting/configuration#https-reverse-proxies).
+
+## Default limits
+
+| Limit | Default |
+| --- | --- |
+| Connected devices | 200 |
+| Active rooms | 50 |
+| Rooms per account | 2 |
+| Members per room | 20 |
+| File size | 512 MiB |
+| Total temporary relay budget | 4 GiB: 3 GiB files, 1 GiB text |
+| Per-chat ceilings | 50 GiB files, 1 GiB text; global budgets still apply |
+
+These are configured caps, not measured performance guarantees. Adjust them for your host using [configuration](/hosting/configuration).
+
+## Temporary relay
+
+The relay holds encrypted content for delivery. Older completed pending items may be removed when space is needed; active transfers are protected from capacity eviction. Online participants receive warnings and removal notices.
+
+Relay data lives at `/tmp/evakage-blobs` inside the container. **Do not mount a persistent relay volume.** A restart or container replacement erases it.
+
+The server expires content and cleans up automatically. No cron job is needed. See [relay lifetimes](/guides/transfers#how-long-server-copies-last), including the self-chat exception.
+
+## Accounts
+
+Accounts are enabled by default. The named `account-data` volume holds usernames, password hashes, and saved settings at `/home/node/evakage-accounts/accounts.sqlite`.
+
+To disable accounts, set `ACCOUNTS_DB=` in `.env`. Chat, files, and joining rooms still work; creating rooms requires an account.
 
 ## Checking on it
 
 ```bash
-curl -fsS http://SERVER-IP:3712/healthz
-# {"ok":true,"peers":2,"rooms":0,"bufferedTransfers":1,"bufferedMessages":3,"bufferedBytes":211904}
+docker compose logs --tail=100
+curl -fsS http://localhost:3712/healthz
 ```
 
 ## Updates and backups
 
-Run `docker compose pull` and `docker compose up -d` to replace the running image.
-Upgrading erases buffered relay items and ends login sessions; account credentials
-and preferences survive in the named volume. Keep the SQLite database and its
-`-wal`/`-shm` files together. Use SQLite's backup API for a live backup, or stop
-the app before copying the database file. Do not use `docker compose down -v`
-when retaining account data.
+Update from `deploy/`:
 
-See [configuration](/hosting/configuration) and [privacy and storage](/hosting/privacy).
+```bash
+docker compose pull
+docker compose up -d
+```
+
+Updates clear relay content and end login sessions. Accounts and saved settings survive in the named volume.
+
+For a simple account backup, stop the app, copy the SQLite database with its `-wal` and `-shm` files, then start it again. Use SQLite's backup API for a live backup.
+
+**Do not run `docker compose down -v` if you want to keep accounts.**
+
+To build from source instead, use [development](/development).

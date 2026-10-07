@@ -1,14 +1,13 @@
 ---
 title: "Quick start"
-description: "Run Evakage and connect two browsers."
+description: "Open Evakage and connect two devices."
 ---
 
-Evakage is in prerelease development. If you already have access to an instance,
-open its URL in both browsers and skip to **Connect devices** below.
+Already have an Evakage URL? Open it on both devices and skip to [Connect devices](#connect-devices).
 
-## Host your own instance
+## Host your own
 
-To use a published image:
+With Docker installed:
 
 ```bash
 git clone https://github.com/thesteau/evakage.git
@@ -18,51 +17,24 @@ docker compose pull
 docker compose up -d
 ```
 
-See [deployment](/hosting/deployment) for updates, backups and image versions.
+Open `http://localhost:3712` on the host. Other devices need an HTTPS URL with a trusted certificate.
 
-### Build from source
-
-For a local source build, use the source Compose setup instead:
-
-```bash
-git clone https://github.com/thesteau/evakage.git
-cd evakage
-cp app/.env.example app/.env
-docker compose -f app/compose.yaml up -d --build
-```
-
-Open `http://localhost:3712` on the host. For another device, expose the app through
-an HTTPS reverse proxy with a certificate trusted by that device. Set `TRUST_PROXY=1`
-only when clients reach the app through a proxy you control. WebCrypto, browser
-identity and PWA features require HTTPS or localhost.
-
-The source Compose setup reads `app/.env`. Copy the example as shown above,
-then edit its values before starting Compose.
+Behind a reverse proxy you control, set `TRUST_PROXY=1` in `deploy/.env` and preserve the public host header. See [deployment](/hosting/deployment) for setup and updates.
 
 ## Connect devices
 
-1. Open the same server URL in both browsers.
+1. Open the same Evakage URL on both devices.
 2. On one device, show its private pairing code or **QR code**.
-3. On the other device, choose **Connect**, then **Scan QR Code** or enter the
-   private pairing code and choose **Join**.
-4. Open the paired device and send text, a link or a file.
+3. On the other, choose **Connect**. Scan the QR or enter the code and choose **Join**.
+4. Open the paired device to send a message or file.
 
-Advertising is off by default. Public advertised codes do not authorize pairing.
-Creating rooms requires an optional account; joining by invitation, chatting and
-sharing files work without one. Compare safety codes outside the app when verifying
-a device's owner.
+Public advertised codes do not grant pairing. To confirm who you connected to, [compare safety codes](/guides/devices#verify-a-device).
 
-## Published images
+## Next steps
 
-The [deployment setup](/hosting/deployment) pulls `ghcr.io/thesteau/evakage:latest`
-by default. `latest` tracks tested `main` commits.
-For a stable release, edit the deployment Compose image tag to an actually published `vX.Y.Z` tag.
-The prepared pipeline starts at `v1.0.0`; its configuration does not mean that
-version is already available.
+- [Rooms](/guides/rooms): invite a group. Creating a room requires an account; joining does not.
+- [Messages and files](/guides/transfers): send, save, and retry transfers.
+- [Phones and tablets](/guides/mobile): install the app and keep transfers running.
+- [Privacy and storage](/hosting/privacy): understand temporary content.
 
-Learn about [privacy and storage](/hosting/privacy), [configuration](/hosting/configuration)
-and [mobile limitations](/guides/mobile) before relying on a deployment.
-
-You are responsible for your use and shared content. Instance operators are
-responsible for their own deployment and security. See
-[usage and responsibility](/hosting/privacy#usage-and-responsibility) for details.
+To build from source, use [development](/development).

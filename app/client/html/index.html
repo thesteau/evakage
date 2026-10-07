@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="theme-color" content="#0b1020" media="(prefers-color-scheme: dark)">
   <meta name="theme-color" content="#f4f6fc" media="(prefers-color-scheme: light)">
-  <meta name="description" content="Ephemeral browser-to-browser chat and file transfer for trusted networks.">
+  <meta name="description" content="Temporary, end-to-end encrypted browser chat and file sharing for trusted networks.">
   <meta name="color-scheme" content="dark light">
   <link rel="manifest" href="/manifest.webmanifest">
   <link rel="icon" href="/icon.svg" type="image/svg+xml">
@@ -27,6 +27,7 @@
   <header class="topbar">
     <div>
       <h1><button id="appNameBtn" class="app-name-button" type="button" aria-haspopup="dialog" title="Why Evakage?">Evakage</button></h1>
+      <p class="app-tagline muted">Temporary · end-to-end encrypted</p>
     </div>
     <div class="topbar-actions">
       <span class="connection-status"><span class="muted">Status</span> <span id="serverState" class="header-status connecting" role="status">Connecting</span></span>
@@ -158,7 +159,7 @@
   <aside id="sessionPanel" class="session-panel" aria-label="Session" hidden>
     <div class="session-header">
       <div>
-        <div id="sessionKind" class="eyebrow">ephemeral session</div>
+        <div id="sessionKind" class="eyebrow">temporary session · end-to-end encrypted</div>
         <h2 id="sessionTitle">Peer</h2>
         <div id="sessionMeta" class="session-meta"></div>
         <div id="sessionMembers" class="session-members hidden"></div>
@@ -262,17 +263,17 @@
           <span><strong>Accept automatically</strong><span class="muted"> — every file is received as soon as it is sent.</span></span>
         </label>
       </fieldset>
-      <!-- TODO: point Docs at the docs site once it exists; it uses the repo until then. -->
       <nav class="settings-links" aria-label="Project links">
         <a class="icon-button" href="https://github.com/thesteau/evakage" target="_blank" rel="noopener noreferrer" aria-label="GitHub" title="GitHub">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 19c-4.3 1.4-4.3-2.5-6-3m12 5v-3.5c0-1 .1-1.4-.5-2 2.8-.3 5.5-1.4 5.5-6a4.6 4.6 0 0 0-1.3-3.2 4.2 4.2 0 0 0-.1-3.2s-1.1-.3-3.5 1.3a12.3 12.3 0 0 0-6.2 0C6.5 2.8 5.4 3.1 5.4 3.1a4.2 4.2 0 0 0-.1 3.2A4.6 4.6 0 0 0 4 9.5c0 4.6 2.7 5.7 5.5 6-.6.6-.6 1.2-.5 2V21"/></svg>
         </a>
-        <a class="icon-button" href="https://github.com/thesteau/evakage" target="_blank" rel="noopener noreferrer" aria-label="Docs" title="Docs">
+        <a class="icon-button" href="https://evakage.docs.thesteau.com" target="_blank" rel="noopener noreferrer" aria-label="Docs" title="Docs">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20V3H6.5A2.5 2.5 0 0 0 4 5.5zM4 19.5A2.5 2.5 0 0 0 6.5 22H20v-5M8 7h8M8 11h6"/></svg>
         </a>
         <a class="icon-button" href="https://buymeacoffee.com/thesteau" target="_blank" rel="noopener noreferrer" aria-label="Buy me a coffee" title="Buy me a coffee">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M17 8h1a4 4 0 0 1 0 8h-1M3 8h14v9a4 4 0 0 1-4 4H7a4 4 0 0 1-4-4zM6 1v3M10 1v3M14 1v3"/></svg>
         </a>
+        <span id="buildLabel" class="build-label">build local</span>
       </nav>
     </form>
   </dialog>
@@ -284,7 +285,7 @@
     </div>
     <div class="dialog-body">
       <p>The name combines <strong>Eva-</strong>, evoking evanescence — fading or disappearing — with <strong>kage (影)</strong>, Japanese for shadow.</p>
-      <p class="muted">It reflects the app’s temporary conversations and file sharing.</p>
+      <p class="muted">Evakage is built for <strong>temporary, end-to-end encrypted chat and file sharing</strong>. Messages and files are encrypted on your device; save files you want to keep.</p>
     </div>
   </dialog>
 

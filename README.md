@@ -1,13 +1,11 @@
 # Evakage
 
-Self-hosted, browser-first encrypted chat and file sharing for trusted networks.
+Self-hosted, browser-first **temporary, end-to-end encrypted chat and file sharing** for trusted networks.
 Connect devices by private code or QR, send text and files directly, or invite a
-small group into an ephemeral room. Install it as a PWA or use it in your browser.
+small group into a temporary room. Install it as a PWA or use it in your browser.
 
-[Documentation](https://github.com/thesteau/evakage/tree/main/docs) ·
+[Documentation](https://evakage.docs.thesteau.com) ·
 [Buy me a coffee](https://buymeacoffee.com/thesteau)
-
-Evakage is currently in prerelease development.
 
 ![Evakage device list and private rooms](docs/images/devices-and-rooms.png)
 
@@ -54,6 +52,7 @@ for more details.
 
 ## What to expect
 
+- Temporary conversations and end-to-end encrypted content are the core of Evakage. Only the participating devices decrypt messages and files; the server relays encrypted content for delivery.
 - Devices stay private until you opt into advertising. Private code/QR invitations authorize pairing.
 - Direct transfers use encrypted WebRTC channels; encrypted server relay covers unreachable peers.
 - Chat, files and joining rooms work without accounts. Creating rooms requires an account.
@@ -68,8 +67,9 @@ independent security audit; see [SECURITY.md](SECURITY.md).
 
 ## Documentation
 
-The hosted documentation site is coming soon. Until then, read the
-[documentation in this repository](https://github.com/thesteau/evakage/tree/main/docs):
+Read the [hosted documentation](https://evakage.docs.thesteau.com).
+The [documentation source](https://github.com/thesteau/evakage/tree/main/docs)
+is also available in this repository:
 
 - [Quick start](docs/quickstart.mdx)
 - [Pairing devices](docs/guides/devices.mdx), [rooms](docs/guides/rooms.mdx), and [transfers](docs/guides/transfers.mdx)
