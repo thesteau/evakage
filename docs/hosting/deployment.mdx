@@ -5,17 +5,35 @@ description: "Run Evakage with Docker, HTTPS, and account backups."
 
 ## Start the server
 
-Install Docker, then run:
+Install Docker and save this as `docker-compose.yml` in a directory of your choice. It matches the [current deployment Compose file](https://github.com/thesteau/evakage/blob/main/deploy/docker-compose.yml):
+
+```yaml
+services:
+  evakage:
+    image: ghcr.io/thesteau/evakage:latest
+    container_name: evakage
+    restart: unless-stopped
+    ports:
+      - "3712:3000"
+    env_file: .env
+    volumes:
+      - account-data:/home/node/evakage-accounts
+
+volumes:
+  account-data:
+```
+
+The Compose setup is ready to use and loads your settings through `env_file: .env`. Environment settings can change between releases, so check the current [`.env.example`](https://github.com/thesteau/evakage/blob/main/deploy/.env.example) for available variables and default values before deploying or updating. See the [configuration guide](/hosting/configuration) for what each setting does.
+
+Create a `.env` file beside it (it can be empty for the defaults), then run these commands from the same directory:
 
 ```bash
-git clone https://github.com/thesteau/evakage.git
-cd evakage/deploy
-cp .env.example .env
+touch .env
 docker compose pull
 docker compose up -d
 ```
 
-Open `http://localhost:3712` on the host. The `.env` file is required; edit it before starting if you need different settings.
+Open `http://localhost:3712` on the host.
 
 The default image is `ghcr.io/thesteau/evakage:latest`, built from tested `main` commits. To pin a stable version, replace `latest` in the Compose file with a published `vX.Y.Z` tag.
 
@@ -23,7 +41,7 @@ The default image is `ghcr.io/thesteau/evakage:latest`, built from tested `main`
 
 Put Evakage behind a reverse proxy with a certificate trusted by your devices.
 
-1. Set `TRUST_PROXY=1` in `deploy/.env`.
+1. Set `TRUST_PROXY=1` in `.env`.
 2. Preserve the public `Host` header or send it as `X-Forwarded-Host`, including any non-default port.
 3. Keep the backend port accessible only through your proxy.
 4. Recreate the container after changing settings:
@@ -73,7 +91,9 @@ curl -fsS http://localhost:3712/healthz
 
 ## Updates and backups
 
-Update from `deploy/`:
+Compare your `.env` with the current [`.env.example`](https://github.com/thesteau/evakage/blob/main/deploy/.env.example). Merge any new or changed settings you need, keeping your own values.
+
+Update from the directory containing `docker-compose.yml`:
 
 ```bash
 docker compose pull

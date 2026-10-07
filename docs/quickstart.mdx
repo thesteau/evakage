@@ -7,19 +7,37 @@ Already have an Evakage URL? Open it on both devices and skip to [Connect device
 
 ## Host your own
 
-With Docker installed:
+With Docker installed, save this as `docker-compose.yml` in a directory of your choice. It matches the [current deployment Compose file](https://github.com/thesteau/evakage/blob/main/deploy/docker-compose.yml):
+
+```yaml
+services:
+  evakage:
+    image: ghcr.io/thesteau/evakage:latest
+    container_name: evakage
+    restart: unless-stopped
+    ports:
+      - "3712:3000"
+    env_file: .env
+    volumes:
+      - account-data:/home/node/evakage-accounts
+
+volumes:
+  account-data:
+```
+
+The Compose setup is ready to use and loads your settings through `env_file: .env`. Environment settings can change between releases, so check the current [`.env.example`](https://github.com/thesteau/evakage/blob/main/deploy/.env.example) for available variables and default values before deploying or updating. When updating, merge relevant changes into your existing `.env`, keeping your own values.
+
+Create a `.env` file beside it (it can be empty for the defaults), then run these commands from that directory:
 
 ```bash
-git clone https://github.com/thesteau/evakage.git
-cd evakage/deploy
-cp .env.example .env
+touch .env
 docker compose pull
 docker compose up -d
 ```
 
 Open `http://localhost:3712` on the host. Other devices need an HTTPS URL with a trusted certificate.
 
-If you use a reverse proxy you control, set `TRUST_PROXY=1` in `deploy/.env` and preserve the public host header. Follow the [deployment guide](/hosting/deployment) for HTTPS setup, updates, and backups.
+If you use a reverse proxy you control, set `TRUST_PROXY=1` in `.env` and preserve the public host header. Follow the [deployment guide](/hosting/deployment) for HTTPS setup, updates, and backups.
 
 ## Connect devices
 
