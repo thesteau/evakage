@@ -4,6 +4,81 @@ import { test, chat, deviceNames, openPeer, pairDevices, joinRoom } from './help
 
 import type { Page } from '@playwright/test';
 
+for (const mobile of [false, true]) {
+  test(`${mobile ? 'mobile' : 'desktop'}: files stay in message order and older entries remain readable`, async ({ devices }) => {
+    const { alice, bob } = devices;
+    if (mobile) await alice.setViewportSize({ width: 390, height: 720 });
+    await openPeer(alice, 'Bob');
+    await openPeer(bob, 'Alice');
+
+    const files = ['oldest.txt', 'middle.txt', 'newest.txt'].map((name) => ({
+      name,
+      mimeType: 'text/plain',
+      buffer: Buffer.from(name),
+    }));
+    await alice.locator('#fileInput').setInputFiles(files);
+    for (const file of files) {
+      const incoming = bob.locator('#timeline .file-item').filter({ hasText: file.name });
+      await incoming.getByRole('button', { name: `Accept ${file.name}`, exact: true }).click();
+      await expect(incoming).toContainText('SHA-256 ✓');
+    }
+    await expect(alice.locator('#timeline .file-item.self')).toHaveCount(files.length);
+    await expect(bob.locator('#timeline .file-item.self')).toHaveCount(0);
+    for (const page of [alice, bob]) {
+      await expect(page.locator('#timeline .file-name')).toHaveText(files.map((file) => file.name));
+    }
+
+    for (let i = 0; i < 8; i++) {
+      await chat(bob, alice, `Message ${i}\n${'History line\n'.repeat(6)}`);
+    }
+    const timeline = alice.locator('#timeline');
+    const distanceFromBottom = () => timeline.evaluate(
+      (element) => element.scrollHeight - element.scrollTop - element.clientHeight,
+    );
+    await expect.poll(distanceFromBottom).toBeLessThanOrEqual(1);
+    await timeline.evaluate((element) => { element.scrollTop = 0; });
+    expect(await distanceFromBottom()).toBeGreaterThan(48);
+    const oldest = timeline.locator('.file-item').filter({ hasText: 'oldest.txt' });
+    const originalTop = (await oldest.boundingBox())!.y;
+
+    // A new file offer and message both rebuild the timeline while the reader
+    // is looking at the oldest file, without clicking any offscreen action.
+    await bob.locator('#fileInput').setInputFiles({
+      name: 'incoming.txt',
+      mimeType: 'text/plain',
+      buffer: Buffer.from('New file while reading history'),
+    });
+    await expect(timeline.locator('.file-item:not(.self)')).toHaveCount(1);
+    await chat(bob, alice, 'New message while reading history');
+    expect((await oldest.boundingBox())!.y).toBeCloseTo(originalTop, 0);
+    expect(await timeline.evaluate((element) => element.scrollTop)).toBe(0);
+
+    await timeline.evaluate((element) => {
+      element.scrollTop = element.scrollHeight / 2;
+    });
+    const visibleMessage = await timeline.evaluate((element) => {
+      const top = element.getBoundingClientRect().top;
+      const message = [...element.querySelectorAll<HTMLElement>('.message-item')]
+        .find((node) => node.getBoundingClientRect().bottom > top)!;
+      return { key: message.dataset.timelineKey!, top: message.getBoundingClientRect().top };
+    });
+    await chat(bob, alice, 'New message while reading the middle');
+    const anchoredTop = await timeline.evaluate((element, key) =>
+      element.querySelector(`[data-timeline-key="${CSS.escape(key)}"]`)!
+        .getBoundingClientRect().top, visibleMessage.key);
+    expect(anchoredTop).toBeCloseTo(visibleMessage.top, 0);
+
+    await timeline.evaluate((element) => { element.scrollTop = element.scrollHeight; });
+    await chat(bob, alice, 'Follow the latest message');
+    await expect.poll(distanceFromBottom).toBeLessThanOrEqual(1);
+
+    await timeline.evaluate((element) => { element.scrollTop = 0; });
+    await alice.locator('#closeSession').click();
+    await openPeer(alice, 'Bob');
+    await expect.poll(distanceFromBottom).toBeLessThanOrEqual(1);
+  });
+}
+
 async function recoverFromSurvivingPeer(
   devices: { alice: Page; bob: Page; disconnect: (name: string) => void },
   browser: import('@playwright/test').Browser,

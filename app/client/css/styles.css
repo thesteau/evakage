@@ -246,7 +246,6 @@ tbody tr:hover { background: var(--panel-3); }
 .presence-pip { width: 9px; height: 9px; border-radius: 99px; background: var(--accent-2); flex: 0 0 auto; }
 .presence-pip.offline { background: transparent; border: 1.5px solid var(--muted); }
 tbody tr.offline .device-name { color: var(--muted); font-weight: 600; }
-.peer-code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--accent-2); }
 .row-actions { display: flex; flex-wrap: wrap; gap: 6px; }
 .row-actions button { padding: 7px 9px; font-size: .78rem; }
 .row-actions .row-icon { display: inline-grid; place-items: center; padding: 6px 8px; color: var(--muted); }
@@ -412,7 +411,8 @@ td.danger, .file-meta.danger { color: var(--danger); }
 .message-author { font-size: .7rem; color: var(--muted); font-weight: 700; padding-left: 3px; }
 .message-author.unverified { color: var(--warn); }
 
-.file-item { border: 1px solid var(--line); border-radius: 14px; padding: 12px; display: grid; gap: 10px; }
+.file-item { flex: none; width: 86%; min-width: 0; border: 1px solid var(--line); border-radius: 14px; background: var(--panel-2); padding: 12px; display: grid; gap: 10px; }
+.file-item.self { margin-left: auto; background: color-mix(in srgb, var(--accent) 28%, var(--panel-2)); }
 .file-main { display: flex; align-items: center; gap: 10px; min-width: 0; }
 .file-icon { width: 34px; height: 34px; display: grid; place-items: center; border-radius: 10px; background: var(--panel-2); flex: 0 0 auto; }
 .file-text { min-width: 0; }
@@ -424,7 +424,6 @@ progress { width: 100%; accent-color: var(--accent-2); }
 /* Encryption and both send actions share a row under the text box. */
 .message-form { flex: none; display: grid; grid-template-columns: 1fr; gap: 8px; padding: 14px; border-top: 1px solid var(--line); }
 .message-form textarea { resize: vertical; min-height: 46px; max-height: 160px; }
-.message-hint { margin: 0; color: var(--muted); font-size: .75rem; line-height: 1.4; }
 .message-actions { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .message-security { display: flex; align-items: center; gap: 6px; flex: 1; min-width: 0; }
 .message-actions button { flex: none; }
@@ -736,6 +735,7 @@ tbody tr.offline td.expiring {
   .session-toolbar { padding: 10px 14px; }
   .timeline { padding: 14px; }
   .message-item { max-width: 92%; }
+  .file-item { width: 92%; }
   .file-actions { grid-template-columns: 1fr; }
   .file-actions button { width: 100%; }
   .dialog form { padding: 18px; }

@@ -3447,6 +3447,7 @@ function openConversation(convId: string, kind: 'direct' | 'room', ref: string, 
     // very likely to be re-rendered before the panel closes again.
     state.panelReturnFocus = document.activeElement;
     state.panelReturnKey = focusKeyOf(document.activeElement);
+    delete timeline.dataset.conversationId;
   }
   state.activeConvId = convId;
 
@@ -3576,7 +3577,7 @@ function renderPeersNow() {
     tr.title = 'Drop a file here to send it to this device';
 
     const nameTd = document.createElement('td');
-    nameTd.dataset.label = 'Device';
+    nameTd.dataset.label = 'Device ID';
     const nameWrap = document.createElement('div');
     nameWrap.className = 'device-name';
     const pip = document.createElement('span');
@@ -3618,11 +3619,6 @@ function renderPeersNow() {
       nameWrap.append(badge);
     }
 
-    const codeTd = document.createElement('td');
-    codeTd.className = 'peer-code';
-    codeTd.dataset.label = 'Code';
-    codeTd.textContent = peer.code;
-
     const platformTd = document.createElement('td');
     platformTd.dataset.label = 'Platform';
     platformTd.textContent = `${peer.platform} · ${peer.browser}`;
@@ -3654,7 +3650,7 @@ function renderPeersNow() {
     // One way in and one way out. The session panel already carries text and
     // file controls, so opening it is the only thing a row needs to do.
     actionsTd.append(rowActions(peer.id, isSelf ? 'yourself' : peer.name, link));
-    tr.append(nameTd, codeTd, platformTd, statusTd, actionsTd);
+    tr.append(nameTd, platformTd, statusTd, actionsTd);
     peerRows.append(tr);
   }
 
@@ -3942,7 +3938,7 @@ function renderOfflineRow(record: Device) {
   };
 
   const nameTd = document.createElement('td');
-  nameTd.dataset.label = 'Device';
+  nameTd.dataset.label = 'Device ID';
   const nameWrap = document.createElement('div');
   nameWrap.className = 'device-name';
   const pip = document.createElement('span');
@@ -3976,7 +3972,6 @@ function renderOfflineRow(record: Device) {
 
   tr.append(
     nameTd,
-    cell('Code', '—'),
     cell('Platform', `${record.platform || 'Unknown'} · ${record.browser || 'Browser'}`),
     statusTd,
     actionsTd,
@@ -4241,6 +4236,19 @@ function renderSessionNow() {
   const conv = activeConversation();
   if (!conv) return;
 
+  // Follow new entries only while reading the latest. Keep an older entry in
+  // place when transfers update or recovered history is inserted above it.
+  const scrollTop = timeline.scrollTop;
+  const followLatest =
+    timeline.dataset.conversationId !== conv.id ||
+    timeline.scrollHeight - scrollTop - timeline.clientHeight <= 48;
+  const timelineTop = timeline.getBoundingClientRect().top;
+  const anchor = followLatest
+    ? undefined
+    : [...timeline.children].find((node) => node.getBoundingClientRect().bottom > timelineTop);
+  const anchorKey = anchor instanceof HTMLElement ? anchor.dataset.timelineKey : undefined;
+  const anchorOffset = anchor ? anchor.getBoundingClientRect().top - timelineTop : 0;
+
   sessionTitle.textContent = conversationTitle(conv);
   sessionKind.textContent = isSelfConversation(conv)
     ? 'temporary encrypted private notes'
@@ -4357,7 +4365,14 @@ function renderSessionNow() {
     if (item.kind === 'message') renderMessage(conv, item.value);
     else renderFile(conv, item.value);
   }
-  timeline.scrollTop = timeline.scrollHeight;
+  timeline.dataset.conversationId = conv.id;
+  timeline.scrollTop = followLatest ? timeline.scrollHeight : scrollTop;
+  if (!followLatest && anchorKey) {
+    const nextAnchor = timeline.querySelector(`[data-timeline-key="${CSS.escape(anchorKey)}"]`);
+    if (nextAnchor) {
+      timeline.scrollTop += nextAnchor.getBoundingClientRect().top - timelineTop - anchorOffset;
+    }
+  }
 }
 
 function renderMembers(conv: Conversation) {
@@ -4423,6 +4438,7 @@ function cloneTemplate(template: HTMLTemplateElement): HTMLElement {
 
 function renderMessage(conv: Conversation, message: Message) {
   const node = cloneTemplate($('#messageTemplate'));
+  node.dataset.timelineKey = `message:${messageKey(message)}`;
   const mine = message.from === state.self?.id;
   if (mine) node.classList.add('self');
   const author = requiredChild(node, '.message-author', 'div');
@@ -4465,6 +4481,11 @@ function appendLinkifiedText(container: Element, text: string) {
 function renderFile(conv: Conversation, file: FileRecord) {
   const node = cloneTemplate($('#fileTemplate'));
   node.dataset.fileId = file.id;
+  node.dataset.timelineKey = `file:${file.id}`;
+  node.classList.toggle('self', file.from === state.self?.id);
+  requiredChild(node, '.message-time', 'div').textContent = file.addedAt
+    ? new Date(file.addedAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
+    : '';
   requiredChild(node, '.file-name', 'strong').textContent = file.name;
   const owner = file.from === state.self?.id ? 'sent by you' : `from ${displayName(file.from)}`;
 
@@ -4845,13 +4866,13 @@ $('#copyCodeBtn').addEventListener('click', async () => {
   const code = conv.kind === 'room' ? state.rooms.get(conv.roomId)?.code : state.self?.pairingCode;
   if (!code) return;
   await navigator.clipboard.writeText(code).catch(() => {});
-  toast(conv.kind === 'room' ? 'Room code copied' : 'Your device code copied');
+  toast(conv.kind === 'room' ? 'Room code copied' : 'Your connection code copied');
 });
 
 selfCode.addEventListener('click', async () => {
   if (!state.self?.code) return;
   await navigator.clipboard.writeText(state.self.pairingCode || '').catch(() => {});
-  toast('Your device code copied');
+  toast('Your connection code copied');
 });
 
 function setupSettings() {
@@ -5111,7 +5132,7 @@ let connectTargetId = undefined as string | undefined;
 function openCodePairing(id: string) {
   connectTargetId = id;
   $('#connectTarget').textContent =
-    `Ask the owner of ${displayName(id)} for their pairing code, or scan their device QR.`;
+    `Ask the owner of ${displayName(id)} for the Connection code at the top of their screen, or scan their device QR.`;
   $('#connectCode').value = '';
   $('#connectFeedback').textContent = '';
   openDialog($('#connectDialog'), $('#connectCode'));
@@ -5121,7 +5142,7 @@ $('#connectForm').addEventListener('submit', async (event) => {
   const peer = await resolveCode($('#connectCode').value.trim().toUpperCase(), connectTargetId);
   if (!peer) {
     $('#connectFeedback').textContent =
-      'Code invalid or expired. Ask this device for its current pairing code.';
+      'Code invalid or expired. Ask the owner for their current Connection code.';
     return;
   }
   $('#connectDialog').close();
