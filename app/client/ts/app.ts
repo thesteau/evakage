@@ -1,4 +1,5 @@
 import { setupAccounts, accountSocketTicket } from './preferences.js';
+import { setTip, setupTips } from './tips.js';
 import { setupScanner, pairingInvitation } from './scanner.js';
 import { drawQr } from './qr.js';
 import { signMessage, verifyMessage, messageScope, historyFrames, messageKey } from './messages.js';
@@ -117,7 +118,7 @@ type AppElements = {
   '#devicesBtn': HTMLElementTagNameMap['button'];
   '#refreshBtn': HTMLElementTagNameMap['button'];
   '#installBtn': HTMLElementTagNameMap['button'];
-  '#installStatus': HTMLElementTagNameMap['p'];
+  '#installTip': HTMLElementTagNameMap['span'];
   '#updateBanner': HTMLElementTagNameMap['div'];
   '#reloadBtn': HTMLElementTagNameMap['button'];
   '#shareBanner': HTMLElementTagNameMap['div'];
@@ -344,11 +345,6 @@ async function updateAccountPeers(message: { signedIn: boolean; peers: Device[] 
   renderKnownDevices();
   renderPeers();
   renderSession();
-  const candidates = [...accountPeerIds].filter(
-    (id) => deviceAllowed(id) && !deviceTrust(id)?.hidden,
-  );
-  // Keep an existing chat selected; with several devices the list is the picker.
-  if (candidates.length === 1 && !state.activeConvId) openSession(candidates[0]);
 }
 
 function deviceAllowed(id: string) {
@@ -4609,40 +4605,56 @@ function setupSettings() {
     });
   }
   const verifiedOnlyInput = $('#verifiedOnlyInput');
-  try {
-    state.verifiedOnly = localStorage.getItem('evakage-verified-only') === '1';
-  } catch {}
-  verifiedOnlyInput.checked = state.verifiedOnly;
   verifiedOnlyInput.addEventListener('change', () => {
     state.verifiedOnly = verifiedOnlyInput.checked;
     try {
       localStorage.setItem('evakage-verified-only', state.verifiedOnly ? '1' : '0');
     } catch {}
     renderSession();
+    accountUI.push();
   });
   const dialog = $('#settingsDialog');
-  const radios = [...dialog.querySelectorAll('input[name="incomingPolicy"]')];
-  try {
-    const stored = localStorage.getItem('evakage-incoming') || '';
-    if (INCOMING_POLICIES.includes(stored)) state.incomingPolicy = stored;
-  } catch {}
+  const radios = incomingRadios();
   for (const radio of radios) {
-    if (!(radio instanceof HTMLInputElement)) continue;
-    radio.checked = radio.value === state.incomingPolicy;
     radio.addEventListener('change', () => {
       if (!radio.checked) return;
       state.incomingPolicy = radio.value;
       try {
         localStorage.setItem('evakage-incoming', radio.value);
       } catch {}
+      accountUI.push();
     });
   }
   $('#settingsBtn').addEventListener('click', () => {
-    openDialog(
-      dialog,
-      radios.find((radio) => radio instanceof HTMLInputElement && radio.checked) || radios[0],
-    );
+    openDialog(dialog, radios.find((radio) => radio.checked) || radios[0]);
+    accountUI.pull();
   });
+}
+
+function incomingRadios() {
+  return [
+    ...$('#settingsDialog').querySelectorAll<HTMLInputElement>('input[name="incomingPolicy"]'),
+  ];
+}
+
+/** (Re)applies the account-synced settings from localStorage. */
+function loadSyncedPreferences() {
+  const stored = (key: string) => {
+    try {
+      return localStorage.getItem(key);
+    } catch {
+      return null;
+    }
+  };
+  applyTheme(stored('evakage-theme') || 'system');
+  const incoming = stored('evakage-incoming') || '';
+  if (INCOMING_POLICIES.includes(incoming)) state.incomingPolicy = incoming;
+  for (const radio of incomingRadios()) radio.checked = radio.value === state.incomingPolicy;
+  state.verifiedOnly = stored('evakage-verified-only') === '1';
+  $('#verifiedOnlyInput').checked = state.verifiedOnly;
+  state.forceRelay = stored('evakage-force-relay') === '1';
+  $('#forceRelayInput').checked = state.forceRelay;
+  renderSession();
 }
 
 function setupRelayToggle() {
@@ -4650,15 +4662,12 @@ function setupRelayToggle() {
   const input = $('#forceRelayInput');
   // Only offered when the server actually runs the relay.
   toggle.classList.toggle('hidden', !relayEnabled());
-  try {
-    state.forceRelay = localStorage.getItem('evakage-force-relay') === '1';
-  } catch {}
-  input.checked = state.forceRelay;
   input.addEventListener('change', () => {
     state.forceRelay = input.checked;
     try {
       localStorage.setItem('evakage-force-relay', input.checked ? '1' : '0');
     } catch {}
+    accountUI.push();
   });
 }
 
@@ -4768,6 +4777,7 @@ function setupTheme() {
   applyTheme(stored);
   themeBtn.addEventListener('click', () => {
     applyTheme(THEMES[(THEMES.indexOf(state.theme) + 1) % THEMES.length]);
+    accountUI.push();
   });
 }
 
@@ -5274,7 +5284,7 @@ async function updateWakeLock() {
  */
 function setupInstallPrompt() {
   const installBtn = $('#installBtn');
-  const status = $('#installStatus');
+  const status = $('#installTip');
 
   let deferred: any = null;
 
@@ -5285,7 +5295,7 @@ function setupInstallPrompt() {
     (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
 
   const show = (text: string, offer: boolean = false) => {
-    status.textContent = text;
+    setTip(status, text);
     installBtn.hidden = !offer;
   };
 
@@ -5518,6 +5528,8 @@ async function boot() {
   setupPasteToSend();
   setupRelayToggle();
   setupSettings();
+  loadSyncedPreferences();
+  setupTips();
   connectWebSocket();
   state.statsTimer = setInterval(refreshStats, 3000);
   state.wakeLockTimer = setInterval(updateWakeLock, 2000);
@@ -5559,4 +5571,5 @@ const accountUI = setupAccounts({
     wsSend({ type: 'account-connect', token });
   },
   onSignOut: clearSignedOutDevice,
+  onPreferences: loadSyncedPreferences,
 });

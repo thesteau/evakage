@@ -227,7 +227,7 @@ test.describe('mandatory code pairing', () => {
   }) => {
     const { alice, bob } = devices;
     await alice.getByRole('button', { name: 'QR code', exact: true }).click();
-    await expect(alice.locator('.qr-steps li')).toHaveCount(3);
+    await expect(alice.locator('#qrPairingCode')).not.toBeEmpty();
     const invitation = await alice.locator('#qrInvitation').inputValue();
     await alice.evaluate(() => {
       Object.defineProperty(navigator, 'clipboard', {

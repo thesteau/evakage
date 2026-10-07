@@ -195,7 +195,6 @@ h2 { margin-bottom: 8px; letter-spacing: -.02em; }
 
 .code-form label { display: block; font-size: .78rem; color: var(--muted); margin-bottom: 7px; font-weight: 700; }
 .code-form { min-width: 0; }
-#peersHeading, #roomsHeading { cursor: help; }
 .topbar-actions .identity-card { font-size: .85rem; white-space: nowrap; }
 .device-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .inline-field { display: grid; grid-template-columns: 1fr auto; gap: 8px; }
@@ -361,7 +360,6 @@ td.danger, .file-meta.danger { color: var(--danger); }
 .secure-state.ready { color: var(--accent-2); }
 .secure-state.unverified { color: var(--warn); }
 
-.transfer-notice { margin: 0; padding: 8px 16px; font-size: .8rem; line-height: 1.4; border-bottom: 1px solid var(--line); }
 .timeline { padding: 18px; overflow-y: auto; display: flex; flex-direction: column; gap: 10px; }
 .timeline-empty { margin: auto; text-align: center; color: var(--muted); max-width: 280px; line-height: 1.5; }
 .message-item { display: flex; flex-direction: column; max-width: 86%; gap: 4px; }
@@ -479,14 +477,52 @@ progress { width: 100%; accent-color: var(--accent-2); }
 .account-delete summary { color: var(--danger); cursor: pointer; }
 .account-delete p { margin-top: 10px; }
 .account-delete form { margin-top: 12px; }
-.account-sync { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.account-action { display: flex; align-items: center; gap: 8px; }
+.account-action button { flex: 1; }
 button.danger { background: transparent; border-color: color-mix(in srgb, var(--danger) 55%, transparent); color: var(--danger); }
 button.danger:hover { background: color-mix(in srgb, var(--danger) 12%, transparent); filter: none; }
 
 .setting-group { border: 1px solid var(--line); border-radius: 14px; padding: 12px 14px; margin: 0; display: grid; gap: 10px; }
 .setting-group legend { font-weight: 800; padding: 0 6px; }
-.setting-option { display: flex; gap: 10px; align-items: flex-start; cursor: pointer; font-size: .88rem; line-height: 1.4; }
-.setting-option input { width: auto; margin-top: 3px; accent-color: var(--accent); }
+.setting-option { display: flex; gap: 10px; align-items: center; cursor: pointer; font-size: .88rem; line-height: 1.4; }
+.setting-option input { width: auto; margin: 0; accent-color: var(--accent); }
+.setting-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; min-height: 36px; }
+.setting-row .setting-option { cursor: default; }
+.setting-row button { width: auto; }
+
+/* An info icon; tips.ts shows its data-tip text on hover, focus or tap. */
+.info-tip {
+  display: inline-grid;
+  place-items: center;
+  flex: none;
+  width: 18px;
+  height: 18px;
+  margin-left: 2px;
+  border: 1px solid var(--line);
+  border-radius: 50%;
+  color: var(--muted);
+  font: italic 700 .7rem/1 Georgia, serif;
+  vertical-align: middle;
+  cursor: help;
+  user-select: none;
+}
+.info-tip:hover, .info-tip:focus-visible { color: var(--accent); border-color: var(--accent); }
+.info-tip-text {
+  position: fixed;
+  inset: auto;
+  margin: 0;
+  max-width: min(280px, calc(100vw - 16px));
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel-solid);
+  color: var(--text);
+  box-shadow: var(--shadow);
+  font-size: .8rem;
+  line-height: 1.45;
+  font-weight: 400;
+  pointer-events: none;
+}
 
 .device-list { display: grid; gap: 8px; overflow-y: auto; max-height: 46vh; }
 .device-row {
@@ -692,8 +728,6 @@ tbody tr.offline td.expiring {
 .qr-details { font-size: .85rem; overflow-wrap: anywhere; }
 .qr-details summary { cursor: pointer; color: var(--muted); }
 .qr-details p { margin-top: 8px; }
-.qr-steps { margin: 0; padding-left: 20px; font-size: .9rem; }
-.qr-steps li + li { margin-top: 6px; }
 .qr-invitation-field { grid-template-columns: minmax(0, 1fr) auto; }
 #qrInvitation { width: 100%; min-width: 0; font-size: .85rem; }
 .copy-button { display: inline-flex; align-items: center; justify-content: center; width: 40px; padding: 0; }
