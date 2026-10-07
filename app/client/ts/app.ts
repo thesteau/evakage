@@ -5742,7 +5742,7 @@ async function consumeShareTarget() {
   if (id === 'too-large' || id === 'queue-full' || id === 'too-many-files') {
     const message =
       id === 'too-large'
-        ? 'That share exceeds the 16 MiB share-sheet limit, including text and packaging. Open a session and use Send file for larger files.'
+        ? 'That share exceeds the 16 MiB share-sheet limit, including text and packaging. Open a session and use Attach File for larger files.'
         : id === 'too-many-files'
           ? 'Share at most 32 files at once. Please select fewer files and share again.'
           : 'The share queue is full (8 shares or 32 MiB). Collect waiting shares or wait up to ten minutes, then share again.';
