@@ -171,10 +171,10 @@ test.describe('mandatory code pairing', () => {
     await expect(alice.locator('#connectDialog')).toBeVisible();
     await expect(alice.locator('#sessionPanel')).toBeHidden();
     await alice.locator('#connectCode').fill('WRONG-CODE');
-    await alice.locator('#connectForm').getByRole('button', { name: 'Pair', exact: true }).click();
+    await alice.locator('#connectForm').getByRole('button', { name: 'Connect', exact: true }).click();
     await expect(alice.locator('#connectFeedback')).toContainText('Code invalid or expired');
     await alice.locator('#connectCode').fill(code);
-    await alice.locator('#connectForm').getByRole('button', { name: 'Pair', exact: true }).click();
+    await alice.locator('#connectForm').getByRole('button', { name: 'Connect', exact: true }).click();
     await expect(alice.locator('#connectDialog')).toBeHidden();
     await openPeer(bob, 'Alice');
     await chat(alice, bob, 'Paired by private code');
@@ -301,7 +301,7 @@ test.describe('unsolicited payload from an unpaired device', () => {
       })
       .click();
     await alice.locator('#connectCode').fill(await bob.locator('#selfCode').innerText());
-    await alice.locator('#connectForm').getByRole('button', { name: 'Pair', exact: true }).click();
+    await alice.locator('#connectForm').getByRole('button', { name: 'Connect', exact: true }).click();
     await expect(
       alice.locator('#timeline').getByText('Held until you pair this sender', { exact: true }),
     ).toHaveCount(1);

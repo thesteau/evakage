@@ -8,24 +8,28 @@ test('column filters and header sorting update the displayed rows', async ({ dev
   const deviceSort = alice.locator('#peersSection th[aria-sort]').first();
   await expect(rows).toHaveCount(2);
   await alice.locator('[popovertarget="deviceFilters"]').first().click();
-  const bobCode = await alice.locator('#peerRows tr:not(.self-device) .peer-code').innerText();
-  const codeFilter = alice.getByRole('searchbox', { name: 'Filter by code' }).first();
-  await codeFilter.fill(bobCode.toLowerCase().replace('-', ''));
+  const bobName = await alice.locator('#peerRows tr:not(.self-device) .device-name > span:nth-child(2)').innerText();
+  const deviceFilter = alice.getByRole('searchbox', { name: 'Filter by device ID' });
+  await deviceFilter.fill(bobName.toLowerCase().replace('-', ''));
   await expect(rows).toHaveCount(1);
-  await expect(rows).toContainText(bobCode);
+  await expect(rows).toContainText(bobName);
   // A filter on one column does not match text from another.
-  await codeFilter.fill('Windows');
+  await deviceFilter.fill('Windows');
   await expect(rows).toHaveCount(0);
   await expect(alice.locator('#emptyPeers')).toBeVisible();
   await alice.locator('#peersSection .clear-filters').click();
   await expect(rows).toHaveCount(2);
-  await expect(codeFilter).toHaveValue('');
+  await expect(deviceFilter).toHaveValue('');
   await alice.locator('#deviceScope').selectOption('yours');
   await expect(rows).toHaveCount(1);
   await expect(rows).toContainText('This is you');
   await alice.locator('#deviceScope').selectOption('all');
   // Both contexts share this host's platform; search ignores case and spacing.
-  const [platform, browser] = (await alice.locator('#peerRows tr.self-device td').nth(2).innerText()).split(' · ');
+  const [platform, browser] = (await alice.locator('#peerRows tr.self-device td').nth(1).innerText()).split(' · ');
+  await alice.getByRole('searchbox', { name: 'Filter by platform' })
+    .fill(`  ${platform.toUpperCase()}   ${browser.toLowerCase()}  `);
+  await expect(rows).toHaveCount(2);
+  await alice.locator('#peersSection .clear-filters').click();
   await alice
     .getByRole('searchbox', { name: 'Search devices', exact: true })
     .fill(`  ${platform.toUpperCase()}   ${browser.toLowerCase()}  `);

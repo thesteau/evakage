@@ -31,9 +31,9 @@
     <div class="topbar-actions">
       <span class="connection-status"><span class="muted">Status</span> <span id="serverState" class="header-status connecting" role="status">Connecting</span></span>
       <div class="identity-card">
-        <span class="muted" id="selfCodeLabel">Your code</span>
+        <span class="muted" id="selfCodeLabel">Connection code</span>
         <button id="selfCode" class="code-button" type="button" aria-describedby="selfCodeLabel"
-                aria-label="Your device code, activate to copy" title="Copy your code to connect from another device">----</button>
+                aria-label="Your connection code, activate to copy" title="Copy your connection code to share with another device">----</button>
       </div>
       <div class="toolbar-group" role="group" aria-label="App">
         <button id="themeBtn" class="icon-button" type="button" aria-label="Theme: follow system">
@@ -71,10 +71,9 @@
       </div>
       <div id="deviceFilters" class="table-filters" popover aria-label="Device filters">
         <div class="filter-heading"><strong>Filter devices</strong><button class="ghost" type="button" popovertarget="deviceFilters" popovertargetaction="hide" aria-label="Close device filters">×</button></div>
-        <label>Search all<input data-search type="search" placeholder="Name, code, platform or status" aria-label="Search devices"></label>
-        <label>Device<input id="deviceFilter" data-col="0" type="search" aria-label="Filter by device name"></label>
-        <label>Code<input data-col="1" type="search" aria-label="Filter by code"></label>
-        <label>Platform<input data-col="2" type="search" aria-label="Filter by platform"></label>
+        <label>Search all<input data-search type="search" placeholder="Device ID, platform or status" aria-label="Search devices"></label>
+        <label>Device ID<input id="deviceFilter" data-col="0" type="search" aria-label="Filter by device ID"></label>
+        <label>Platform<input data-col="1" type="search" aria-label="Filter by platform"></label>
         <button class="ghost clear-filters" type="button">Clear filters</button>
       </div>
       <div class="table-wrap">
@@ -82,8 +81,7 @@
           <caption class="visually-hidden">This browser, paired devices and advertised devices, with connection state and actions. Column headers sort the table.</caption>
           <thead>
             <tr class="sort-row">
-              <th scope="col" aria-sort="none"><button class="sort-button" type="button">Device</button></th>
-              <th scope="col" aria-sort="none"><button class="sort-button" type="button">Code</button></th>
+              <th scope="col" aria-sort="none"><button class="sort-button" type="button">Device ID</button></th>
               <th scope="col" aria-sort="none"><button class="sort-button" type="button">Platform</button></th>
               <th scope="col" aria-sort="none"><button class="sort-button" type="button">Status</button></th>
               <th scope="col" class="actions-col">Actions</th>
@@ -191,8 +189,7 @@
 
     <form id="messageForm" class="message-form">
       <label class="visually-hidden" for="messageInput">Message</label>
-      <textarea id="messageInput" rows="2" placeholder="Type or paste text / a link, or drop a file here…" aria-describedby="messageHint" maxlength="20000"></textarea>
-      <p id="messageHint" class="message-hint">Drag and drop a file here, or use Attach File.</p>
+      <textarea id="messageInput" rows="3" placeholder="Type or paste a message or link. Drag and drop a file here, or use Attach File." maxlength="20000"></textarea>
       <div class="message-actions">
         <div class="message-security">
           <span id="secureState" class="secure-state" role="status">Connecting…</span>
@@ -303,7 +300,7 @@
     <div class="dialog-body">
       <ol>
         <li>Open Evakage on both devices.</li>
-        <li>Choose Connect, then scan the other device’s QR code or enter its code and choose Join.</li>
+        <li>Choose Connect, then scan the other device’s QR code or enter its Connection code and choose Join.</li>
         <li>Select a device below to chat or share files.</li>
       </ol>
       <p class="muted">For a group chat, create a room and share its code. Anyone with the code can join; login is only needed to create a room.</p>
@@ -324,10 +321,10 @@
     <div class="dialog-body">
       <button id="scanQrBtn" type="button" data-scan-qr>Scan QR Code</button>
       <form id="codeForm" class="code-form">
-        <label for="codeInput">Other device’s code or invitation link</label>
+        <label for="codeInput">Other device’s connection code or invitation link</label>
         <div class="inline-field">
           <input id="codeInput" autocomplete="off" autocapitalize="characters" spellcheck="false"
-                 placeholder="Code or paste invitation link" aria-describedby="codeFeedback">
+                 placeholder="Connection code or invitation link" aria-describedby="codeFeedback">
           <button type="submit">Join</button>
         </div>
         <span id="codeFeedback" class="form-feedback" role="status"></span>
@@ -343,7 +340,7 @@
     <form method="dialog">
       <section class="qr-panel">
         <canvas id="deviceQr" class="qr-code" role="img" aria-label="Device invitation QR code"></canvas>
-        <p>Code: <strong id="qrPairingCode"></strong> <span class="info-tip" tabindex="0" role="img" data-tip="Codes rotate every three days. Paired devices stay paired.">i</span></p>
+        <p>Connection code: <strong id="qrPairingCode"></strong> <span class="info-tip" tabindex="0" role="img" data-tip="Connection codes rotate every three days. Connected devices stay connected.">i</span></p>
       </section>
       <label for="qrInvitation">Device invitation</label>
       <div class="inline-field qr-invitation-field">
@@ -384,16 +381,16 @@
   </dialog>
   <dialog id="connectDialog" class="dialog">
     <div class="dialog-header">
-      <h2>Pair unknown device</h2>
+      <h2>Unknown Device</h2>
       <button id="connectCancel" class="ghost dialog-close" type="button" data-close-dialog aria-label="Close" title="Close">×</button>
     </div>
     <form id="connectForm">
       <p id="connectTarget"></p>
-      <label for="connectCode">Code from the other device <span class="info-tip" tabindex="0" role="img" data-tip="Codes rotate every three days. Paired devices stay paired.">i</span></label>
+      <label for="connectCode">Other device’s connection code <span class="info-tip" tabindex="0" role="img" data-tip="Ask the owner for the Connection code at the top of their screen. It rotates every three days. Connected devices stay connected.">i</span></label>
       <input id="connectCode" autocomplete="off" autocapitalize="characters" maxlength="16" required>
       <p id="connectFeedback" role="status"></p>
       <div class="dialog-actions">
-        <button type="submit">Pair</button>
+        <button type="submit">Connect</button>
       </div>
     </form>
   </dialog>
@@ -460,6 +457,7 @@
         <div class="file-estimate muted"></div>
         <button class="file-download ghost" type="button">Save</button>
       </div>
+      <div class="message-time"></div>
     </article>
   </template>
 
