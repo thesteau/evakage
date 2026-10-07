@@ -92,7 +92,12 @@ peerTest(
     const { alice } = devices;
     const name = deviceNames.get('Bob') || '';
     const device = alice.locator('#peerRows tr').filter({ hasText: listedName(name) });
-    await device.getByRole('button', { name: `Hide ${name}`, exact: true }).click();
+    // The trash icon deletes the conversation; Hide lives in the gear menu.
+    await expect(
+      device.getByRole('button', { name: `Delete conversation with ${name}`, exact: true }),
+    ).toBeVisible();
+    await device.getByRole('button', { name: `Settings for ${name}`, exact: true }).click();
+    await alice.getByRole('menuitem', { name: 'Hide', exact: true }).click();
     await expect(device).toHaveCount(0);
     await alice.getByRole('button', { name: 'Known devices', exact: true }).click();
     const record = alice.locator('#knownDeviceList > div').filter({ hasText: name });
@@ -183,9 +188,17 @@ test('account devices connect privately, exchange content, and sign-out destroys
         return { blocked: trust.blocked, hidden: trust.hidden };
       }, ownPhoneId),
     ).toEqual({ blocked: false, hidden: false });
-    await expect(computer.locator('#peerRows').getByRole('button', { name: /^Hide / })).toHaveCount(
-      0,
-    );
+    // Your own account's devices cannot be hidden.
+    await computer.locator('#closeSession').click();
+    await computer
+      .locator('#peerRows tr')
+      .filter({ hasText: listedName(phoneName) })
+      .getByRole('button', { name: /^Settings for / })
+      .click();
+    await expect(computer.getByRole('menu')).toBeVisible();
+    await expect(computer.getByRole('menuitem', { name: 'Hide' })).toHaveCount(0);
+    await computer.keyboard.press('Escape');
+    await openOwnDevice(computer, phoneName);
     await expect(outsider.locator('#peerRows tr')).toHaveCount(1);
     const phoneId = await phone.locator('#selfCode').getAttribute('data-device-id');
     await chat(computer, phone, 'Before sign-out: private text');

@@ -365,7 +365,7 @@ test('a half-open direct session expires on its own clock; a room with one membe
   const b = await register(wsBase, 'device_solo_bbbb01', 'B');
 
   const created = waitFor(a, (m) => m.type === 'room-joined');
-  a.send(JSON.stringify({ type: 'create-room', name: 'Room' }));
+  a.send(JSON.stringify({ type: 'create-room', access: 'protected', name: 'Room' }));
   const room = (await created).room;
   const bJoined = waitFor(b, (m) => m.type === 'room-joined');
   b.send(JSON.stringify({ type: 'join-room', code: room.code }));
@@ -445,7 +445,7 @@ test('the same two devices share one directory whichever sends; others get their
 
   // A room gets its own directory, distinct from any pair within it.
   const created = waitFor(a, (m) => m.type === 'room-joined');
-  a.send(JSON.stringify({ type: 'create-room', name: 'R' }));
+  a.send(JSON.stringify({ type: 'create-room', access: 'protected', name: 'R' }));
   const room = (await created).room;
   const bJoined = waitFor(b, (m) => m.type === 'room-joined');
   b.send(JSON.stringify({ type: 'join-room', code: room.code }));
@@ -573,7 +573,7 @@ test('a sender cannot address devices it has no session with', async (t) => {
 
   const b = await register(wsBase, 'device_member_0007', 'B');
   const created = waitFor(b, (m) => m.type === 'room-joined');
-  b.send(JSON.stringify({ type: 'create-room', name: 'Private' }));
+  b.send(JSON.stringify({ type: 'create-room', access: 'protected', name: 'Private' }));
   const room = (await created).room;
   assert.equal(
     (await offer(a, 'device_member_0007', 0, { kind: 'message', conv: `room:${room.id}` })).reply

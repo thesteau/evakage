@@ -247,6 +247,38 @@ tbody tr.offline .device-name { color: var(--muted); font-weight: 600; }
 .peer-code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--accent-2); }
 .row-actions { display: flex; flex-wrap: wrap; gap: 6px; }
 .row-actions button { padding: 7px 9px; font-size: .78rem; }
+.row-actions .row-icon { display: inline-grid; place-items: center; padding: 6px 8px; color: var(--muted); }
+.row-actions .row-icon:not(:disabled):hover { color: var(--accent); }
+.join-requests { display: grid; gap: 6px; padding: 10px 16px; border-bottom: 1px solid var(--line); background: color-mix(in srgb, var(--accent) 8%, transparent); }
+.join-requests[hidden] { display: none; }
+.join-request { display: flex; align-items: center; gap: 8px; font-size: .85rem; }
+.join-request span { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.join-request button { padding: 6px 10px; font-size: .8rem; }
+.room-code-line { display: flex; align-items: center; gap: 6px; }
+.room-code-line[hidden] { display: none; }
+.room-code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .04em; }
+.icon-button.copy-inline { display: inline-grid; place-items: center; padding: 4px; min-width: 0; min-height: 0; color: var(--muted); }
+.icon-button.copy-inline:hover { color: var(--accent); }
+.icon-button.copy-inline svg, .room-scan svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.room-scan { display: inline-grid; place-items: center; padding: 8px 10px; }
+/* aria-checked already tells assistive tech; the mark is decoration only. */
+.device-menu [role="menuitemradio"]::before { content: "✓" / ""; display: inline-block; width: 1.2em; color: var(--accent); visibility: hidden; }
+.device-menu [role="menuitemradio"][aria-checked="true"]::before { visibility: visible; }
+.row-actions .row-icon svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.device-menu {
+  position: fixed;
+  inset: auto;
+  margin: 0;
+  min-width: 150px;
+  padding: 6px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--panel-solid);
+  color: var(--text);
+  box-shadow: var(--shadow);
+}
+.device-menu:popover-open { display: grid; gap: 2px; }
+.device-menu button { border: 0; text-align: left; padding: 9px 12px; font-size: .85rem; }
 .empty-state { padding: 34px; text-align: center; color: var(--muted); display: grid; gap: 7px; }
 .hidden { display: none !important; }
 
@@ -273,10 +305,11 @@ td.danger, .file-meta.danger { color: var(--danger); }
 
 /* ---------- session panel ---------- */
 
+/* An open chat overlays the whole app, header included. */
 .session-panel {
   position: fixed;
-  z-index: 20;
-  inset: calc(var(--topbar-height, 120px) + 12px) 18px 18px auto;
+  z-index: 35;
+  inset: 12px 18px 12px auto;
   width: min(520px, calc(100vw - 36px));
   border: 1px solid var(--line);
   border-radius: 22px;
@@ -597,7 +630,7 @@ tbody tr.offline td.expiring {
 
 @media (max-width: 760px) {
   .topbar { align-items: flex-start; }
-  .session-panel { inset: var(--topbar-height, 120px) 0 0; width: 100vw; border-radius: 0; }
+  .session-panel { inset: 0; width: 100vw; border-radius: 0; }
   .drop-hint { border-radius: 0; }
   .message-form { grid-template-columns: 1fr; }
 }
@@ -674,6 +707,7 @@ tbody tr.offline td.expiring {
   td.actions-col::before { display: none; }
   .row-actions { flex: 1; }
   .row-actions button { flex: 1; min-height: 44px; }
+  .row-actions .row-icon { flex: none; min-width: 44px; }
 
   /* Comfortable touch targets throughout. */
   button { min-height: 44px; }

@@ -51,7 +51,7 @@ test('room state is private before joining and after leaving; failed invitations
     if (JSON.parse(String(event.data)).type === 'rooms') roomUpdates++;
   });
   const created = waitFor(owner, (m) => m.type === 'room-joined');
-  owner.send(JSON.stringify({ type: 'create-room', name: 'Secret membership' }));
+  owner.send(JSON.stringify({ type: 'create-room', access: 'protected', name: 'Secret membership' }));
   const room = (await created).room;
   await new Promise((resolve) => setTimeout(resolve, 100));
   assert.equal(roomUpdates, 0, 'outsiders receive no unsolicited room-change notifications');

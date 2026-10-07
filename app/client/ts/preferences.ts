@@ -1,7 +1,17 @@
 // Only preferences are synced. Identity keys, pairing/verification decisions,
 // advertising consent, messages, and files remain local to this browser.
-const KEYS = ['evakage-theme', 'evakage-incoming', 'evakage-verified-only', 'evakage-force-relay'];
-const DEFAULTS: Record<string, string> = { 'evakage-theme': 'system', 'evakage-incoming': 'new' };
+const KEYS = [
+  'evakage-theme',
+  'evakage-incoming',
+  'evakage-verified-only',
+  'evakage-force-relay',
+  'evakage-room-access',
+];
+const DEFAULTS: Record<string, string> = {
+  'evakage-theme': 'system',
+  'evakage-incoming': 'new',
+  'evakage-room-access': 'private',
+};
 
 type AccountReply = {
   username?: string | null;

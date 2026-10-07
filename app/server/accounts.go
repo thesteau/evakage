@@ -53,7 +53,7 @@ func validatePreferences(v any) object {
 	if m == nil {
 		return nil
 	}
-	options := map[string]string{"evakage-theme": "system light dark", "evakage-incoming": "new always auto", "evakage-verified-only": "0 1", "evakage-force-relay": "0 1"}
+	options := map[string]string{"evakage-theme": "system light dark", "evakage-incoming": "new always auto", "evakage-verified-only": "0 1", "evakage-force-relay": "0 1", "evakage-room-access": "private protected"}
 	for k, v := range m {
 		s, ok := v.(string)
 		allowed, known := options[k]

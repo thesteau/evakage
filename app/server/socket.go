@@ -85,6 +85,11 @@ func (s *Server) upgrade(w http.ResponseWriter, r *http.Request) {
 				r.Away[ws.ID] = s.config.Now()
 				changed = true
 			}
+			// A request lasts only as long as the device that made it is here.
+			if _, ok := r.Pending[ws.ID]; ok {
+				delete(r.Pending, ws.ID)
+				changed = true
+			}
 		}
 		s.blobs.refresh()
 		s.broadcastPresence()
@@ -227,14 +232,14 @@ func (s *Server) readMessage(ws *socket, typ websocket.MessageType, data []byte)
 			code = invitation()
 		}
 		s.nextRoomOrder++
-		r := &room{ID: uuid(), Code: code, Name: clean(name), CreatedAt: s.config.Now(), Order: s.nextRoomOrder, CreatedBy: c.ID, Owner: owner, Members: newSet(c.ID), Away: map[string]int64{}}
+		r := &room{ID: uuid(), Code: code, Name: clean(name), CreatedAt: s.config.Now(), Order: s.nextRoomOrder, CreatedBy: c.ID, Owner: owner, Access: roomAccess(m["access"]), Members: newSet(c.ID), Away: map[string]int64{}, Pending: map[string]int64{}}
 		reply := object{"type": "room-joined", "created": true}
 		if oldest != nil {
 			reply["replacedRoomName"] = oldest.Name
 			s.destroyRoom(oldest)
 		}
 		s.rooms[r.ID] = r
-		reply["room"] = s.roomPublic(r)
+		reply["room"] = s.roomView(r, c.ID)
 		ws.send(reply)
 		s.broadcastRooms()
 	case "join-room":
@@ -265,16 +270,69 @@ func (s *Server) readMessage(ws *socket, typ websocket.MessageType, data []byte)
 		}
 		_, away := r.Away[c.ID]
 		returning := r.Members[c.ID] || away
-		if !returning && (byCode == nil || len(r.Members) == 0 || len(r.Members)+len(r.Away) >= s.config.MaxRoomMembers) {
+		// A code admits to any room; a public room can also be joined from the list.
+		invited := byCode != nil || r.Access == roomPublic
+		if !returning && (!invited || len(r.Members) == 0 || s.roomFull(r)) {
 			reject()
 			return
 		}
-		delete(r.Away, c.ID)
-		r.Members[c.ID] = true
-		ws.send(object{"type": "room-joined", "room": s.roomPublic(r)})
+		if !returning && r.Access == roomPrivate && !s.roomOwner(c, r) {
+			if _, asked := r.Pending[c.ID]; !asked {
+				r.Pending[c.ID] = s.config.Now()
+			}
+			ws.send(object{"type": "room-pending", "roomId": r.ID, "name": r.Name})
+			s.broadcastRooms()
+			return
+		}
+		s.admit(r, c.ID)
+		s.broadcastRooms()
+	case "room-approve":
+		r := s.rooms[str(m["roomId"])]
+		id := str(m["deviceId"])
+		if r == nil || !r.Members[c.ID] || !s.roomOwner(c, r) {
+			return
+		}
+		if _, ok := r.Pending[id]; !ok {
+			return
+		}
+		delete(r.Pending, id)
+		if p := s.clients[id]; p != nil {
+			switch {
+			case m["approve"] != true:
+				p.Socket.send(object{"type": "error", "context": "join-room", "message": "The room owner declined your request to join " + r.Name + "."})
+			case s.roomFull(r):
+				p.Socket.send(object{"type": "error", "context": "join-room", "message": r.Name + " is full."})
+			default:
+				s.admit(r, id)
+			}
+		}
+		s.broadcastRooms()
+	case "room-access":
+		r := s.rooms[str(m["roomId"])]
+		if r == nil || !r.Members[c.ID] || !s.roomOwner(c, r) {
+			return
+		}
+		r.Access = roomAccess(m["access"])
+		// Without approval there is nothing left to wait for.
+		if r.Access != roomPrivate {
+			for _, id := range r.pendingIDs() {
+				if s.roomFull(r) {
+					break
+				}
+				s.admit(r, id)
+			}
+		}
 		s.broadcastRooms()
 	case "leave-room":
 		r := s.rooms[str(m["roomId"])]
+		if r != nil {
+			if _, asked := r.Pending[c.ID]; asked {
+				delete(r.Pending, c.ID)
+				ws.send(object{"type": "room-left", "roomId": r.ID})
+				s.broadcastRooms()
+				return
+			}
+		}
 		if r == nil || !s.dropSeat(r, c.ID) {
 			return
 		}

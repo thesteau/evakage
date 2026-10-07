@@ -33,10 +33,29 @@ type client struct {
 }
 type room struct {
 	ID, Code, Name, CreatedBy, Owner string
-	CreatedAt                        int64
-	Order                            uint64
-	Members                          set
-	Away                             map[string]int64
+	// Access is roomPrivate (code joins wait for the owner's approval),
+	// roomProtected (a code is enough) or roomPublic (listed to everyone).
+	Access    string
+	CreatedAt int64
+	Order     uint64
+	Members   set
+	Away      map[string]int64
+	// Pending holds devices that asked to join a private room, by request time.
+	Pending map[string]int64
+}
+
+const (
+	roomPrivate   = "private"
+	roomProtected = "protected"
+	roomPublic    = "public"
+)
+
+func roomAccess(v any) string {
+	switch s := str(v); s {
+	case roomProtected, roomPublic:
+		return s
+	}
+	return roomPrivate
 }
 type recentDevice struct {
 	Record   object
@@ -563,6 +582,70 @@ func (s *Server) deviceRecord(id string) object {
 	p["lastSeen"] = r.LastSeen
 	return p
 }
+// roomOwner reports whether a device is signed into the account that created
+// the room. Any such device may approve requests and change access.
+func (s *Server) roomOwner(c *client, r *room) bool {
+	return c != nil && r.Owner != "" && s.accounts.owner(c.Session) == r.Owner
+}
+
+// pendingIDs lists join requests oldest first.
+func (r *room) pendingIDs() []string {
+	ids := make([]string, 0, len(r.Pending))
+	for id := range r.Pending {
+		ids = append(ids, id)
+	}
+	sort.Slice(ids, func(i, j int) bool {
+		if r.Pending[ids[i]] != r.Pending[ids[j]] {
+			return r.Pending[ids[i]] < r.Pending[ids[j]]
+		}
+		return ids[i] < ids[j]
+	})
+	return ids
+}
+
+// roomFull counts seats held by present and away members.
+func (s *Server) roomFull(r *room) bool {
+	return len(r.Members)+len(r.Away) >= s.config.MaxRoomMembers
+}
+
+// admit seats a device and tells it so. The caller broadcasts the change.
+func (s *Server) admit(r *room, id string) {
+	delete(r.Pending, id)
+	delete(r.Away, id)
+	r.Members[id] = true
+	if c := s.clients[id]; c != nil {
+		c.Socket.send(object{"type": "room-joined", "room": s.roomView(r, id)})
+	}
+}
+
+// roomView is a member's view of a room, plus the join requests when the
+// viewer owns it.
+func (s *Server) roomView(r *room, viewer string) object {
+	view := s.roomPublic(r)
+	view["access"] = r.Access
+	if s.roomOwner(s.clients[viewer], r) {
+		view["owned"] = true
+		requests := []object{}
+		for _, id := range r.pendingIDs() {
+			if c := s.clients[id]; c != nil {
+				requests = append(requests, public(c))
+			}
+		}
+		view["requests"] = requests
+	}
+	return view
+}
+
+// roomListing is what a non-member may see: a public room to join, or the
+// room it asked to join. Never the code or who is in it.
+func (s *Server) roomListing(r *room, awaiting bool) object {
+	transport := "mesh"
+	if len(r.Members)+len(r.Away) > 6 {
+		transport = "relay"
+	}
+	return object{"id": r.ID, "name": r.Name, "createdAt": r.CreatedAt, "maxMembers": s.config.MaxRoomMembers, "transport": transport, "access": r.Access, "members": []object{}, "away": []object{}, "seats": len(r.Members) + len(r.Away), "awaiting": awaiting}
+}
+
 func (s *Server) roomPublic(r *room) object {
 	members := []object{}
 	for _, id := range keys(r.Members) {
@@ -592,8 +675,14 @@ func (s *Server) listedRooms(id string) []object {
 	out := []object{}
 	for _, r := range s.sortedRooms() {
 		_, away := r.Away[id]
-		if r.Members[id] || away {
-			out = append(out, s.roomPublic(r))
+		_, awaiting := r.Pending[id]
+		switch {
+		case r.Members[id] || away:
+			out = append(out, s.roomView(r, id))
+		case awaiting:
+			out = append(out, s.roomListing(r, true))
+		case r.Access == roomPublic && len(r.Members) > 0:
+			out = append(out, s.roomListing(r, false))
 		}
 	}
 	return out

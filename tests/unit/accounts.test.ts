@@ -100,7 +100,7 @@ test('account discovery requires identity-bound one-use tickets; sign-out revoke
     (response) => response.json(),
   );
   const joined = waitFor(first.ws, (message) => message.type === 'room-joined');
-  first.ws.send(JSON.stringify({ type: 'create-room', name: 'Account room' }));
+  first.ws.send(JSON.stringify({ type: 'create-room', access: 'protected', name: 'Account room' }));
   const { room } = await joined;
   assert.ok(app.rooms.get(room.id)?.members.has(first.id));
   const reset = waitFor(first.ws, (message) => message.type === 'account-reset');
@@ -133,7 +133,7 @@ test('account discovery requires identity-bound one-use tickets; sign-out revoke
     ),
   );
   const secondJoined = waitFor(second.ws, (message) => message.type === 'room-joined');
-  second.ws.send(JSON.stringify({ type: 'create-room', name: 'Offline sign-out room' }));
+  second.ws.send(JSON.stringify({ type: 'create-room', access: 'protected', name: 'Offline sign-out room' }));
   const secondRoom = (await secondJoined).room;
   const buffered = await app.blobStore.offer({
     senderId: second.id,

@@ -62,6 +62,10 @@ func validEnvelopes(v any, kind string) bool {
 	}
 	return true
 }
+func validAccess(v any) bool {
+	s, ok := v.(string)
+	return ok && (s == "private" || s == "protected" || s == "public")
+}
 func validMessage(m object) bool {
 	switch str(m["type"]) {
 	case "register":
@@ -79,7 +83,11 @@ func validMessage(m object) bool {
 	case "account-connect":
 		return matches(fingerprintPattern, m["token"])
 	case "create-room":
-		return optional(m["name"], 512)
+		return optional(m["name"], 512) && (m["access"] == nil || validAccess(m["access"]))
+	case "room-approve":
+		return matches(uuidPattern, m["roomId"]) && matches(devicePattern, m["deviceId"]) && boolean(m["approve"])
+	case "room-access":
+		return matches(uuidPattern, m["roomId"]) && validAccess(m["access"])
 	case "join-room":
 		return (m["roomId"] == nil || matches(uuidPattern, m["roomId"])) && optional(m["code"], 32) && optional(m["name"], 512) && (m["recreate"] == nil || boolean(m["recreate"])) && (m["roomId"] != nil || strings.TrimSpace(str(m["code"])) != "")
 	case "leave-room":
