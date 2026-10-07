@@ -1,1 +1,8 @@
-null
+{
+  "version": "1.0.0",
+  "tag": "v1.0.0",
+  "prodSha": "f3e9de18b6c9b94e31806df8b26a7dd7bba0703e",
+  "previousTag": null,
+  "previousSha": null,
+  "notes": "## 1.0.0 (2026-10-07)\n\n\n### Features\n\n* golang refactor ([04e71c0](https://github.com/thesteau/evakage/commit/04e71c0bd2ac1b6c3dfcaf62bb6c1242175e22f0))\n\n\n### Bug Fixes\n\n* add build label to app ([0a87684](https://github.com/thesteau/evakage/commit/0a87684fadfe8c62a3bd7718c240228e0e32022a))\n* add build label to app ([8bbbc22](https://github.com/thesteau/evakage/commit/8bbbc223bac8bb44cf7ccc0681bef60f7c1580ad))\n* change send button location ([447386c](https://github.com/thesteau/evakage/commit/447386c96e8a3aa99fad7c9ddcce471f6ff900e6))\n* hints ([b653cf4](https://github.com/thesteau/evakage/commit/b653cf40c85fb5a043400a19617250fc8bd78b30))\n* hints added to chat ([f44a782](https://github.com/thesteau/evakage/commit/f44a78297f7644b063050ca7145ee36329f1d6cf))\n* rename device table ([f3e9de1](https://github.com/thesteau/evakage/commit/f3e9de18b6c9b94e31806df8b26a7dd7bba0703e))\n* rename device table ([6194dfd](https://github.com/thesteau/evakage/commit/6194dfd71e627ab6fe30f1202aa0130643afe268))\n* small race issue ([0e426b5](https://github.com/thesteau/evakage/commit/0e426b52f297426c2e167efa02542e03f42547d9))\n* small race issue ([b919990](https://github.com/thesteau/evakage/commit/b9199902c1db37c0fd3ad9dc2bd8d97eae21303d))\n* Update release information ([eda31c9](https://github.com/thesteau/evakage/commit/eda31c9ae98f5941cc1f74cb6ab972b5d279bb5a))"
+}
