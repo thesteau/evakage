@@ -426,7 +426,7 @@ progress { width: 100%; accent-color: var(--accent-2); }
 .message-form textarea { resize: vertical; min-height: 46px; max-height: 160px; }
 .message-actions { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .message-security { display: flex; align-items: center; gap: 6px; flex: 1; min-width: 0; }
-.message-actions button { flex: none; }
+.message-actions button { flex: none; touch-action: manipulation; }
 .message-actions button[type="submit"] { min-width: 80px; }
 
 /* Shown only while a file is dragged over the panel. */
@@ -724,7 +724,8 @@ tbody tr.offline td.expiring {
   /* Comfortable touch targets throughout. */
   button { min-height: 44px; }
   .row-actions button { padding: 10px 12px; font-size: .84rem; }
-  input, textarea { padding: 12px; font-size: 1rem; }
+  /* Safari zooms focused fields below 16px, moving the controls mid-tap. */
+  input, textarea { padding: 12px; font-size: 16px; }
   .icon-button { min-width: 44px; }
 
   .session-panel {
