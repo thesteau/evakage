@@ -16,6 +16,11 @@ permissions:
   pull-requests: read
   statuses: write
 
+# Avoid overlapping manual/event checks posting competing results for one PR.
+concurrency:
+  group: release-metadata-${{ inputs.pr || github.event.pull_request.number }}
+  cancel-in-progress: false
+
 jobs:
   metadata:
     if: github.event_name != 'workflow_dispatch' || github.ref == 'refs/heads/prod'
