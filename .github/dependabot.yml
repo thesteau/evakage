@@ -4,7 +4,7 @@ updates:
   # The app itself has no runtime dependencies, but keep the lockfile and any
   # future dev tooling current.
   - package-ecosystem: npm
-    directory: /
+    directory: /app
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
@@ -25,8 +25,7 @@ updates:
       actions:
         patterns: ["*"]
 
-  # Picks up new node:26-alpine base images, which is where container CVEs
-  # usually arrive for this project.
+  # Keep the client/server builders and Alpine runtime base images current.
   - package-ecosystem: docker
     directory: /app
     schedule:

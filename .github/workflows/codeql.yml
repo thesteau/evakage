@@ -5,6 +5,7 @@ on:
     branches: [main, prod]
   pull_request:
     branches: [main, prod]
+  workflow_dispatch:
   schedule:
     # Catch newly published advisories against code that has not changed.
     - cron: '27 5 * * 1'
@@ -15,6 +16,10 @@ permissions:
   # The analyze step reads its own workflow run to attach results; without this
   # it fails with "Resource not accessible by integration".
   actions: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   analyze:

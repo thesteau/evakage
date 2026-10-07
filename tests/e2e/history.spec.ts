@@ -176,6 +176,78 @@ test.describe('legacy unsigned-chat protocol', () => {
     await expect(bob.locator('#peerRows')).toContainText('Version mismatch');
     await expect(alice.locator('#secureState')).not.toContainText('Encrypted');
   });
+
+  test('a buffered version hello reaches the peer before transport shutdown', async ({ devices }) => {
+    const { alice, bob } = devices;
+    await bob.evaluate(() => {
+      const send = RTCDataChannel.prototype.send as (data: any) => void;
+      const close = RTCDataChannel.prototype.close;
+      const queued = new WeakMap<RTCDataChannel, Promise<void>>();
+      RTCDataChannel.prototype.send = function (data: any) {
+        if (typeof data === 'string' && JSON.parse(data).kind === 'crypto-hello') {
+          // Model a send buffer: channel close drains it, but closing the peer
+          // connection early destroys the last version frame.
+          queued.set(this, new Promise<void>((resolve) => {
+            setTimeout(() => {
+              queued.delete(this);
+              if (this.readyState === 'open') {
+                send.call(this, data);
+                document.documentElement.dataset.versionHelloSent = '1';
+              }
+              resolve();
+            }, 1500);
+          }));
+          return;
+        }
+        return send.call(this, data);
+      };
+      RTCDataChannel.prototype.close = function () {
+        const pending = queued.get(this);
+        if (pending) {
+          void pending.then(() => close.call(this));
+          return;
+        }
+        close.call(this);
+      };
+    });
+    await Promise.all([
+      expect(alice.locator('#toastRegion')).toContainText('this build speaks 3–3'),
+      expect(bob.locator('#toastRegion')).toContainText('this build speaks 2–2'),
+      pairDevices(alice, bob, false),
+    ]);
+    await expect(bob.locator('html')).toHaveAttribute('data-version-hello-sent', '1');
+    await expect(alice.locator('#peerRows')).toContainText('Version mismatch');
+    await expect(bob.locator('#peerRows')).toContainText('Version mismatch');
+    await expect(alice.locator('#secureState')).not.toContainText('Encrypted');
+    await expect(bob.locator('#secureState')).not.toContainText('Encrypted');
+  });
+
+  test('closes rejected transports when a peer does not acknowledge version hellos', async ({ devices }) => {
+    const { alice, bob } = devices;
+    for (const page of [alice, bob]) {
+      await page.evaluate(() => {
+        const send = RTCDataChannel.prototype.send;
+        RTCDataChannel.prototype.send = function (data: any) {
+          if (typeof data === 'string') {
+            const message = JSON.parse(data);
+            if (message.kind === 'crypto-hello-ack') return;
+            if (message.kind === 'crypto-hello') {
+              this.addEventListener('close', () => {
+                document.documentElement.dataset.versionChannelClosed = '1';
+              }, { once: true });
+            }
+          }
+          return send.call(this, data);
+        };
+      });
+    }
+    await pairDevices(alice, bob, false);
+    for (const page of [alice, bob]) {
+      await expect(page.locator('#peerRows')).toContainText('Version mismatch');
+      await expect(page.locator('html')).toHaveAttribute('data-version-channel-closed', '1');
+      await expect(page.locator('#secureState')).not.toContainText('Encrypted');
+    }
+  });
 });
 
 // The refusing side may read the other hello before its own is ready (slow key
