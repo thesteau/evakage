@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.0.1](https://github.com/thesteau/evakage/compare/v1.0.0...v1.0.1) (2026-10-07)
+
+
+### Bug Fixes
+
+* resolve double tap bug ([0a32a81](https://github.com/thesteau/evakage/commit/0a32a81c734deca19bc49a52d025ab011a839645))
+* resolve double tap bug ([c895297](https://github.com/thesteau/evakage/commit/c895297700e8e0ee0bd1ca53194e1c46d61eea2a))
+
 ## 1.0.0 (2026-10-07)
 
 
