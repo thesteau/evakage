@@ -176,8 +176,6 @@
     </div>
 
     <div class="session-toolbar">
-      <button id="pickFileBtn" type="button">Send file</button>
-      <input id="fileInput" type="file" hidden multiple>
       <button id="leaveRoomBtn" class="ghost hidden" type="button">Leave room</button>
       <label id="relayToggle" class="relay-toggle hidden"
              title="Send messages and files through the server instead of trying a direct connection first">
@@ -185,8 +183,6 @@
         <span class="switch-track" aria-hidden="true"></span>
         <span class="relay-label">Via server</span>
       </label>
-      <span id="secureState" class="secure-state" role="status">Connecting…</span>
-      <span class="info-tip" tabindex="0" role="img" data-tip="Keep Evakage open and your screen on until transfers finish.">i</span>
     </div>
 
     <div id="joinRequests" class="join-requests" role="region" aria-label="Join requests" hidden></div>
@@ -195,8 +191,17 @@
 
     <form id="messageForm" class="message-form">
       <label class="visually-hidden" for="messageInput">Message</label>
-      <textarea id="messageInput" rows="2" placeholder="Type or paste text / a link…" maxlength="20000"></textarea>
-      <button type="submit">Send</button>
+      <textarea id="messageInput" rows="2" placeholder="Type or paste text / a link, or drop a file here…" aria-describedby="messageHint" maxlength="20000"></textarea>
+      <p id="messageHint" class="message-hint">Drag and drop a file here, or use Attach File.</p>
+      <div class="message-actions">
+        <div class="message-security">
+          <span id="secureState" class="secure-state" role="status">Connecting…</span>
+          <span class="info-tip" tabindex="0" role="img" data-tip="Keep Evakage open and your screen on until transfers finish.">i</span>
+        </div>
+        <button id="pickFileBtn" class="ghost" type="button">Attach File</button>
+        <input id="fileInput" type="file" hidden multiple>
+        <button type="submit">Send</button>
+      </div>
     </form>
 
     <div id="dropHint" class="drop-hint" aria-hidden="true">Drop to send</div>
