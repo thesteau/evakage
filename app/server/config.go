@@ -76,6 +76,16 @@ func envInt(s string, n int64) int64 {
 	}
 	return v
 }
+
+// envCount is envInt for int-sized settings, parsed straight to int so no
+// value is narrowed by a conversion.
+func envCount(s string, n int) int {
+	v, e := strconv.Atoi(env(s, strconv.Itoa(n)))
+	if e != nil {
+		return -1
+	}
+	return v
+}
 func envRoomCap() int {
 	n, e := strconv.ParseFloat(env("ROOM_MAX_MEMBERS", "20"), 64)
 	if e != nil || math.IsNaN(n) || n == 0 {
@@ -147,9 +157,9 @@ func DefaultConfig() Config {
 	if ice == nil {
 		ice = []any{}
 	}
-	return Config{Host: env("HOST", "0.0.0.0"), Port: int(envInt("PORT", 3000)), PublicDir: env("PUBLIC_DIR", filepath.Join("dist", "app", "public")), AuthToken: os.Getenv("AUTH_TOKEN"), AccountsDB: os.Getenv("ACCOUNTS_DB"), TrustProxy: truthy(os.Getenv("TRUST_PROXY")), AllowedOrigins: split(os.Getenv("ALLOWED_ORIGINS")), AllowedDevices: split(os.Getenv("DEVICE_ALLOWLIST")), MaxDevices: int(envInt("MAX_DEVICES", 200)), MaxRooms: int(envInt("MAX_ROOMS", 50)), MaxRoomMembers: envRoomCap(), MaxRecentDevices: 10000, RecentWindowMS: envInt("BLOB_SOLO_MAX_MS", 10800000), RejoinGraceMS: 10000, ICE: ice, Now: nowMS,
+	return Config{Host: env("HOST", "0.0.0.0"), Port: envCount("PORT", 3000), PublicDir: env("PUBLIC_DIR", filepath.Join("dist", "app", "public")), AuthToken: os.Getenv("AUTH_TOKEN"), AccountsDB: os.Getenv("ACCOUNTS_DB"), TrustProxy: truthy(os.Getenv("TRUST_PROXY")), AllowedOrigins: split(os.Getenv("ALLOWED_ORIGINS")), AllowedDevices: split(os.Getenv("DEVICE_ALLOWLIST")), MaxDevices: envCount("MAX_DEVICES", 200), MaxRooms: envCount("MAX_ROOMS", 50), MaxRoomMembers: envRoomCap(), MaxRecentDevices: 10000, RecentWindowMS: envInt("BLOB_SOLO_MAX_MS", 10800000), RejoinGraceMS: 10000, ICE: ice, Now: nowMS,
 		Limits: Limits{40, 90, 60, 140, 20, 24, 40},
-		Blobs:  BlobConfig{Dir: env("BLOB_DIR", filepath.Join(os.TempDir(), "evakage-blobs")), MaxBlobBytes: envInt("MAX_FILE_BYTES", 512<<20), MaxStoreBytes: envInt("BLOB_STORE_BYTES", 4<<30), TextReserveBytes: envInt("BLOB_TEXT_RESERVE_BYTES", 1<<30), MaxConversationFileBytes: envInt("BLOB_CHAT_FILE_BYTES", 50<<30), MaxConversationTextBytes: envInt("BLOB_CHAT_TEXT_BYTES", 1<<30), MaxBlobsPerDevice: int(envInt("BLOB_PER_DEVICE", 32)), MaxMessagesPerDevice: int(envInt("BLOB_MESSAGES_PER_DEVICE", 2000)), IdleGraceMS: envInt("BLOB_IDLE_GRACE_MS", 900000), SoloMaxMS: envInt("BLOB_SOLO_MAX_MS", 10800000), MaxAgeMS: envInt("BLOB_MAX_AGE_MS", 259200000), SweepEveryMS: envInt("BLOB_SWEEP_MS", 60000)}}
+		Blobs:  BlobConfig{Dir: env("BLOB_DIR", filepath.Join(os.TempDir(), "evakage-blobs")), MaxBlobBytes: envInt("MAX_FILE_BYTES", 512<<20), MaxStoreBytes: envInt("BLOB_STORE_BYTES", 4<<30), TextReserveBytes: envInt("BLOB_TEXT_RESERVE_BYTES", 1<<30), MaxConversationFileBytes: envInt("BLOB_CHAT_FILE_BYTES", 50<<30), MaxConversationTextBytes: envInt("BLOB_CHAT_TEXT_BYTES", 1<<30), MaxBlobsPerDevice: envCount("BLOB_PER_DEVICE", 32), MaxMessagesPerDevice: envCount("BLOB_MESSAGES_PER_DEVICE", 2000), IdleGraceMS: envInt("BLOB_IDLE_GRACE_MS", 900000), SoloMaxMS: envInt("BLOB_SOLO_MAX_MS", 10800000), MaxAgeMS: envInt("BLOB_MAX_AGE_MS", 259200000), SweepEveryMS: envInt("BLOB_SWEEP_MS", 60000)}}
 }
 
 type bucket struct {

@@ -319,28 +319,20 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Forbidden", 403)
 		return
 	}
-	root, e := filepath.Abs(s.config.PublicDir)
-	if e != nil {
-		http.Error(w, "Not found", 404)
-		return
-	}
-	target := filepath.Join(root, filepath.FromSlash(strings.TrimPrefix(path, "/")))
-	rel, e := filepath.Rel(root, target)
-	if e != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+	target := filepath.FromSlash(strings.TrimPrefix(path, "/"))
+	if !filepath.IsLocal(target) {
 		http.Error(w, "Forbidden", 403)
 		return
 	}
-	resolved, e := filepath.EvalSymlinks(target)
+	// os.Root refuses any path, including through a symlink, that leaves the
+	// public directory.
+	root, e := os.OpenRoot(s.config.PublicDir)
 	if e != nil {
 		http.NotFound(w, r)
 		return
 	}
-	rel, e = filepath.Rel(root, resolved)
-	if e != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-		http.Error(w, "Forbidden", 403)
-		return
-	}
-	f, e := os.Open(resolved)
+	defer root.Close()
+	f, e := root.Open(target)
 	if e != nil {
 		http.NotFound(w, r)
 		return
