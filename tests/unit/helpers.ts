@@ -4,11 +4,12 @@ import fsp from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
-import { createEvakageServer } from '../../app/server/server.js';
+import { createEvakageServer } from '../support/go-server.js';
 
 /** Room policy tests use synthetic device IDs. Their HTTP account session
  * is attached directly; identity-bound socket login is covered by account tests. */
 const roomTestServers: Map<string, Awaited<ReturnType<typeof startServer>>> = new Map();
+const testServers: Map<string, ReturnType<typeof createEvakageServer>> = new Map();
 
 export async function startRoomServer(
   t: { after: (fn: () => any) => any },
@@ -45,8 +46,10 @@ export async function startServer(
     blobs: { dir, ...(options.blobs || {}) },
   });
   const address = await app.start();
+  testServers.set(`ws://127.0.0.1:${address.port}`, app);
   t.after(async () => {
     await app.stop();
+    testServers.delete(`ws://127.0.0.1:${address.port}`);
     await fsp.rm(dir, { recursive: true, force: true }).catch(() => {});
   });
   return {
@@ -59,8 +62,14 @@ export async function startServer(
 }
 
 export function openWs(url: string): Promise<WebSocket> {
+  const app = testServers.get(url);
+  app?.syncClocks();
   return new Promise((resolve, reject) => {
     const ws = new WebSocket(url);
+    if (app) {
+      const send = ws.send.bind(ws);
+      ws.send = data => { app.syncClocks(); send(data); };
+    }
     ws.addEventListener('open', () => resolve(ws), { once: true });
     ws.addEventListener('error', () => reject(new Error('WebSocket open failed')), { once: true });
   });

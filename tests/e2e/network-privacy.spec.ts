@@ -1,4 +1,4 @@
-import { signInRoomOwner } from './helpers.js';
+import { signInRoomOwner, roomCode } from './helpers.js';
 import { test, expect } from '@playwright/test';
 import { startRoomServer as startServer } from '../unit/helpers.js';
 
@@ -33,7 +33,7 @@ test('fresh profiles are private; room details appear only after code join', asy
     await first.locator('#createRoomForm').getByRole('button', { name: 'Create' }).click();
     await expect(first.locator('#roomRows tr')).toHaveCount(1);
     await expect(second.locator('#roomRows tr')).toHaveCount(0);
-    const code = await first.locator('#roomRows .peer-code').innerText();
+    const code = await roomCode(first, 'Private room');
     await second.locator('#roomCodeInput').fill(code);
     await second.locator('#joinRoomForm').getByRole('button', { name: 'Join' }).click();
     await expect(second.locator('#roomRows tr')).toHaveCount(1);

@@ -16,7 +16,7 @@ const settle = (ms = 200) => new Promise((r) => setTimeout(r, ms));
 
 async function createRoom(ws: WebSocket, name: string = 'Room') {
   const created = waitFor(ws, (m) => m.type === 'room-joined');
-  ws.send(JSON.stringify({ type: 'create-room', name }));
+  ws.send(JSON.stringify({ type: 'create-room', access: 'protected', name }));
   return (await created).room;
 }
 

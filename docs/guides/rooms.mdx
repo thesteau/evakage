@@ -6,16 +6,28 @@ description: "Create a temporary group chat and invite devices."
 ## Create or join
 
 1. Sign in and create a room in **Rooms**.
-2. Share its invitation code with the other participants.
-3. They enter the code and choose **Join**. No account is needed to join.
+2. Open the room. Its header shows **Code:** with buttons to copy the code or show it as a QR code.
+3. Others enter the code and choose **Join**, or scan the QR with the button next to **Join**. No account is needed to join.
 
-Only joined members see the room's details. Keep the invitation private.
+The code is a private invitation, so the Rooms list does not show it; it appears only inside the open room. Only joined members see the room's details.
+
+## Who can join
+
+| Access | Joining |
+| --- | --- |
+| **Private** (default) | A code join waits until the room's creator approves it |
+| **Protected** | Anyone with the code joins straight away |
+| **Public** | Also listed in everyone's Rooms list and joinable without a code; the code and members stay hidden until they join |
+
+Join requests appear at the top of the creator's room chat, with **Approve** and **Decline**. While waiting, the requester's Rooms list shows **Waiting for approval**; the trash icon cancels the request. A request also ends when the requester disconnects.
+
+Only the room's creator sees its gear icon in Rooms, where access can be changed at any time. Switching away from Private admits everyone still waiting. To choose the default for new rooms, use **Approve who joins my rooms** in Settings: on for Private, off for Protected.
 
 Each account can own **two active rooms**. Creating a third removes its oldest room and that room's pending server content.
 
 ## Send to the group
 
-Open the room to chat, see its members, or send a file. Dropping a file on a joined room sends it to every member.
+Open the room to chat, see its members, or send a file. Dropping a file on a joined room sends it to every member. In a room, only the creator sees the **Via server** switch.
 
 Content is end-to-end encrypted in both delivery modes:
 

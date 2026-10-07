@@ -3,6 +3,7 @@
     "target": "ES2022",
     "module": "CommonJS",
     "types": ["node"],
+    "typeRoots": ["../app/node_modules/@types"],
     "skipLibCheck": true,
     "noEmit": true,
     "moduleDetection": "force"

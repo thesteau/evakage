@@ -183,4 +183,16 @@ export interface Room {
   away?: Device[];
   maxMembers: number;
   transport: 'mesh' | 'relay';
+  /** private: the creator approves code joins; protected: a code is enough;
+   * public: also listed to everyone. */
+  access?: RoomAccess;
+  /** This device is signed into the account that created the room. */
+  owned?: boolean;
+  /** Devices waiting for approval; sent only to the creator. */
+  requests?: Device[];
+  /** A listing for a non-member: seats taken, without the members. */
+  seats?: number;
+  /** This device asked to join and is waiting for approval. */
+  awaiting?: boolean;
 }
+export type RoomAccess = 'private' | 'protected' | 'public';

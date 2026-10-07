@@ -8,8 +8,8 @@
 // is excluded from the baseline. The save pass re-encrypts the same source
 // under the same key, as the server would serve a stored body.
 import { performance } from 'node:perf_hooks';
-import { hashBlob } from '../../dist/app/public/sha256.js';
-import { createBodyDecryptor, encryptBodyChunks, generateContentKey, verifiedPlaintext } from '../../dist/app/public/relay.js';
+import { hashBlob } from '../../app/dist/app/public/sha256.js';
+import { createBodyDecryptor, encryptBodyChunks, generateContentKey, verifiedPlaintext } from '../../app/dist/app/public/relay.js';
 
 const mib = Number(process.argv[2] || 64);
 const mode = process.argv[3] || 'single';

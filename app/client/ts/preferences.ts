@@ -1,6 +1,23 @@
 // Only preferences are synced. Identity keys, pairing/verification decisions,
 // advertising consent, messages, and files remain local to this browser.
-const KEYS = ['evakage-theme', 'evakage-incoming', 'evakage-verified-only', 'evakage-force-relay'];
+const KEYS = [
+  'evakage-theme',
+  'evakage-incoming',
+  'evakage-verified-only',
+  'evakage-force-relay',
+  'evakage-room-access',
+];
+const DEFAULTS: Record<string, string> = {
+  'evakage-theme': 'system',
+  'evakage-incoming': 'new',
+  'evakage-room-access': 'private',
+};
+
+type AccountReply = {
+  username?: string | null;
+  revision?: number;
+  preferences?: Record<string, unknown>;
+};
 
 async function request(route: string, body?: object | undefined, method: string = 'POST') {
   const response = await fetch(
@@ -10,21 +27,38 @@ async function request(route: string, body?: object | undefined, method: string 
       : { cache: 'no-store' },
   );
   const value = await response.json();
-  if (!response.ok) throw new Error(value.error || 'Account request failed.');
+  if (!response.ok) {
+    throw Object.assign(new Error(value.error || 'Account request failed.'), {
+      status: response.status,
+      reply: value,
+    });
+  }
   return value;
+}
+
+function localPreferences() {
+  return Object.fromEntries(
+    KEYS.map((key) => {
+      let value: string | null = null;
+      try {
+        value = localStorage.getItem(key);
+      } catch {}
+      return [key, value || DEFAULTS[key] || '0'];
+    }),
+  );
 }
 
 export function setupAccounts(callbacks: {
   onSession: (username: string) => Promise<void>;
   onSignOut: () => void;
+  /** Synced preferences were written to localStorage; apply them in place. */
+  onPreferences: () => void;
 }) {
   const dialog = document.querySelector('#accountDialog') as HTMLDialogElement;
   const form = document.querySelector('#accountForm') as HTMLFormElement;
   const username = document.querySelector('#accountUsername') as HTMLInputElement;
   const password = document.querySelector('#accountPassword') as HTMLInputElement;
   const status = document.querySelector('#accountStatus') as HTMLElement;
-  const save = document.querySelector('#accountSave') as HTMLButtonElement;
-  const load = document.querySelector('#accountLoad') as HTMLButtonElement;
   const logout = document.querySelector('#accountLogout') as HTMLButtonElement;
   const signedInPanel = document.querySelector('#accountSignedIn') as HTMLElement;
   const accountButton = document.querySelector('#accountBtn') as HTMLButtonElement;
@@ -35,16 +69,66 @@ export function setupAccounts(callbacks: {
   let revision = 0;
   let signedIn = false;
   let busy = false;
-  const update = async (value: { username?: string | null; revision?: number }) => {
+  let saving: Promise<void> | null = null;
+  let unsaved = false;
+
+  // The most recently saved settings win everywhere: a change here is pushed
+  // at once, and any newer revision from the account replaces local settings.
+  const push = () => {
+    if (!signedIn) return;
+    unsaved = true;
+    saving ||= (async () => {
+      while (unsaved && signedIn) {
+        unsaved = false;
+        const preferences = localPreferences();
+        try {
+          revision = (await request('preferences', { preferences, revision }, 'PUT')).revision;
+        } catch (error) {
+          // Another device saved first. This change is newer, so save over it.
+          if (error.status !== 409) throw error;
+          revision = error.reply.revision;
+          unsaved = true;
+        }
+      }
+    })()
+      .catch(() => {
+        status.textContent = 'Settings could not be saved to your account.';
+      })
+      .finally(() => {
+        saving = null;
+      });
+  };
+  const adopt = (value: AccountReply) => {
+    const latest = value.revision || 0;
+    if (!value.username) return;
+    // A new account starts from this device's settings.
+    if (latest === 0) {
+      push();
+      return;
+    }
+    if (latest <= revision || saving || unsaved) return;
+    revision = latest;
+    let changed = false;
+    for (const key of KEYS) {
+      const next = value.preferences?.[key];
+      if (typeof next !== 'string') continue;
+      try {
+        if (localStorage.getItem(key) === next) continue;
+        localStorage.setItem(key, next);
+        changed = true;
+      } catch {}
+    }
+    if (changed) callbacks.onPreferences();
+  };
+  const update = async (value: AccountReply) => {
     const wasSignedIn = signedIn;
     signedIn = !!value.username;
     accountButton.setAttribute('aria-label', signedIn ? 'Account' : 'Login');
     accountButton.title = signedIn ? 'Account' : 'Login';
-    revision = value.revision || 0;
-    save.disabled = load.disabled = logout.disabled = deleteButton.disabled = busy || !signedIn;
-    status.textContent = signedIn
-      ? `Signed in as ${value.username}. Save your settings here, then load them on your other devices.`
-      : '';
+    if (!signedIn) revision = 0;
+    adopt(value);
+    logout.disabled = deleteButton.disabled = busy || !signedIn;
+    status.textContent = signedIn ? `Signed in as ${value.username}` : '';
     form.hidden = signedIn;
     signedInPanel.hidden = !signedIn;
     if (value.username) await callbacks.onSession(value.username);
@@ -69,7 +153,7 @@ export function setupAccounts(callbacks: {
           {control.disabled = false;}
       }
       busy = false;
-      save.disabled = load.disabled = logout.disabled = deleteButton.disabled = !signedIn;
+      logout.disabled = deleteButton.disabled = !signedIn;
     }
   };
   document.querySelector('#accountBtn')?.addEventListener('click', () => {
@@ -89,33 +173,6 @@ export function setupAccounts(callbacks: {
       ),
     );
   });
-  save.addEventListener('click', () =>
-    run(async () => {
-      const preferences = Object.fromEntries(
-        KEYS.map((key) => [
-          key,
-          localStorage.getItem(key) ||
-            (key === 'evakage-theme' ? 'system' : key === 'evakage-incoming' ? 'new' : '0'),
-        ]),
-      );
-      const value = await request('preferences', { preferences, revision }, 'PUT');
-      revision = value.revision;
-      status.textContent = 'Preferences saved. Use Load settings on your other devices.';
-    }),
-  );
-  load.addEventListener('click', () =>
-    run(async () => {
-      const value = await request('session');
-      if (!value.username) {
-        update(value);
-        return;
-      }
-      for (const key of KEYS)
-        {if (typeof value.preferences?.[key] === 'string')
-          {localStorage.setItem(key, value.preferences[key]);}}
-      location.reload();
-    }),
-  );
   logout.addEventListener('click', () =>
     run(async () => {
       await request('logout', {});
@@ -141,7 +198,20 @@ export function setupAccounts(callbacks: {
     accountButton.focus();
   });
   update({ username: null });
-  return { refresh: () => run(async () => update(await request('session'))) };
+  return {
+    refresh: () => run(async () => update(await request('session'))),
+    /** Picks up settings saved on another device, without reconnecting. */
+    pull: async () => {
+      if (!signedIn) return;
+      try {
+        const value: AccountReply = await request('session');
+        if (value.username) adopt(value);
+        else await update(value);
+      } catch {}
+    },
+    /** Saves this device's settings to the account, if signed in. */
+    push,
+  };
 }
 
 export async function accountSocketTicket(deviceId: string) {
