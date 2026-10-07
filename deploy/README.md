@@ -1,7 +1,7 @@
 # Deploying Evakage
 
 The Compose file in this directory runs a **published Docker image**. To build
-your own image from source, follow the [local container instructions](../docs/development.mdx#build-a-local-container).
+your own image from source, follow the [local container instructions](https://evakage.docs.thesteau.com/development#build-a-local-container).
 
 Save this as `docker-compose.yml` in a directory of your choice. It matches
 [the current Compose file in this directory](docker-compose.yml):
@@ -128,7 +128,7 @@ survive in the `account-data` volume.
 
 For an account backup, stop the app and copy the SQLite database together with
 any `-wal` and `-shm` files, then start it again. For a live backup, use SQLite's
-backup API. See the [deployment guide](../docs/hosting/deployment.mdx#updates-and-backups).
+backup API. See the [deployment guide](https://evakage.docs.thesteau.com/hosting/deployment#updates-and-backups).
 
 **Do not run `docker compose down -v` if you want to keep accounts.**
 
