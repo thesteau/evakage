@@ -143,6 +143,9 @@ export interface LinkCrypto {
   identityVerified?: boolean;
   proofSent?: boolean;
   helloSent?: boolean;
+  /** Receipt of our version hello; this does not verify the peer's identity. */
+  helloAcknowledged?: boolean;
+  onHelloAcknowledged?: () => void;
 }
 
 export interface Link {

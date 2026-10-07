@@ -1540,13 +1540,16 @@ function negotiateProtocol(link: Link, hello: any) {
     // The peer learns of the mismatch only from our hello, which carries our
     // range. Their hello can arrive before ours has started, so start it now,
     // before marking the link incompatible stops startCryptoHandshake.
-    const pendingHello = link.crypto.helloSent
+    const exchange = link.crypto;
+    const pendingHello = exchange.helloSent
       ? null
-      : link.crypto.helloPromise ?? startCryptoHandshake(link);
+      : exchange.helloPromise ?? startCryptoHandshake(link);
     clearTimeout(link.negotiationTimer ?? undefined);
     link.incompatible = true;
     link.status = 'incompatible';
     link.protocol = null;
+    exchange.key = null;
+    exchange.identityVerified = false;
     const who = displayName(link.peerId);
     toast(
       theirMax
@@ -1555,7 +1558,19 @@ function negotiateProtocol(link: Link, hello: any) {
     );
     const dc = link.dc;
     const pc = link.pc;
+    // Sending/draining a hello does not prove the peer has read it. Its browser
+    // may still be opening the channel or processing the incoming frame.
+    if (dc?.readyState === 'open' && typeof hello.nonce === 'string' && hello.nonce.length <= 64) {
+      dc.send(JSON.stringify({ kind: 'crypto-hello-ack', nonce: hello.nonce }));
+    }
+    let acknowledgmentTimer: ReturnType<typeof setTimeout> | null = null;
+    let closing = false;
     const close = () => {
+      if (closing) return;
+      closing = true;
+      clearTimeout(acknowledgmentTimer ?? undefined);
+      exchange.onHelloAcknowledged = undefined;
+      dc?.removeEventListener('close', close);
       // DataChannel.close() drains queued messages before completing. Closing
       // the peer connection immediately can discard our version hello instead.
       // Capture this transport so a later replacement cannot be closed here.
@@ -1581,9 +1596,19 @@ function negotiateProtocol(link: Link, hello: any) {
       }
     };
     // Let a hello still being prepared go out before closing, or the peer is
-    // left with nothing to report.
-    if (pendingHello) pendingHello.catch(() => {}).finally(close);
-    else close();
+    // left with nothing to report. Then wait for its receipt, with bounded
+    // cleanup for older peers that do not acknowledge hellos.
+    const waitForAcknowledgment = () => {
+      if (exchange.helloAcknowledged || !dc || dc.readyState !== 'open') {
+        close();
+        return;
+      }
+      exchange.onHelloAcknowledged = close;
+      dc.addEventListener('close', close, { once: true });
+      acknowledgmentTimer = setTimeout(close, 5000);
+    };
+    if (pendingHello) pendingHello.catch(() => {}).finally(waitForAcknowledgment);
+    else waitForAcknowledgment();
     renderPeers();
     renderRooms();
     renderSession();
@@ -1816,6 +1841,14 @@ async function handleDataMessage(link: Link, data: string | Blob | ArrayBuffer) 
       msg.publicKey.length <= 256
     ) {
       await handleCryptoHello(link, msg);
+    } else if (
+      msg.kind === 'crypto-hello-ack' &&
+      link.crypto.helloSent &&
+      typeof msg.nonce === 'string' &&
+      msg.nonce === link.crypto.ownNonce
+    ) {
+      link.crypto.helloAcknowledged = true;
+      link.crypto.onHelloAcknowledged?.();
     } else if (msg.kind === 'crypto-proof') {
       await handleCryptoProof(link, msg);
     }
@@ -5709,7 +5742,7 @@ async function consumeShareTarget() {
   if (id === 'too-large' || id === 'queue-full' || id === 'too-many-files') {
     const message =
       id === 'too-large'
-        ? 'That share exceeds the 16 MiB share-sheet limit, including text and packaging. Open a session and use Send file for larger files.'
+        ? 'That share exceeds the 16 MiB share-sheet limit, including text and packaging. Open a session and use Attach File for larger files.'
         : id === 'too-many-files'
           ? 'Share at most 32 files at once. Please select fewer files and share again.'
           : 'The share queue is full (8 shares or 32 MiB). Collect waiting shares or wait up to ten minutes, then share again.';

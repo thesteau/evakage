@@ -351,6 +351,7 @@ td.danger, .file-meta.danger { color: var(--danger); }
 
 .icon-button { background: transparent; color: var(--text); border-color: var(--line); font-size: 1.2rem; line-height: 1; padding: 8px 11px; }
 .session-toolbar { display: flex; align-items: center; gap: 8px; padding: 12px 16px; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+.session-toolbar:not(:has(> :not(.hidden))) { display: none; }
 /* "Via server" is an on/off switch inside a pill: a sliding thumb shows the
    state at a glance. The real checkbox covers the pill, invisible, so the
    whole pill is the hit area and keyboard and screen readers get a switch. */
@@ -396,7 +397,7 @@ td.danger, .file-meta.danger { color: var(--danger); }
 .relay-toggle input:checked ~ .switch-track::after { transform: translateX(14px); background: var(--accent-ink); }
 .relay-toggle input:checked ~ .relay-label { color: var(--text); }
 .relay-toggle:has(input:focus-visible) { outline: 2px solid var(--focus); outline-offset: 2px; }
-.secure-state { margin-left: auto; font-size: .75rem; color: var(--muted); font-variant-numeric: tabular-nums; }
+.secure-state { min-width: 0; font-size: .75rem; color: var(--muted); font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
 .secure-state.ready { color: var(--accent-2); }
 .secure-state.unverified { color: var(--warn); }
 
@@ -420,10 +421,14 @@ td.danger, .file-meta.danger { color: var(--danger); }
 .file-actions { display: grid; grid-template-columns: 1fr auto auto; align-items: center; gap: 10px; }
 progress { width: 100%; accent-color: var(--accent-2); }
 
-/* Send sits under the text box, never beside it. */
+/* Encryption and both send actions share a row under the text box. */
 .message-form { flex: none; display: grid; grid-template-columns: 1fr; gap: 8px; padding: 14px; border-top: 1px solid var(--line); }
-.message-form button[type="submit"] { justify-self: end; min-width: 96px; }
 .message-form textarea { resize: vertical; min-height: 46px; max-height: 160px; }
+.message-hint { margin: 0; color: var(--muted); font-size: .75rem; line-height: 1.4; }
+.message-actions { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.message-security { display: flex; align-items: center; gap: 6px; flex: 1; min-width: 0; }
+.message-actions button { flex: none; }
+.message-actions button[type="submit"] { min-width: 80px; }
 
 /* Shown only while a file is dragged over the panel. */
 .drop-hint {
@@ -729,8 +734,6 @@ tbody tr.offline td.expiring {
   }
   .session-header { padding: 16px; }
   .session-toolbar { padding: 10px 14px; }
-  /* Beside the buttons when it fits; a long safety code wraps to its own line. */
-  .secure-state { flex: 1 1 auto; text-align: right; }
   .timeline { padding: 14px; }
   .message-item { max-width: 92%; }
   .file-actions { grid-template-columns: 1fr; }

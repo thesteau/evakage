@@ -48,11 +48,11 @@ HTTPS or localhost is required for encryption features, camera access, and insta
 | Total temporary relay budget | 4 GiB: 3 GiB files, 1 GiB text |
 | Per-chat ceilings | 50 GiB files, 1 GiB text; global budgets still apply |
 
-These are configured caps, not measured performance guarantees. Adjust them for your host using [configuration](/hosting/configuration).
+These limits control how much the server accepts; they do not guarantee that a host can handle that load. Follow the [configuration guide](/hosting/configuration) to adjust them for your host.
 
 ## Temporary relay
 
-The relay holds encrypted content for delivery. Older completed pending items may be removed when space is needed; active transfers are protected from capacity eviction. Online participants receive warnings and removal notices.
+The relay holds encrypted content until recipients receive or save it. When space is needed, the server may remove older items whose uploads are complete but which are still waiting for recipients. Active uploads and downloads are protected from capacity cleanup. Online participants receive warnings and removal notices.
 
 Relay data lives at `/tmp/evakage-blobs` inside the container. **Do not mount a persistent relay volume.** A restart or container replacement erases it.
 
@@ -60,11 +60,11 @@ The server expires content and cleans up automatically. No cron job is needed. S
 
 ## Accounts
 
-Accounts are enabled by default. The named `account-data` volume holds usernames, password hashes, and saved settings at `/home/node/evakage-accounts/accounts.sqlite`.
+Accounts are enabled by default. The named `account-data` volume holds usernames, password hashes, and saved settings at `/home/node/evakage-accounts/accounts.sqlite`. The Go image keeps this path for compatibility with existing account volumes.
 
 To disable accounts, set `ACCOUNTS_DB=` in `.env`. Chat, files, and joining rooms still work; creating rooms requires an account.
 
-## Checking on it
+## Check server health
 
 ```bash
 docker compose logs --tail=100
@@ -86,4 +86,4 @@ For a simple account backup, stop the app, copy the SQLite database with its `-w
 
 **Do not run `docker compose down -v` if you want to keep accounts.**
 
-To build from source instead, use [development](/development).
+To build your own Docker image from source, follow the [local container build instructions](/development#build-a-local-container).

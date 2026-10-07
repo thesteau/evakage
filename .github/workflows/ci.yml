@@ -2,7 +2,8 @@ name: "CI: Validate app"
 
 on:
   push:
-    branches: [main, prod]
+    # Main pushes are validated by image-latest.yml before it publishes.
+    branches: [prod]
   pull_request:
     branches: [main, prod]
   workflow_dispatch:
@@ -16,7 +17,7 @@ on:
 permissions:
   contents: read
 
-# Every branch push runs; obsolete PR runs can be canceled.
+# Called main/stable runs and prod pushes stay independent; cancel obsolete PRs.
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
@@ -35,7 +36,7 @@ jobs:
           cache: npm
           cache-dependency-path: app/package-lock.json
       - run: npm --prefix app ci
-      - uses: actions/setup-go@v6
+      - uses: actions/setup-go@v7
         with:
           go-version-file: app/go.mod
           cache-dependency-path: '**/go.sum'
@@ -57,7 +58,7 @@ jobs:
           cache: npm
           cache-dependency-path: app/package-lock.json
       - run: npm --prefix app ci
-      - uses: actions/setup-go@v6
+      - uses: actions/setup-go@v7
         with:
           go-version-file: app/go.mod
           cache-dependency-path: '**/go.sum'

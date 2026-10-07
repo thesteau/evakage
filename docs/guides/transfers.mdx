@@ -5,11 +5,11 @@ description: "Send, save, and retry temporary encrypted transfers."
 
 ## Send a message or file
 
-Open a device or room. Type a message, choose **Send file**, or drop a file onto the conversation.
+Choose **Open** beside a device or a room you have joined. In the conversation, type a message, choose **Attach File**, or drag and drop a file into the chatbox.
 
 ![An encrypted conversation between two paired browsers](/images/conversation.png)
 
-Messages and files are **end-to-end encrypted**. They go directly between browsers when possible. If that connection fails, encrypted content goes **via server**. You can also enable **Via server** in the conversation toolbar; in a room, only its creator has this switch.
+Messages and files are **end-to-end encrypted**. They go directly between browsers when possible. If that connection fails, encrypted content goes through the server relay. You can also enable **Via server** in the conversation toolbar. In a room, this switch is available only to devices signed into the account that owns the room.
 
 The server cannot read the content. It can see delivery metadata, including recipients and sizes.
 
@@ -17,7 +17,7 @@ The server cannot read the content. It can see delivery metadata, including reci
 
 A received file must pass its integrity check before you can save it. Verified files show **SHA-256 ✓**. A failed check offers a retry.
 
-Choose **Save** before closing the browser or before a server copy expires. With streamed relay downloads, Save fetches the verified file again, so the server copy must still be available.
+Choose **Save** before closing the browser or before a server copy expires. When the app streams a relay download to disk, **Save** downloads the verified file again. Its server copy must still be available.
 
 ## Retry an interrupted transfer
 
@@ -31,7 +31,7 @@ Choose **Save** before closing the browser or before a server copy expires. With
 
 ## How long server copies last
 
-The relay is a temporary delivery buffer. By default, an item becomes unavailable when the first applicable condition is reached:
+The relay stores encrypted content temporarily while it waits for delivery. By default, a server copy becomes unavailable as soon as any applicable condition below is met:
 
 | Condition | Limit |
 | --- | --- |
@@ -40,21 +40,21 @@ The relay is a temporary delivery buffer. By default, an item becomes unavailabl
 | Only one participant remains in a direct chat | 3 hours; rooms are exempt |
 | Item age | 3 days |
 | Server restart or container replacement | Immediately |
-| Relay capacity is needed | Older completed pending items may be removed |
+| Relay capacity is needed | Older items waiting for recipients may be removed once their uploads are complete |
 
-The app shows an expiry countdown. Expired items cannot start another upload or download. An already-open download may finish. Disk cleanup runs every minute by default, but can be delayed.
+The app shows an expiry countdown. Once an item expires, you cannot start another upload or download for it. A download already in progress may finish. Disk cleanup runs every minute by default, but can be delayed.
 
 ## Capacity warnings
 
-The app warns online participants when a file or text budget reaches **80%**. If space is needed, expired items are removed first, then the oldest completed pending items of the same kind. Affected online participants receive a notice.
+The app warns online participants when a file or text budget reaches **80%**. If space is needed, the server first removes expired items. It then removes the oldest items of the same kind whose uploads are complete but which are still waiting for recipients. Affected online participants receive a notice.
 
-Files and text have separate budgets, so a full file buffer still leaves room for chat. Active uploads and downloads are protected from capacity eviction. An item that cannot fit is rejected.
+Files and text have separate budgets, so a full file buffer still leaves room for chat. Active uploads and downloads are protected from capacity cleanup. An item that cannot fit is rejected.
 
 Operators can adjust the [capacity limits](/hosting/configuration). Copies already on your device are not removed by server cleanup.
 
 ## Message yourself
 
-Open **This is you** in Devices to send encrypted notes or files to your browser identity.
+In **Devices**, choose **Open** beside **This is you** to send encrypted notes or files to yourself in the same browser profile.
 
 - Use the same browser profile to recover them after a reload.
 - Reconnect within **24 hours** of going offline.

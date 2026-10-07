@@ -10,7 +10,7 @@ description: "Choose an image or publish an official release."
 | `latest` | Tested builds from `main` |
 | `vX.Y.Z` | A fixed stable release |
 
-Set the image tag in your deployment Compose file. See [deployment](/hosting/deployment).
+Set the image tag in your deployment Compose file. Follow the [deployment guide](/hosting/deployment) to start or update your server.
 
 ## Official publishing workflow
 
@@ -25,7 +25,7 @@ flowchart LR
     E -->|Approved merge| F[Stable release and image]
 ```
 
-`release-state` holds the changelog, version manifest, and approved production commit. Release metadata stays out of application branches. Release tags identify stable versions; `app/package.json` does not.
+`release-state` holds the changelog, version manifest, and the SHA of the approved production commit. Release metadata stays out of application branches. Release tags identify stable versions; the version in `app/package.json` is only for development.
 
 Stable images are published for amd64 and arm64 after source, browser, container, and vulnerability checks. They do not change `latest`.
 
@@ -40,7 +40,7 @@ Use `<type>[(scope)][!]: <summary>` for PRs into `main`.
 | An accepted type with `!` | Major |
 | `docs:`, `chore:`, `refactor:`, `test:`, `build:`, `ci:`, `style:`, `deps:` | Included with the next releasable change |
 
-For example: `fix(relay): reject expired downloads`. The largest change since the last release determines the version.
+For example: `fix(relay): reject expired downloads`. The largest version bump required by commits since the last release determines the next version.
 
 PRs into `main` use squash merges. Promotions to `prod` and metadata approvals use merge commits.
 

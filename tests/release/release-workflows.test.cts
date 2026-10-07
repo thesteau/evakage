@@ -3,6 +3,9 @@ const { test } = require("node:test");
 const assert = require("node:assert/strict");
 const { readFileSync } = require("node:fs");
 const { resolve } = require("node:path");
+const appRequire = require("node:module").createRequire(resolve(__dirname, "../../app/package.json"));
+// Use the YAML parser already required by Release Please.
+const { parse } = appRequire("yaml");
 const AsyncFunction = Object.getPrototypeOf(async () => {}).constructor;
 const workflowDirectory = resolve(__dirname, "..", "..", ".github/workflows");
 
@@ -14,6 +17,47 @@ function scripts(name: string): string[] {
 }
 
 const repo = { owner: "example", repo: "backup" };
+
+test("main pushes have one validation/publishing pipeline and promotion PRs cannot trigger images", () => {
+  const workflows = ["ci", "image-latest"].map((name) => ({
+    file: name,
+    ...parse(readFileSync(resolve(workflowDirectory, `${name}.yml`), "utf8")),
+  }));
+  for (const [event, branch, expected] of [
+    ["push", "main", ["image-latest"]],
+    ["push", "prod", ["ci"]],
+    ["pull_request", "main", ["ci"]],
+    // For promotion PRs the source is main, but GitHub filters on base prod.
+    ["pull_request", "prod", ["ci"]],
+    ["workflow_run", "main", []],
+  ]) {
+    const triggered = workflows
+      .filter((workflow) => workflow.on[event as string]?.branches?.includes(branch))
+      .map((workflow) => workflow.file);
+    assert.deepEqual(triggered, expected, `${event} on ${branch}`);
+  }
+});
+
+test("main image publishing skips superseded commits and stops on lookup failures", async () => {
+  const run = new AsyncFunction("github", "context", "core", scripts("image-latest")[0]);
+  for (const tip of ["tested-main", "newer-main"]) {
+    const outputs: any[] = [];
+    await run(
+      { rest: { git: { getRef: async (args: any) => {
+        assert.deepEqual(args, { ...repo, ref: "heads/main" });
+        return { data: { object: { sha: tip } } };
+      } } } },
+      { repo, sha: "tested-main" },
+      { setOutput: (...args: any[]) => outputs.push(args) },
+    );
+    assert.deepEqual(outputs, [["publish", tip === "tested-main" ? "true" : "false"]]);
+  }
+  await assert.rejects(run(
+    { rest: { git: { getRef: async () => { throw new Error("Lookup failed"); } } } },
+    { repo, sha: "tested-main" },
+    { setOutput: () => assert.fail("Lookup failure must not authorize publishing") },
+  ), /Lookup failed/);
+});
 
 test("release automation dispatches metadata validation and images using trusted prod workflows", async () => {
   for (const operation of ["plan", "publish"]) {

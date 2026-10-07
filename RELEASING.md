@@ -8,7 +8,7 @@ push, pull request, release and scheduled events.
 
 | Branch | Purpose |
 | --- | --- |
-| `main` | Integration code; successful app CI publishes `latest` and a full-SHA image. |
+| `main` | Integration branch; after app checks pass, publish `latest` and an image tagged with the full commit SHA. |
 | `prod` | Reviewed production code; promotion preserves Conventional Commit history. |
 | `release-state` | Orphan branch containing only version manifest, changelog and `release.json`. |
 
@@ -33,10 +33,10 @@ under its MIT license.
 
 | File | Purpose |
 | --- | --- |
-| `ci.yml` | Source checks, release tests, browser suites, container smoke and Trivy scan; reusable for stable releases. |
+| `ci.yml` | App checks for PRs and `prod` pushes; shared source, release, browser, container smoke and Trivy checks for main and stable images. |
 | `ci-repository.yml` | actionlint and hadolint. |
-| `codeql.yml` | Existing CodeQL security gate and SARIF artifacts. |
-| `image-latest.yml` | Publish tested `main` as `latest` and `sha-<full SHA>`; skip CI completions for superseded commits. |
+| `codeql.yml` | CodeQL analysis for Go and TypeScript, with SARIF artifacts and optional code-scanning uploads. |
+| `image-latest.yml` | On main pushes (or manual retries), run shared app CI, then publish `latest` and `sha-<full SHA>` if the commit is still current. |
 | `pr-title.yml` | Validate Conventional Commit titles into `main`. |
 | `pr-prod-source.yml` | Accept only same-repository `main` promotions into `prod`. |
 | `release-promote.yml` | Keep one promotion PR open. |
@@ -49,6 +49,11 @@ release workflow explicitly dispatches metadata validation and stable images.
 Privileged metadata workflows check out trusted `prod` code, never PR code.
 Existing stable image tags are skipped on retry. A stable release never updates
 `latest`; that tag belongs to `main`.
+
+Main validation and publishing share one workflow run. There is no `workflow_run`
+trigger, so successful promotion-PR CI cannot create an extra image run. Only the
+publish job has package write permission; validation uses a read-only token.
+Publishing is serialized while validation for separate main pushes runs in parallel.
 
 ## Repository setup
 
@@ -81,11 +86,12 @@ Leave `release-please--branches--release-state` unprotected: Release Please upda
 its own proposal branch. Keep required check names and workflow dispatch file
 names in sync if renamed. Add CodeQL's security gate to branch requirements
 according to the repository's code-scanning availability. It runs once per
-language, as `analyze (javascript-typescript)` and `analyze (go)`; require both. Set
+language, as `analyze (javascript-typescript, none)` and `analyze (go, manual)`; require both. Set
 `CODE_SCANNING_ENABLED=true` to enable Security-tab uploads once configured.
 
 ## Retry and recovery
 
+- Missing main image: run **Image: Main latest** on `main`; app CI must pass before publishing.
 - Missing tag or GitHub Release: run **Release: Plan and publish** on `prod` with `publish`.
 - Missing container: run **Image: Stable release** on `prod` with the existing published tag.
 - Never move or reuse a version tag. A conflicting tag causes publication to fail.
@@ -99,5 +105,5 @@ and reviewed notes. If `prod` is reset, retained stable tags identify commits
 already shipped; rebased or squashed copies with new SHAs may count again.
 Review the proposed version and notes before approving.
 
-Run `npm run check` before committing automation changes. Release tests use mocked
+Run `npm run check` from `app/` before committing automation changes. Release tests use mocked
 GitHub APIs and temporary local repositories; they do not create real releases.

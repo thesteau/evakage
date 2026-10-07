@@ -16,17 +16,17 @@ Choose **Login** in the header to sign up or sign in. It becomes **Account** aft
 
 ## Connect your signed-in devices
 
-Online devices signed into the same account discover and connect to each other privately. They appear in Devices marked **This is yours**; choose one to open a chat. Signing in does not open a chat by itself.
+Online devices signed into the same account discover and connect to each other privately. They appear in **Devices** marked **This is yours**. Choose **Open** beside a device to start a conversation.
 
-Each browser profile keeps its own device identity. Signing in does not merge identities or share device keys. Concurrent tabs in one profile share an identity; the newest tab takes the connection.
+Each browser profile keeps its own device identity. Signing in does not merge identities or share device keys. Tabs in the same profile share an identity; if you open several, only the most recently connected tab stays connected to the server.
 
-Account-only connections require both devices to be online. For offline delivery, pair devices by code or QR first. Blocking and verified-only settings still apply.
+Connections made through your account require both devices to be online. To leave content for an offline device, pair the devices by private code or QR invitation first. Blocking and **Verified devices only** still apply.
 
 ## Settings sync
 
-While signed in, settings sync automatically. A change on one device is saved to your account right away, and the most recent save applies everywhere. Other devices pick it up the next time they load the app or open **Settings** or **Account**, without a reload.
+While signed in, changes to the settings below are saved to your account automatically. The most recent save applies across your devices. Other devices fetch those settings when they load the app or when you open **Settings** or **Account**. Opening either panel applies the changes without reloading the app.
 
-This syncs theme, incoming-file policy, verified-only mode, the relay preference, and whether your new rooms need approval. A new account starts from the settings of the device that created it; signing in elsewhere replaces that device's settings with the account's.
+The synced settings are your theme, incoming-file approval, **Verified devices only**, the **Via server** preference, and **Approve who joins my rooms**. A new account starts with the settings of the device that created it. When you sign in on another device, these settings are replaced with the ones saved in your account.
 
 Messages, files, private keys, pairings, trust records, and advertising consent are not synced.
 
@@ -42,8 +42,8 @@ Files saved outside Evakage and other people's copies remain.
 
 Docker enables accounts by default and keeps the database in the `account-data` volume. Accounts and saved settings survive container replacement; login sessions do not.
 
-For local Node development, set `ACCOUNTS_DB=./data/accounts.sqlite`. Set `ACCOUNTS_DB=` to disable accounts.
+To enable accounts when running from source, set `ACCOUNTS_DB=./data/accounts.sqlite` in your shell before running `npm run dev` from `app/`. The [development guide](/development#run-locally) includes commands for Bash and PowerShell. Set `ACCOUNTS_DB=` to disable accounts.
 
 The database contains usernames, salted password hashes, and selected settings. It contains no chat, files, or device private keys.
 
-Behind an HTTPS reverse proxy, set `TRUST_PROXY=1` and preserve the public host header. See [configuration](/hosting/configuration#https-reverse-proxies) and [backups](/hosting/deployment#updates-and-backups).
+Behind an HTTPS reverse proxy, set `TRUST_PROXY=1` and preserve the public host header. Follow the instructions for [proxy configuration](/hosting/configuration#https-reverse-proxies) and [account backups](/hosting/deployment#updates-and-backups).

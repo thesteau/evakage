@@ -78,8 +78,11 @@ for (const twoPass of [false, true]) {
           ['Bob', bob],
         ] as [string, Page][]) {
           await test.step(`${name}: open the app and register its identity`, async () => {
+            // Firefox can miss DOMContentLoaded for the second isolated context
+            // even after the app connects. Wait for the document response, then
+            // use the identity and connection assertions below for readiness.
             const response = await page.goto(platformServer.base, {
-              waitUntil: 'domcontentloaded',
+              waitUntil: 'commit',
             });
             expect(response?.ok(), `${name}: app document should load successfully`).toBe(true);
             await expect(page.locator('#selfCode')).toHaveText(/^[A-Z0-9]{4}-[A-Z0-9]{4}$/);
