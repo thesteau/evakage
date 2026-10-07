@@ -11,12 +11,36 @@ small group into a temporary room. Use it in your browser or install it as a web
 
 ## Quick start
 
-To host your own instance with a published image:
+With Docker installed, save this as `docker-compose.yml` in a directory of your
+choice. It matches the [current deployment Compose file](deploy/docker-compose.yml):
+
+```yaml
+services:
+  evakage:
+    image: ghcr.io/thesteau/evakage:latest
+    container_name: evakage
+    restart: unless-stopped
+    ports:
+      - "3712:3000"
+    env_file: .env
+    volumes:
+      - account-data:/home/node/evakage-accounts
+
+volumes:
+  account-data:
+```
+
+The Compose setup is ready to use and loads your settings through `env_file: .env`.
+Environment settings can change between releases, so check the current
+[`.env.example`](deploy/.env.example) for available variables and default values
+before deploying or updating. When updating, merge relevant changes into your
+existing `.env`, keeping your own values.
+
+Create a `.env` file beside it (it can be empty for the defaults), then run these
+commands from that directory:
 
 ```bash
-git clone https://github.com/thesteau/evakage.git
-cd evakage/deploy
-cp .env.example .env
+touch .env
 docker compose pull
 docker compose up -d
 ```
@@ -25,14 +49,7 @@ Open `http://localhost:3712`. See [the deployment guide](deploy/README.md) for
 configuration, updates and account backups. `latest` tracks tested `main`
 builds; pin an available `vX.Y.Z` tag when you need a stable version.
 
-To build a Docker image from source, run these commands from the repository root:
-
-```bash
-cp app/.env.example app/.env
-docker compose -f app/compose.yaml up -d --build
-```
-
-Open `http://localhost:3712`. To use other devices, put the app behind an HTTPS
+To use other devices, put the app behind an HTTPS
 reverse proxy with a trusted certificate. In the `.env` file beside your Compose
 file, set `TRUST_PROXY=1` only when using a proxy you control. HTTPS or localhost
 is required for browser encryption and web app features.
@@ -111,6 +128,8 @@ in `scripts/benchmarks/`.
 See [the development guide](docs/development.mdx) for more details and
 [RELEASING.md](RELEASING.md) for the maintainer's release workflow. You do not
 need to reproduce that workflow to use or self-host Evakage.
+To build a Docker image from source, follow the
+[local container instructions](docs/development.mdx#build-a-local-container).
 
 ## Author
 

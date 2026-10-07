@@ -3,11 +3,35 @@
 The Compose file in this directory runs a **published Docker image**. To build
 your own image from source, follow the [local container instructions](../docs/development.mdx#build-a-local-container).
 
-From the repository root:
+Save this as `docker-compose.yml` in a directory of your choice. It matches
+[the current Compose file in this directory](docker-compose.yml):
+
+```yaml
+services:
+  evakage:
+    image: ghcr.io/thesteau/evakage:latest
+    container_name: evakage
+    restart: unless-stopped
+    ports:
+      - "3712:3000"
+    env_file: .env
+    volumes:
+      - account-data:/home/node/evakage-accounts
+
+volumes:
+  account-data:
+```
+
+The Compose setup is ready to use and loads your settings through `env_file: .env`.
+Environment settings can change between releases, so check the current
+[`.env.example`](.env.example) for available variables and default values before
+deploying or updating.
+
+Create a `.env` file beside it (it can be empty for the defaults), then run these
+commands from the same directory:
 
 ```bash
-cd deploy
-cp .env.example .env        # required
+touch .env
 docker compose pull
 docker compose up -d
 ```
@@ -88,7 +112,11 @@ and cannot see which conversations are active. It uses `BLOB_MAX_AGE_MS`
 
 ## Updates and account backups
 
-From `deploy/`, pull the image and recreate the container:
+Compare your `.env` with the current [`.env.example`](.env.example). Merge any
+new or changed settings you need, keeping your own values.
+
+From the directory containing `docker-compose.yml`, pull the image and recreate
+the container:
 
 ```bash
 docker compose pull
