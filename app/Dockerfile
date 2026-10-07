@@ -20,8 +20,8 @@ ARG TARGETARCH
 RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -trimpath -ldflags="-s -w" -o /evakage ./cmd/evakage
 
 FROM alpine:3.23
-RUN apk add --no-cache ca-certificates && \
-    addgroup -g 1000 evakage && adduser -D -u 1000 -G evakage evakage && \
+# The base image already ships ca-certificates-bundle for outbound TLS.
+RUN addgroup -g 1000 evakage && adduser -D -u 1000 -G evakage evakage && \
     mkdir -p /home/node/evakage-accounts && chown 1000:1000 /home/node/evakage-accounts
 
 # Preserve the existing account-volume path for upgrades. Relay storage is temporary.

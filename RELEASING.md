@@ -80,7 +80,8 @@ PR title. Keep automatic head-branch deletion off because promotion PRs use
 Leave `release-please--branches--release-state` unprotected: Release Please updates
 its own proposal branch. Keep required check names and workflow dispatch file
 names in sync if renamed. Add CodeQL's security gate to branch requirements
-according to the repository's code-scanning availability; set
+according to the repository's code-scanning availability. It runs once per
+language, as `analyze (javascript-typescript)` and `analyze (go)`; require both. Set
 `CODE_SCANNING_ENABLED=true` to enable Security-tab uploads once configured.
 
 ## Retry and recovery

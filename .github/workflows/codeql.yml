@@ -19,14 +19,31 @@ permissions:
 jobs:
   analyze:
     runs-on: ubuntu-latest
+    # Build modes are per language: JavaScript/TypeScript is extracted from
+    # source and rejects any other mode, while Go is traced through a real build.
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - language: javascript-typescript
+            build-mode: none
+          - language: go
+            build-mode: manual
     steps:
       - uses: actions/checkout@v7
+
+      - if: matrix.language == 'go'
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: app/go.mod
+          cache-dependency-path: '**/go.sum'
+          cache: true
 
       - name: Initialize CodeQL
         uses: github/codeql-action/init@v4
         with:
-          languages: javascript-typescript, go
-          build-mode: autobuild
+          languages: ${{ matrix.language }}
+          build-mode: ${{ matrix.build-mode }}
           queries: security-and-quality
           # The tests deliberately build URLs from fixture data and write to the
           # OS temp dir; they are never shipped, so their findings are noise.
@@ -34,6 +51,13 @@ jobs:
             paths-ignore:
               - tests/unit
               - tests/release
+              - tests/go
+
+      # Only the shipped server module; tests/go is a separate test-only module.
+      - name: Build the Go server
+        if: matrix.build-mode == 'manual'
+        working-directory: app
+        run: go build ./...
 
       # Uploading to the Security tab needs code scanning enabled, which a private
       # repository only has with GitHub Code Security. Until then, results are
@@ -42,7 +66,7 @@ jobs:
       - name: Analyse
         uses: github/codeql-action/analyze@v4
         with:
-          category: /language:javascript-typescript-go
+          category: /language:${{ matrix.language }}
           output: sarif-results
           upload: ${{ vars.CODE_SCANNING_ENABLED == 'true' && 'always' || 'never' }}
 
@@ -50,7 +74,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: codeql-sarif
+          name: codeql-sarif-${{ matrix.language }}
           path: sarif-results
           if-no-files-found: ignore
 
