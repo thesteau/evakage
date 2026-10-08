@@ -3,6 +3,65 @@ import { test, deviceNames, openPeer, chat, pairDevices } from './helpers.js';
 import { startServer } from '../unit/helpers.js';
 import { PAIRING_CODE_MAX_AGE_MS } from '../support/go-server.js';
 
+test.describe('code pairing verification ordering', () => {
+  test.use({
+    autoPair: false,
+    appPatch: {
+      device: 'Both',
+      patch: (source) =>
+        source
+          .replace(
+            'async function acceptPairing(peer) {',
+            `async function acceptPairing(peer) {
+  if (window.delayCodePairing) {
+    document.documentElement.dataset.pairVerificationPending = '1';
+    await new Promise(resolve => { window.finishCodePairing = resolve; });
+  }`,
+          )
+          .replace(
+            'function queueSignal(peerId, data, connectedAt) {',
+            `function queueSignal(peerId, data, connectedAt) {
+  if (document.documentElement.dataset.pairVerificationPending && !deviceAllowed(peerId) && data.type === 'offer') {
+    document.documentElement.dataset.signalBeforePairVerification = data.type;
+  }`,
+          )
+          .replace(
+            "signal(peerId, { type: 'offer', sdp: pc.localDescription });",
+            `document.documentElement.dataset.pairingOffers = String(Number(document.documentElement.dataset.pairingOffers || 0) + 1);
+    signal(peerId, { type: 'offer', sdp: pc.localDescription });`,
+          ),
+    },
+  });
+
+  test('an initial offer waits for pairing verification without restarting negotiation', async ({ devices }) => {
+    const { alice, bob } = devices;
+    const aliceId = (await alice.locator('#selfCode').getAttribute('data-device-id'))!;
+    const bobId = (await bob.locator('#selfCode').getAttribute('data-device-id'))!;
+    // The smaller fingerprint offers. Hold approval on the receiving browser
+    // until that first offer arrives, making the ordering race deterministic.
+    const [sender, receiver, senderName, receiverName] = aliceId.localeCompare(bobId) < 0
+      ? [alice, bob, 'Alice', 'Bob'] as const
+      : [bob, alice, 'Bob', 'Alice'] as const;
+    await receiver.evaluate(() => {
+      (window as unknown as { delayCodePairing: boolean }).delayCodePairing = true;
+    });
+    await Promise.all([
+      pairDevices(sender, receiver, false),
+      (async () => {
+        await expect(receiver.locator('html')).toHaveAttribute('data-signal-before-pair-verification', 'offer');
+        await receiver.evaluate(() => {
+          (window as unknown as { finishCodePairing: () => void }).finishCodePairing();
+        });
+      })(),
+    ]);
+    await openPeer(sender, receiverName);
+    await openPeer(receiver, senderName);
+    await expect(sender.locator('html')).toHaveAttribute('data-pairing-offers', '1');
+    await chat(sender, receiver, 'First offer survived pairing verification');
+    await chat(receiver, sender, 'The paired return link is encrypted');
+  });
+});
+
 test.describe('pairing restoration ordering', () => {
   test.use({
     appPatch: {

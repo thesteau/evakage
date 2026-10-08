@@ -265,6 +265,7 @@ let accountGeneration = 0;
 let signingOut = false;
 /** Serialise SDP/ICE work per peer while allowing unrelated peers to negotiate. */
 const signalQueues: Map<string, Promise<void>> = new Map();
+const pendingPairings: Map<string, Promise<boolean>> = new Map();
 
 const transportStops: WeakMap<RTCPeerConnection, AbortController> = new WeakMap();
 const accountEvents =
@@ -836,7 +837,15 @@ function connectWebSocket() {
     }
 
     if (msg.type === 'paired-device') {
-      const peer = msg.peer && (await acceptPairing(msg.peer)) ? msg.peer : null;
+      const pairing = msg.peer ? acceptPairing(msg.peer) : null;
+      if (pairing) pendingPairings.set(msg.peer.id, pairing);
+      let peer = null;
+      try {
+        if (pairing && await pairing) peer = msg.peer;
+      } finally {
+        if (pairing && pendingPairings.get(msg.peer.id) === pairing)
+          {pendingPairings.delete(msg.peer.id);}
+      }
       settleServerActions({ ...msg, peer });
       return;
     }
@@ -1404,10 +1413,17 @@ function retryLink(peerId: string) {
 }
 
 function queueSignal(peerId: string, data: any, connectedAt?: number) {
-  if (!deviceAllowed(peerId)) return;
+  const pairing = pendingPairings.get(peerId);
+  if (!deviceAllowed(peerId) && !pairing) return;
   const previous = signalQueues.get(peerId) || Promise.resolve();
   const pending = previous
-    .then(() => handleSignal(peerId, data, connectedAt))
+    .then(async () => {
+      // The pairing notice precedes signaling, but verifying its identity is
+      // asynchronous. Keep the initial offer/ICE in order until that check ends;
+      // handleSignal still enforces approval if verification failed or was revoked.
+      if (pairing) await pairing;
+      await handleSignal(peerId, data, connectedAt);
+    })
     .catch(() => {
       // The transport may have been replaced while an SDP operation was pending.
       if (state.peers.has(peerId) && neededPeerIds().has(peerId)) scheduleReconnect(peerId);
