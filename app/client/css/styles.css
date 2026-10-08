@@ -221,6 +221,14 @@ button:disabled { opacity: .45; cursor: not-allowed; filter: none; }
 button.ghost { background: transparent; border-color: var(--line); color: var(--text); }
 button.ghost:hover { background: var(--panel-2); filter: none; }
 .form-feedback { display: block; min-height: 18px; margin-top: 6px; color: var(--muted); font-size: .78rem; }
+.form-feedback.danger { color: var(--danger); }
+.session-feedback { margin: 0; padding: 0 20px 8px; }
+.session-feedback:empty { display: none; }
+#refreshBtn[aria-busy="true"] svg { animation: refresh-spin 1s linear infinite; }
+@keyframes refresh-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) {
+  #refreshBtn[aria-busy="true"] svg { animation: none; }
+}
 
 .peers-card { margin-top: 18px; padding: 18px; scroll-margin-top: calc(var(--topbar-height, 120px) + 12px); }
 .section-heading { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 14px; padding: 4px 4px 14px; }

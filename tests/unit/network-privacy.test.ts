@@ -21,11 +21,15 @@ test('advertising defaults off and can be enabled and revoked without duplicate 
     ['privacy_device_a'],
   );
   const visible = waitFor(a, (m) => m.type === 'presence' && m.peers.length === 2);
+  const enabled = waitFor(b, (m) => m.type === 'discoverable-updated');
   b.send(JSON.stringify({ type: 'set-discoverable', enabled: true }));
   await visible;
+  assert.equal((await enabled).enabled, true, 'the requester receives an acknowledgement even when its own device list is unchanged');
   const hidden = waitFor(a, (m) => m.type === 'presence' && m.peers.length === 1);
+  const disabled = waitFor(b, (m) => m.type === 'discoverable-updated');
   b.send(JSON.stringify({ type: 'set-discoverable', enabled: false }));
   await hidden;
+  assert.equal((await disabled).enabled, false);
   const closed = new Promise<CloseEvent>((resolve) =>
     b.addEventListener('close', resolve, { once: true }),
   );

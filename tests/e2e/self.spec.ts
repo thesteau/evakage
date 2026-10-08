@@ -69,6 +69,19 @@ test('deleting self notes removes them from the server too', async ({ devices })
   await alice
     .getByRole('button', { name: 'Delete conversation with yourself', exact: true })
     .click();
+  await expect(alice.locator('#deleteDialog')).toBeVisible();
+  await expect(alice.locator('#deleteCancel')).toBeFocused();
+  await alice.locator('#deleteCancel').click();
+  await alice.getByRole('button', { name: 'Open conversation with yourself', exact: true }).click();
+  await expect(alice.locator('#timeline')).toContainText('A note to delete');
+  await expect(alice.locator('#timeline')).toContainText('delete-me.txt');
+  await alice.locator('#closeSession').click();
+  await alice.getByRole('button', { name: 'Delete conversation with yourself', exact: true }).click();
+  await alice.keyboard.press('Escape');
+  await expect(alice.locator('#deleteDialog')).not.toBeVisible();
+  await alice.getByRole('button', { name: 'Delete conversation with yourself', exact: true }).click();
+  await alice.locator('#deleteConfirm').click();
+  await expect(alice.locator('#toastRegion')).toContainText('Deleted your self notes');
   await alice.getByRole('button', { name: 'Open conversation with yourself', exact: true }).click();
   await expect(alice.locator('#timeline')).toContainText('Send yourself a message');
   await alice.reload();

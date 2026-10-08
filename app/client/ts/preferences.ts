@@ -53,6 +53,7 @@ export function setupAccounts(callbacks: {
   onSignOut: () => void;
   /** Synced preferences were written to localStorage; apply them in place. */
   onPreferences: () => void;
+  onSaveStatus: (message: string, failed?: boolean) => void;
 }) {
   const dialog = document.querySelector('#accountDialog') as HTMLDialogElement;
   const form = document.querySelector('#accountForm') as HTMLFormElement;
@@ -75,8 +76,12 @@ export function setupAccounts(callbacks: {
   // The most recently saved settings win everywhere: a change here is pushed
   // at once, and any newer revision from the account replaces local settings.
   const push = () => {
-    if (!signedIn) return;
+    if (!signedIn) {
+      callbacks.onSaveStatus('Settings saved on this device.');
+      return;
+    }
     unsaved = true;
+    callbacks.onSaveStatus('Saving settings to your account…');
     saving ||= (async () => {
       while (unsaved && signedIn) {
         unsaved = false;
@@ -90,9 +95,11 @@ export function setupAccounts(callbacks: {
           unsaved = true;
         }
       }
+      callbacks.onSaveStatus('Settings saved to your account.');
     })()
       .catch(() => {
         status.textContent = 'Settings could not be saved to your account.';
+        callbacks.onSaveStatus('Settings saved on this device, but could not be saved to your account. Try changing the setting again to retry.', true);
       })
       .finally(() => {
         saving = null;
@@ -116,7 +123,9 @@ export function setupAccounts(callbacks: {
         if (localStorage.getItem(key) === next) continue;
         localStorage.setItem(key, next);
         changed = true;
-      } catch {}
+      } catch {
+        callbacks.onSaveStatus('Could not load your account settings. Using this device’s settings.', true);
+      }
     }
     if (changed) callbacks.onPreferences();
   };
@@ -207,7 +216,9 @@ export function setupAccounts(callbacks: {
         const value: AccountReply = await request('session');
         if (value.username) adopt(value);
         else await update(value);
-      } catch {}
+      } catch {
+        callbacks.onSaveStatus('Could not load your account settings. Using this device’s settings.', true);
+      }
     },
     /** Saves this device's settings to the account, if signed in. */
     push,

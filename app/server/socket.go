@@ -421,6 +421,7 @@ func (s *Server) readMessage(ws *socket, typ websocket.MessageType, data []byte)
 		c.Discoverable = m["enabled"] == true
 		s.noteSeen(c.ID)
 		s.broadcastPresence()
+		ws.send(object{"type": "discoverable-updated", "enabled": c.Discoverable})
 	case "presence-request":
 		ws.send(object{"type": "presence", "peers": s.visible(c.ID)})
 	case "unpair-device":

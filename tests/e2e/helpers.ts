@@ -154,7 +154,11 @@ export async function pairDevices(first: Page, second: Page, closeConversations:
       name: `Delete conversation with ${name}`,
       exact: true,
     });
-    if (await exit.count()) await exit.click();
+    if (await exit.count()) {
+      await exit.click();
+      await page.locator('#deleteConfirm').click();
+      await expect(page.locator('#deleteDialog')).not.toBeVisible();
+    }
   }
 }
 
