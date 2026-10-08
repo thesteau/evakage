@@ -1,8 +1,8 @@
 {
-  "version": "1.0.1",
-  "tag": "v1.0.1",
-  "prodSha": "15578919e942febff2c25caedb3aedbfd1a0e6ca",
-  "previousTag": "v1.0.0",
-  "previousSha": "f3e9de18b6c9b94e31806df8b26a7dd7bba0703e",
-  "notes": "## [1.0.1](https://github.com/thesteau/evakage/compare/v1.0.0...v1.0.1) (2026-10-07)\n\n\n### Bug Fixes\n\n* resolve double tap bug ([0a32a81](https://github.com/thesteau/evakage/commit/0a32a81c734deca19bc49a52d025ab011a839645))\n* resolve double tap bug ([c895297](https://github.com/thesteau/evakage/commit/c895297700e8e0ee0bd1ca53194e1c46d61eea2a))"
+  "version": "1.0.2",
+  "tag": "v1.0.2",
+  "prodSha": "7e11915f77d9f8046e52f83198ffeea1d5c0b63e",
+  "previousTag": "v1.0.1",
+  "previousSha": "15578919e942febff2c25caedb3aedbfd1a0e6ca",
+  "notes": "## [1.0.2](https://github.com/thesteau/evakage/compare/v1.0.1...v1.0.2) (2026-10-08)\n\n\n### Bug Fixes\n\n* resolve sec issues ([7e11915](https://github.com/thesteau/evakage/commit/7e11915f77d9f8046e52f83198ffeea1d5c0b63e))\n* resolve sec issues ([122b354](https://github.com/thesteau/evakage/commit/122b35480bf75f94deaaf2bd5746e2368d9bc354))\n\n\n### Performance Improvements\n\n* Add performance update ([f152116](https://github.com/thesteau/evakage/commit/f1521160276736f889ad61ed7ce64848b6418447))"
 }
