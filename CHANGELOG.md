@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.0.2](https://github.com/thesteau/evakage/compare/v1.0.1...v1.0.2) (2026-10-08)
+
+
+### Bug Fixes
+
+* resolve sec issues ([7e11915](https://github.com/thesteau/evakage/commit/7e11915f77d9f8046e52f83198ffeea1d5c0b63e))
+* resolve sec issues ([122b354](https://github.com/thesteau/evakage/commit/122b35480bf75f94deaaf2bd5746e2368d9bc354))
+
+
+### Performance Improvements
+
+* Add performance update ([f152116](https://github.com/thesteau/evakage/commit/f1521160276736f889ad61ed7ce64848b6418447))
+
 ## [1.0.1](https://github.com/thesteau/evakage/compare/v1.0.0...v1.0.1) (2026-10-07)
 
 
