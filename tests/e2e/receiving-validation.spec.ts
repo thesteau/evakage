@@ -47,6 +47,12 @@ for (const action of ['Block', 'Delete']) {
           exact: true,
         })
         .click();
+      if (action === 'Delete') {
+        await expect(bob.locator('#deleteDialog')).toBeVisible();
+        await bob.locator('#deleteConfirm').click();
+        await expect(bob.locator('#deleteDialog')).not.toBeVisible();
+        await expect(deviceRow).toHaveCount(0);
+      }
       await bob
         .locator('#devicesDialog')
         .getByRole('button', { name: 'Close', exact: true })

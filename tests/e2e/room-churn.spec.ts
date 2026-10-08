@@ -49,7 +49,10 @@ async function measureChurn(
   info: import('@playwright/test').TestInfo,
   transferChurn: boolean,
 ) {
-  test.setTimeout(120000);
+  // The file case includes 21 real code pairings, confirmation dialogs, six
+  // interrupted transfers and teardown. CI can finish its checks near two minutes.
+  test.setTimeout(transferChurn ? 180000 : 120000);
+  const setupStarted = performance.now();
 
   const cleanup: (() => Promise<void>)[] = [];
   const { base } = await startServer({ after: (fn) => cleanup.push(fn) });
@@ -206,6 +209,8 @@ async function measureChurn(
       for (const candidate of baselineCandidates)
         {expect(candidate).toEqual({ local: 'relay', remote: 'relay' });}
     }
+    const measurementStarted = performance.now();
+    const setupMs = Math.round(measurementStarted - setupStarted);
     const baselineDeliveryMs = await deliver(owner, incumbents, 'Baseline six seats');
     for (let cycle = 1; cycle <= 3; cycle++) {
       for (const phase of ['relay', 'mesh']) {
@@ -342,6 +347,8 @@ async function measureChurn(
       environment: `Chromium, seven isolated contexts, ${mobile ? 'Pixel 7 emulation (not a physical phone)' : 'desktop'}, ${turnUrl ? 'forced TURN (selected pairs verified)' : 'loopback without TURN'}, no network shaping`,
       timing:
         'Wall time includes Playwright actions, rendering and assertion polling; readyMs starts before membership action and waits for encrypted-link UI. Delivery is measured to the last recipient UI.',
+      setupMs,
+      measurementMs: Math.round(performance.now() - measurementStarted),
       baseline,
       baselineCandidates,
       finalCandidates,
