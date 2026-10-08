@@ -182,6 +182,7 @@
         <span class="relay-label">Via server</span>
       </label>
     </div>
+    <p id="sessionFeedback" class="form-feedback session-feedback" role="status"></p>
 
     <div id="joinRequests" class="join-requests" role="region" aria-label="Join requests" hidden></div>
 
@@ -243,6 +244,7 @@
       <button class="ghost dialog-close" type="button" data-close-dialog aria-label="Close" title="Close">×</button>
     </div>
     <form method="dialog">
+      <p id="settingsFeedback" class="form-feedback" role="status"></p>
       <div class="setting-row">
         <span class="setting-option"><strong>Install app</strong><span id="installTip" class="info-tip" tabindex="0" role="img" data-tip="Open Evakage from your home screen or app list, in its own window.">i</span></span>
         <button id="installBtn" type="button" hidden>Install</button>
@@ -288,6 +290,7 @@
       <button class="ghost dialog-close" type="button" data-close-dialog aria-label="Close" title="Close">×</button>
     </div>
     <form method="dialog">
+      <p id="knownDeviceFeedback" class="form-feedback" role="status"></p>
       <div id="knownDeviceList" class="device-list"></div>
     </form>
   </dialog>
@@ -419,6 +422,20 @@
     <form method="dialog">
       <p class="muted" id="pickTargetHint"></p>
       <div id="pickTargetList" class="device-list"></div>
+    </form>
+  </dialog>
+
+  <dialog id="deleteDialog" class="dialog" aria-labelledby="deleteHeading" aria-describedby="deleteDescription">
+    <div class="dialog-header">
+      <h2 id="deleteHeading">Delete conversation?</h2>
+      <button class="ghost dialog-close" type="button" data-close-dialog aria-label="Close" title="Close">×</button>
+    </div>
+    <form method="dialog">
+      <p id="deleteDescription"></p>
+      <div class="dialog-actions">
+        <button id="deleteCancel" class="ghost" type="submit" value="cancel">Cancel</button>
+        <button id="deleteConfirm" class="danger" type="submit" value="delete">Delete</button>
+      </div>
     </form>
   </dialog>
 
