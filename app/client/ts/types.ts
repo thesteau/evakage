@@ -83,6 +83,7 @@ export interface FileRecord extends FileMeta {
   corrupt?: boolean;
   verified?: boolean;
   hashing?: boolean;
+  requesting?: boolean;
   verifying?: boolean;
   transferId?: string | null;
   sourceId?: string | null;

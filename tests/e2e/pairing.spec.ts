@@ -188,6 +188,7 @@ test.describe('mandatory code pairing', () => {
     await alice.getByRole('button', { name: 'Known devices', exact: true }).click();
     const row = alice.locator('#knownDeviceList > div').filter({ hasText: deviceNames.get('Bob') });
     await row.getByRole('button', { name: 'Delete', exact: true }).click();
+    await alice.locator('#deleteConfirm').click();
     await alice
       .locator('#devicesDialog')
       .getByRole('button', { name: 'Close', exact: true })

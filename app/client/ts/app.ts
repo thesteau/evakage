@@ -134,6 +134,14 @@ type AppElements = {
   '#shareBannerText': HTMLElementTagNameMap['span'];
   '#shareSendBtn': HTMLElementTagNameMap['button'];
   '#shareDiscardBtn': HTMLElementTagNameMap['button'];
+  '#sessionFeedback': HTMLElement;
+  '#settingsFeedback': HTMLElement;
+  '#knownDeviceFeedback': HTMLElement;
+  '#deleteDialog': HTMLDialogElement;
+  '#deleteHeading': HTMLElement;
+  '#deleteDescription': HTMLElement;
+  '#deleteCancel': HTMLButtonElement;
+  '#deleteConfirm': HTMLButtonElement;
 };
 
 function $<K extends keyof AppElements>(sel: K): AppElements[K] {
@@ -226,7 +234,6 @@ const state = {
       maxAgeMs: number;
     };
   },
-  pendingCodeRequests: new Map(),
   /** Room the user asked to open, waiting on the server to confirm the seat. */
   pendingOpenRoomId: null as string | null,
   statsTimer: null as ReturnType<typeof setInterval> | null,
@@ -531,8 +538,75 @@ function detectBrowser() {
 }
 
 function wsSend(payload: object) {
-  if (signingOut) return;
-  if (state.ws?.readyState === WebSocket.OPEN) state.ws.send(JSON.stringify(payload));
+  if (signingOut || state.ws?.readyState !== WebSocket.OPEN) return false;
+  state.ws.send(JSON.stringify(payload));
+  return true;
+}
+
+// User actions wait for their acknowledgement, and stop waiting on disconnect.
+const serverActions = new Map<string, {
+  context: string;
+  requestId?: string;
+  matches: (message: any) => boolean;
+  resolve: (message: any) => void;
+  reject: (error: Error) => void;
+  timer: ReturnType<typeof setTimeout>;
+}>();
+
+function requestServerAction(
+  key: string,
+  payload: { type: string; [key: string]: unknown },
+  matches: (message: any) => boolean,
+  timeoutMs = 10000,
+) {
+  return new Promise<any>((resolve, reject) => {
+    if (signingOut || state.ws?.readyState !== WebSocket.OPEN) {
+      reject(new Error('Reconnect to the server and try again.'));
+      return;
+    }
+    const timer = setTimeout(() => {
+      serverActions.delete(key);
+      reject(new Error('The server did not answer in time. Refresh before trying again.'));
+    }, timeoutMs);
+    serverActions.set(key, { context: payload.type, requestId: payload.requestId as string | undefined, matches, resolve, reject, timer });
+    try {
+      wsSend(payload);
+    } catch (error) {
+      clearTimeout(timer);
+      serverActions.delete(key);
+      reject(error);
+    }
+  });
+}
+
+function settleServerActions(message: any) {
+  let handledError = false;
+  for (const [key, pending] of serverActions) {
+    const failed = message.type === 'error' && message.context === pending.context &&
+      (!message.requestId || message.requestId === pending.requestId);
+    if (!failed && !pending.matches(message)) continue;
+    clearTimeout(pending.timer);
+    serverActions.delete(key);
+    if (failed) {
+      handledError = true;
+      pending.reject(new Error(message.message || 'Server request failed.'));
+    } else pending.resolve(message);
+  }
+  return handledError;
+}
+
+function setButtonBusy(button: HTMLButtonElement, busy: boolean) {
+  button.disabled = busy;
+  button.setAttribute('aria-busy', String(busy));
+}
+
+function roomActionFeedback(message: string, roomId?: string, failed = false) {
+  roomFeedback.textContent = message;
+  roomFeedback.classList.toggle('danger', failed);
+  if (roomId && activeConversation()?.roomId === roomId) {
+    $('#sessionFeedback').textContent = message;
+    $('#sessionFeedback').classList.toggle('danger', failed);
+  }
 }
 
 function signal(to: string, data: object) {
@@ -573,6 +647,7 @@ function connectWebSocket() {
     } catch {
       return;
     }
+    const handledActionError = msg.type === 'paired-device' ? false : settleServerActions(msg);
 
     if (msg.type === 'registration-challenge') {
       if (typeof msg.challenge !== 'string' || msg.challenge.length > 128) return;
@@ -616,7 +691,7 @@ function connectWebSocket() {
       // Recover records for devices we have talked to, so ones that are offline
       // right now can still be listed and sent to.
       lookupDevices([...knownDevices().map(([id]) => id), ...state.deviceRecords.keys()]);
-      await handlePairingLink();
+      await handlePairingLink().catch((error) => toast(error.message));
       return;
     }
 
@@ -762,20 +837,11 @@ function connectWebSocket() {
 
     if (msg.type === 'paired-device') {
       const peer = msg.peer && (await acceptPairing(msg.peer)) ? msg.peer : null;
-      const pending = state.pendingCodeRequests.get(msg.requestId);
-      if (typeof pending === 'function') {
-        state.pendingCodeRequests.delete(msg.requestId);
-        pending(peer);
-      }
+      settleServerActions({ ...msg, peer });
       return;
     }
 
     if (msg.type === 'resolved-code') {
-      const pending = state.pendingCodeRequests.get(msg.requestId);
-      if (typeof pending === 'function') {
-        state.pendingCodeRequests.delete(msg.requestId);
-        pending(msg.peer);
-      }
       return;
     }
 
@@ -836,8 +902,7 @@ function connectWebSocket() {
         renderRooms();
       }
       if (msg.context === 'join-room') roomFeedback.textContent = msg.message;
-      if (msg.context === 'create-room') roomFeedback.textContent = '';
-      toast(msg.message || 'Server error');
+      if (!handledActionError) toast(msg.message || 'Server error');
     }
   });
 
@@ -846,6 +911,11 @@ function connectWebSocket() {
     if (signingOut || state.ws !== ws) return;
     // No confirmation can arrive on a closed socket; a new one starts clean.
     state.selfClearing = false;
+    for (const [key, pending] of serverActions) {
+      clearTimeout(pending.timer);
+      serverActions.delete(key);
+      pending.reject(new Error('Connection lost. Reconnect to the server and try again.'));
+    }
     accountGeneration++;
     accountPeerIds.clear();
     releaseIdleLinks();
@@ -915,20 +985,56 @@ function ensureConversation(convId: string, kind: 'direct' | 'room', ref: string
   return conv;
 }
 
-function forgetConversation(convId: string) {
+function forgetConversation(convId: string, clearSelf = true) {
   // Self-notes live on the server so they survive a reload; deleting the
   // conversation must remove them there as well, or they come straight back.
   if (
-    state.self &&
+    clearSelf && state.self &&
     convId === directConvId(state.self.id) &&
     state.ws?.readyState === WebSocket.OPEN
   ) {
     state.selfClearing = true;
     wsSend({ type: 'self-clear' });
   }
+  const conv = state.conversations.get(convId);
+  for (const file of conv?.files.values() || []) file.relayAbort?.abort();
+  for (const send of state.activeSends.values()) {
+    if (conv?.files.has(send.fileId)) send.cancelled = true;
+  }
   if (!state.conversations.delete(convId)) return;
   if (state.activeConvId === convId) closeSessionPanel();
   releaseIdleLinks();
+}
+
+async function deleteConversation(peerId: string, label: string) {
+  const self = peerId === state.self?.id;
+  const key = `delete:${peerId}`;
+  if (serverActions.has(key)) return;
+  if (!(await confirmRemoval(
+    self ? 'Delete your self notes?' : `Delete conversation with ${label}?`,
+    self
+      ? 'Delete your messages and files from this browser and the server. This cannot be undone. Files saved to your device remain.'
+      : 'Delete this browser’s conversation history and files. This cannot be undone. The device pairing and copies held by the other device remain.',
+  ))) return;
+  const progress = toast('Deleting conversation…', undefined, 0);
+  try {
+    if (self) {
+      state.selfClearing = true;
+      const pending = requestServerAction(key, { type: 'self-clear' }, (msg) => msg.type === 'self-cleared');
+      renderPeers();
+      renderSession();
+      await pending;
+    }
+    forgetConversation(directConvId(peerId), false);
+    toast(self ? 'Deleted your self notes.' : `Deleted conversation with ${label}.`);
+  } catch (error) {
+    state.selfClearing = false;
+    toast(`Could not delete the conversation: ${error.message}`);
+  } finally {
+    progress.remove();
+    renderPeers();
+    renderSession();
+  }
 }
 
 // Wire-level scope. "direct" is resolved relative to the sender, so each side
@@ -2253,6 +2359,8 @@ async function waitForSecure(peerId: string, timeoutMs = 12000) {
 }
 
 async function sendChat(conv: Conversation, text: string) {
+  if (isSelfConversation(conv) && state.selfClearing)
+    {throw new Error('Wait for your self notes to finish deleting before sending.');}
   if (isSelfConversation(conv) && state.ws?.readyState !== WebSocket.OPEN)
     {throw new Error('Reconnect to the server before saving self notes.');}
   const self = state.self;
@@ -2441,7 +2549,27 @@ function unreachableError(conv: Conversation) {
 // reach, either because ICE never connected or because the link died part-way.
 // A recipient therefore gets each file exactly once, by one path or the other.
 
+const preparingFiles = new Map<symbol, { convId: string; count: number }>();
+
 async function sendFiles(conv: Conversation, fileList: FileList | File[]) {
+  if (!fileList.length) return;
+  const key = Symbol();
+  preparingFiles.set(key, { convId: conv.id, count: fileList.length });
+  renderSession();
+  const ready = () => {
+    preparingFiles.delete(key);
+    renderSession();
+  };
+  try {
+    await sendPreparedFiles(conv, fileList, ready);
+  } finally {
+    ready();
+  }
+}
+
+async function sendPreparedFiles(conv: Conversation, fileList: FileList | File[], ready: () => void) {
+  if (isSelfConversation(conv) && state.selfClearing)
+    {throw new Error('Wait for your self notes to finish deleting before sending.');}
   if (isSelfConversation(conv) && state.ws?.readyState !== WebSocket.OPEN)
     {throw new Error('Reconnect to the server before saving files to yourself.');}
   const self = state.self;
@@ -2472,6 +2600,8 @@ async function sendFiles(conv: Conversation, fileList: FileList | File[]) {
     links = recipients.map((id) => state.links.get(id)).filter(isSecure);
   }
   if (!links.length && !canRelay) throw new Error('Secure peer connection timed out');
+  if (state.conversations.get(conv.id) !== conv) throw new Error('The conversation was deleted before the files could be sent.');
+  ready();
 
   for (const file of fileList) {
     if (file.size > state.config.maxFileBytes) {
@@ -3319,31 +3449,39 @@ async function finalizeIncomingFile(
 }
 
 async function requestFile(conv: Conversation, file: FileRecord) {
-  const holder = mergeHolders(file.holders)
-    .filter((id) => id !== state.self?.id && state.peers.has(id))
-    .sort((a, b) => Number(isSecure(state.links.get(b))) - Number(isSecure(state.links.get(a))))[0];
-  if (!holder) throw new Error('No online device is still holding that file.');
-  const link = await waitForSecure(holder);
-  const transferId = crypto.randomUUID();
-  file.direction = 'received';
-  file.complete = false;
-  file.corrupt = false;
-  file.transferId = transferId;
-  file.sourceId = holder;
-  // Tell the sender what we already have so a resume skips those chunks.
-  const have = Array.isArray(file.chunks) ? heldRanges(file.chunks) : [];
-  file.progress =
-    Array.isArray(file.chunks) && file.chunks.length
-      ? countReceived(file.chunks) / file.chunks.length
-      : 0;
-  await sendControl(link, {
-    conv: convScope(conv),
-    type: 'file-request',
-    id: file.id,
-    transferId,
-    have,
-  });
+  if (file.requesting) return;
+  file.requesting = true;
   renderSession();
+  try {
+    const holder = mergeHolders(file.holders)
+      .filter((id) => id !== state.self?.id && state.peers.has(id))
+      .sort((a, b) => Number(isSecure(state.links.get(b))) - Number(isSecure(state.links.get(a))))[0];
+    if (!holder) throw new Error('No online device is still holding that file.');
+    const link = await waitForSecure(holder);
+    if (state.conversations.get(conv.id) !== conv) throw new Error('The conversation was deleted before the file could be requested.');
+    const transferId = crypto.randomUUID();
+    file.direction = 'received';
+    file.complete = false;
+    file.corrupt = false;
+    file.transferId = transferId;
+    file.sourceId = holder;
+    // Tell the sender what we already have so a resume skips those chunks.
+    const have = Array.isArray(file.chunks) ? heldRanges(file.chunks) : [];
+    file.progress =
+      Array.isArray(file.chunks) && file.chunks.length
+        ? countReceived(file.chunks) / file.chunks.length
+        : 0;
+    await sendControl(link, {
+      conv: convScope(conv),
+      type: 'file-request',
+      id: file.id,
+      transferId,
+      have,
+    });
+  } finally {
+    file.requesting = false;
+    renderSession();
+  }
 }
 
 /* ---------- accepting and declining incoming files ---------- */
@@ -3443,6 +3581,8 @@ function openConversation(convId: string, kind: 'direct' | 'room', ref: string, 
   const conv = ensureConversation(convId, kind, ref);
   const wasClosed = state.activeConvId !== convId;
   if (wasClosed) {
+    $('#sessionFeedback').textContent = '';
+    delete $('#sessionFeedback').dataset.preparing;
     // Store the key as well as the element: the row that opened the panel is
     // very likely to be re-rendered before the panel closes again.
     state.panelReturnFocus = document.activeElement;
@@ -3496,11 +3636,37 @@ function activeConversation() {
   return state.activeConvId ? state.conversations.get(state.activeConvId) : null;
 }
 
-function leaveRoom(roomId: string) {
-  wsSend({ type: 'leave-room', roomId });
-  state.joinedRoomIds.delete(roomId);
-  forgetConversation(roomConvId(roomId));
+async function leaveRoom(roomId: string) {
+  const key = `leave:${roomId}`;
+  if (serverActions.has(key)) return;
+  const room = state.rooms.get(roomId);
+  const waiting = room?.awaiting;
+  roomActionFeedback(waiting ? 'Cancelling join request…' : 'Leaving room…', roomId);
+  const pending = requestServerAction(key, { type: 'leave-room', roomId },
+    (msg) => msg.type === 'room-left' && msg.roomId === roomId);
   renderRooms();
+  renderSession();
+  try {
+    await pending;
+    const message = waiting ? `Cancelled request to join ${room?.name || 'the room'}.`
+      : `Left ${room?.name || 'the room'} and deleted its local history.`;
+    roomActionFeedback(message);
+    toast(message);
+  } catch (error) {
+    roomActionFeedback(error.message, roomId, true);
+    toast(error.message);
+  } finally {
+    renderRooms();
+    renderSession();
+  }
+}
+
+async function deleteLocalRoom(room: Room) {
+  if (!room.awaiting && !(await confirmRemoval(
+    `Delete local room ${room.name}?`,
+    'Leave this room and delete its history and files from this browser. This cannot be undone. Other members keep their copies.',
+  ))) return;
+  await leaveRoom(room.id);
 }
 
 /* ---------- rendering ---------- */
@@ -3817,6 +3983,7 @@ function deviceMenuItems(peerId: string, label: string) {
         hideDevice(peerId, label, true);
         renderKnownDevices();
         renderPeers();
+        deviceFeedback(`Hidden ${label}. Show it again from Known devices.`);
       },
     });
     if (record) {
@@ -3828,6 +3995,7 @@ function deviceMenuItems(peerId: string, label: string) {
           renderKnownDevices();
           renderPeers();
           renderSession();
+          deviceFeedback(`${record.blocked ? 'Unblocked' : 'Blocked'} ${label}.`);
         },
       });
     }
@@ -3915,7 +4083,9 @@ function rowActions(peerId: string, label: string, link: Link | null | undefined
   exit.title =
     'Delete local conversation history and disconnect unused links. Stored pairing remains.';
   exit.dataset.focusKey = `peer:${peerId}:exit`;
-  exit.addEventListener('click', () => forgetConversation(directConvId(peerId)));
+  setButtonBusy(exit, serverActions.has(`delete:${peerId}`));
+  exit.setAttribute('aria-haspopup', 'dialog');
+  exit.addEventListener('click', () => deleteConversation(peerId, label));
   actions.append(exit);
   return actions;
 }
@@ -3984,7 +4154,9 @@ function renderRooms() {
 }
 
 /** The account-wide default for rooms this device creates. */
+let sessionRoomAccess: RoomAccess | undefined;
 function newRoomAccess(): RoomAccess {
+  if (sessionRoomAccess) return sessionRoomAccess;
   try {
     return localStorage.getItem('evakage-room-access') === 'protected' ? 'protected' : 'private';
   } catch {
@@ -4002,8 +4174,28 @@ function roomAccessItems(room: Room): MenuItem[] {
   return ROOM_ACCESS.map(({ value, text }) => ({
     text,
     checked: (room.access || 'private') === value,
-    run: () => wsSend({ type: 'room-access', roomId: room.id, access: value }),
+    run: () => changeRoomAccess(room, value),
   }));
+}
+
+async function changeRoomAccess(room: Room, access: RoomAccess) {
+  const key = `access:${room.id}`;
+  if (serverActions.has(key)) return;
+  roomActionFeedback('Saving room access…', room.id);
+  const pending = requestServerAction(key, { type: 'room-access', roomId: room.id, access },
+    (msg) => msg.type === 'rooms' && msg.rooms.some((r: Room) => r.id === room.id && r.access === access));
+  renderRooms();
+  try {
+    await pending;
+    const message = `${room.name} is now ${access}.`;
+    roomActionFeedback(message, room.id);
+    toast(message);
+  } catch (error) {
+    roomActionFeedback(error.message, room.id, true);
+    toast(error.message);
+  } finally {
+    renderRooms();
+  }
 }
 
 const announcedRequests = new Set<string>();
@@ -4026,8 +4218,31 @@ function announceJoinRequests() {
   for (const key of announcedRequests) if (!current.has(key)) announcedRequests.delete(key);
 }
 
-function answerJoinRequest(roomId: string, deviceId: string, approve: boolean) {
-  wsSend({ type: 'room-approve', roomId, deviceId, approve });
+async function answerJoinRequest(roomId: string, deviceId: string, approve: boolean) {
+  const key = `approve:${roomId}:${deviceId}`;
+  if (serverActions.has(key)) return;
+  const name = displayName(deviceId);
+  roomActionFeedback(`${approve ? 'Approving' : 'Declining'} ${name}…`, roomId);
+  const pending = requestServerAction(key, { type: 'room-approve', roomId, deviceId, approve },
+    (msg) => msg.type === 'rooms' && msg.rooms.some((r: Room) =>
+      r.id === roomId && !r.requests?.some((device) => device.id === deviceId)));
+  renderSession();
+  try {
+    const msg = await pending;
+    const room = msg.rooms.find((r: Room) => r.id === roomId) as Room;
+    const admitted = [...room.members, ...(room.away || [])].some((device) => device.id === deviceId);
+    if (approve && !admitted)
+      {throw new Error(`Could not admit ${name}. The room may be full or the device disconnected.`);}
+    if (!approve && admitted) throw new Error(`${name} already joined the room; the request could not be declined.`);
+    const message = `${approve ? 'Approved' : 'Declined'} ${name}’s join request.`;
+    roomActionFeedback(message, roomId);
+    toast(message);
+  } catch (error) {
+    roomActionFeedback(error.message, roomId, true);
+    toast(error.message);
+  } finally {
+    renderSession();
+  }
 }
 
 /** Requests to join appear at the top of the creator's room chat. */
@@ -4046,12 +4261,15 @@ function renderJoinRequests(conv: Conversation) {
     approve.type = 'button';
     approve.textContent = 'Approve';
     approve.setAttribute('aria-label', `Approve ${device.name}`);
+    const busy = serverActions.has(`approve:${room!.id}:${device.id}`);
+    setButtonBusy(approve, busy);
     approve.addEventListener('click', () => answerJoinRequest(room!.id, device.id, true));
     const decline = document.createElement('button');
     decline.type = 'button';
     decline.className = 'ghost';
     decline.textContent = 'Decline';
     decline.setAttribute('aria-label', `Decline ${device.name}`);
+    setButtonBusy(decline, busy);
     decline.addEventListener('click', () => answerJoinRequest(room!.id, device.id, false));
     row.append(text, approve, decline);
     box.append(row);
@@ -4146,9 +4364,12 @@ function renderRoomsNow() {
       // look at it. The panel opens when the server confirms the seat.
       open.disabled = seats >= room.maxMembers;
       open.addEventListener('click', () => {
-        state.pendingOpenRoomId = room.id;
-        wsSend({ type: 'join-room', roomId: room.id });
+        joinRoom({ roomId: room.id }, room.name);
       });
+    }
+    if (state.pendingOpenRoomId === room.id && serverActions.has('join-room')) {
+      open.textContent = 'Joining…';
+      setButtonBusy(open, true);
     }
     actions.append(open);
 
@@ -4157,6 +4378,7 @@ function renderRoomsNow() {
       const settings = iconButton('gear', `Settings for room ${room.name}`);
       settings.setAttribute('aria-haspopup', 'menu');
       settings.dataset.focusKey = `room:${room.id}:settings`;
+      setButtonBusy(settings, serverActions.has(`access:${room.id}`));
       settings.addEventListener('click', () =>
         openRowMenu(settings, `Who can join ${room.name}`, roomAccessItems(room)),
       );
@@ -4168,7 +4390,9 @@ function renderRoomsNow() {
         room.awaiting ? `Cancel request to join ${room.name}` : `Delete local room ${room.name}`,
       );
       exit.dataset.focusKey = `room:${room.id}:exit`;
-      exit.addEventListener('click', () => leaveRoom(room.id));
+      setButtonBusy(exit, serverActions.has(`leave:${room.id}`));
+      exit.setAttribute('aria-haspopup', 'dialog');
+      exit.addEventListener('click', () => deleteLocalRoom(room));
       actions.append(exit);
     }
     actionsTd.append(actions);
@@ -4256,6 +4480,21 @@ function renderSessionNow() {
       ? 'temporary room · end-to-end encrypted'
       : 'temporary session · end-to-end encrypted';
   leaveRoomBtn.classList.toggle('hidden', conv.kind !== 'room');
+  setButtonBusy(leaveRoomBtn, conv.kind === 'room' && serverActions.has(`leave:${conv.roomId}`));
+  const preparations = [...preparingFiles.values()].filter((pending) => pending.convId === conv.id);
+  setButtonBusy(pickFileBtn, preparations.length > 0 || (isSelfConversation(conv) && state.selfClearing));
+  const sendButton = messageForm.querySelector<HTMLButtonElement>('button[type="submit"]')!;
+  setButtonBusy(sendButton, isSelfConversation(conv) && state.selfClearing);
+  const feedback = $('#sessionFeedback');
+  if (preparations.length) {
+    const count = preparations.reduce((sum, pending) => sum + pending.count, 0);
+    feedback.textContent = `Preparing ${count === 1 ? 'file' : `${count} files`} · connecting to recipients…`;
+    feedback.dataset.preparing = 'true';
+    feedback.classList.remove('danger');
+  } else if (feedback.dataset.preparing) {
+    feedback.textContent = '';
+    delete feedback.dataset.preparing;
+  }
   // Self-notes always go through the server, so the toggle means nothing there.
   $('#relayToggle').classList.toggle(
     'hidden',
@@ -4540,7 +4779,7 @@ function renderFile(conv: Conversation, file: FileRecord) {
   const relayBusy = ['encrypting', 'uploading', 'downloading', 'saving'].includes(
     file.relayStage || '',
   );
-  const inFlight = Boolean(file.transferId) || file.hashing || file.verifying || relayBusy;
+  const inFlight = Boolean(file.transferId) || file.requesting || file.hashing || file.verifying || relayBusy;
 
   // An offer waiting on the user comes first: nothing has been received yet.
   if (file.direction === 'received' && file.offer === 'pending') {
@@ -4561,22 +4800,24 @@ function renderFile(conv: Conversation, file: FileRecord) {
   } else if (inFlight) {
     // An in-flight transfer takes precedence over the Save button, so a sender
     // can cancel its own upload while the blob it is reading is already local.
-    btn.textContent = file.hashing
-      ? 'Hashing…'
-      : file.verifying
-        ? 'Verifying…'
-        : file.relayStage === 'encrypting'
-          ? 'Encrypting…'
-          : file.relayStage === 'uploading'
-            ? 'Uploading…'
-            : file.relayStage === 'downloading'
-              ? 'Downloading…'
-              : file.relayStage === 'saving'
-                ? 'Saving…'
-                : file.direction === 'sent'
-                  ? 'Sending…'
-                  : 'Receiving…';
-    btn.disabled = true;
+    btn.textContent = file.requesting
+      ? 'Connecting…'
+      : file.hashing
+        ? 'Hashing…'
+        : file.verifying
+          ? 'Verifying…'
+          : file.relayStage === 'encrypting'
+            ? 'Encrypting…'
+            : file.relayStage === 'uploading'
+              ? 'Uploading…'
+              : file.relayStage === 'downloading'
+                ? 'Downloading…'
+                : file.relayStage === 'saving'
+                  ? 'Saving…'
+                  : file.direction === 'sent'
+                    ? 'Sending…'
+                    : 'Receiving…';
+    setButtonBusy(btn, true);
     if (file.transferId) {
       const cancel = document.createElement('button');
       cancel.type = 'button';
@@ -4637,7 +4878,7 @@ function formatBytes(value: number | undefined) {
   return `${size >= 10 ? size.toFixed(1) : size.toFixed(2)} ${units[i]}`;
 }
 
-function toast(message: string, action?: { label: string; run: () => void }) {
+function toast(message: string, action?: { label: string; run: () => void }, durationMs = action ? 9000 : 3500) {
   const el = document.createElement('div');
   el.className = 'toast';
   const text = document.createElement('span');
@@ -4656,7 +4897,8 @@ function toast(message: string, action?: { label: string; run: () => void }) {
   }
   toastRegion.append(el);
   // Longer when there is something to click, so it can actually be reached.
-  setTimeout(() => el.remove(), action ? 9000 : 3500);
+  if (durationMs > 0) setTimeout(() => el.remove(), durationMs);
+  return el;
 }
 
 // srflx/prflx both mean a NAT-reflexive address; relay means TURN is carrying
@@ -4734,22 +4976,15 @@ async function refreshStats() {
     {renderSession();}
 }
 
-function resolveCode(
+async function resolveCode(
   code: string,
   targetId: string | undefined = undefined,
 ): Promise<Device | null> {
   const requestId = crypto.randomUUID();
-  return new Promise((resolve) => {
-    const timer = setTimeout(() => {
-      state.pendingCodeRequests.delete(requestId);
-      resolve(null);
-    }, 4000);
-    state.pendingCodeRequests.set(requestId, (peer: Device | null) => {
-      clearTimeout(timer);
-      resolve(peer);
-    });
-    wsSend({ type: 'pair-device', requestId, code, targetId });
-  });
+  const msg = await requestServerAction(`pair:${requestId}`,
+    { type: 'pair-device', requestId, code, targetId },
+    (reply) => reply.type === 'paired-device' && reply.requestId === requestId, 4000);
+  return msg.peer || null;
 }
 
 /* ---------- events ---------- */
@@ -4757,7 +4992,10 @@ function resolveCode(
 $('#codeForm').addEventListener('submit', async (event: Event) => {
   event.preventDefault();
   const input = $('#codeInput').value.trim();
-  if (!input) return;
+  if (!input) {
+    codeFeedback.textContent = 'Enter the other device’s connection code or invitation link.';
+    return;
+  }
   let code = input.toUpperCase();
   let targetId;
   if (/^https?:/i.test(input)) {
@@ -4772,34 +5010,86 @@ $('#codeForm').addEventListener('submit', async (event: Event) => {
     }
   }
   codeFeedback.textContent = 'Looking up device…';
-  const peer = await resolveCode(code, targetId);
-  if (!peer || peer.id === state.self?.id) {
-    codeFeedback.textContent =
-      'That pairing code is invalid, expired, or belongs to an unavailable device.';
-    return;
+  const button = $('#codeForm').querySelector<HTMLButtonElement>('button[type="submit"]')!;
+  if (button.disabled) return;
+  setButtonBusy(button, true);
+  try {
+    const peer = await resolveCode(code, targetId);
+    if (!peer || peer.id === state.self?.id) {
+      codeFeedback.textContent =
+        'That pairing code is invalid, expired, or belongs to an unavailable device.';
+      return;
+    }
+    state.peers.set(peer.id, peer);
+    codeFeedback.textContent = `Paired with ${peer.name}`;
+    renderPeers();
+    $('#addDeviceDialog').close();
+    openSession(peer.id);
+    toast(`Paired with ${peer.name}.`);
+  } catch (error) {
+    codeFeedback.textContent = error.message;
+  } finally {
+    setButtonBusy(button, false);
   }
-  state.peers.set(peer.id, peer);
-  codeFeedback.textContent = `Paired with ${peer.name}`;
-  renderPeers();
-  $('#addDeviceDialog').close();
-  openSession(peer.id);
 });
 
-$('#createRoomForm').addEventListener('submit', (event: Event) => {
+$('#createRoomForm').addEventListener('submit', async (event: Event) => {
   event.preventDefault();
+  if (serverActions.has('create-room')) return;
   const input = $('#roomNameInput');
   const name = input.value.trim() || `${state.self?.name || 'New'} room`;
-  roomFeedback.textContent = '';
-  wsSend({ type: 'create-room', name, access: newRoomAccess() });
+  const button = $('#createRoomForm').querySelector<HTMLButtonElement>('button[type="submit"]')!;
+  roomActionFeedback('Creating room…');
+  setButtonBusy(button, true);
+  button.textContent = 'Creating…';
+  try {
+    const msg = await requestServerAction('create-room', { type: 'create-room', name, access: newRoomAccess() },
+      (reply) => reply.type === 'room-joined' && reply.created);
+    roomActionFeedback(`Created ${msg.room.name}.`);
+  } catch (error) {
+    roomActionFeedback(error.message, undefined, true);
+    toast(error.message);
+  } finally {
+    setButtonBusy(button, false);
+    button.textContent = 'Create';
+  }
 });
 
 /** One path for a typed code, a scanned room QR and an opened room link. */
 function joinRoomByCode(code: string) {
   code = code.trim().toUpperCase();
-  if (!code) return;
+  if (!code) {
+    roomActionFeedback('Enter a room code to join.', undefined, true);
+    return;
+  }
+  if (serverActions.has('join-room')) return;
   state.pendingOpenRoomCode = code;
-  roomFeedback.textContent = 'Joining room…';
-  wsSend({ type: 'join-room', code });
+  joinRoom({ code });
+}
+
+async function joinRoom(target: { code?: string; roomId?: string }, name?: string) {
+  if (serverActions.has('join-room')) return;
+  if (target.roomId) state.pendingOpenRoomId = target.roomId;
+  roomActionFeedback(name ? `Joining ${name}…` : 'Joining room…');
+  const button = $('#joinRoomForm').querySelector<HTMLButtonElement>('button[type="submit"]')!;
+  setButtonBusy(button, true);
+  const pending = requestServerAction('join-room', { type: 'join-room', ...target },
+    (msg) => (msg.type === 'room-pending' && (!target.roomId || msg.roomId === target.roomId)) ||
+      (msg.type === 'room-joined' && !msg.created &&
+        (target.roomId ? msg.room.id === target.roomId : msg.room.code === target.code)));
+  renderRooms();
+  try {
+    const msg = await pending;
+    if (msg.type === 'room-joined') toast(`Joined ${msg.room.name}.`);
+  } catch (error) {
+    state.pendingOpenRoomId = null;
+    state.pendingOpenRoomCode = '';
+    roomActionFeedback(error.message, undefined, true);
+    toast(error.message);
+  } finally {
+    setButtonBusy(button, false);
+    renderRooms();
+  }
 }
 
 $('#joinRoomForm').addEventListener('submit', (event: Event) => {
@@ -4874,40 +5164,57 @@ $('#copyCodeBtn').addEventListener('click', async () => {
   if (!conv) return;
   const code = conv.kind === 'room' ? state.rooms.get(conv.roomId)?.code : state.self?.pairingCode;
   if (!code) return;
-  await navigator.clipboard.writeText(code).catch(() => {});
-  toast(conv.kind === 'room' ? 'Room code copied' : 'Your connection code copied');
+  await copyCode(code, conv.kind === 'room' ? 'Room code copied' : 'Your connection code copied');
 });
 
 selfCode.addEventListener('click', async () => {
-  if (!state.self?.code) return;
-  await navigator.clipboard.writeText(state.self.pairingCode || '').catch(() => {});
-  toast('Your connection code copied');
+  if (!state.self?.pairingCode) {
+    toast('Your connection code is not ready. Reconnect and try again.');
+    return;
+  }
+  await copyCode(state.self.pairingCode, 'Your connection code copied');
 });
+
+async function copyCode(code: string, success: string) {
+  try {
+    await navigator.clipboard.writeText(code);
+    toast(success);
+  } catch {
+    toast('Could not copy the code. Select it and use your device’s Copy command.');
+  }
+}
 
 function setupSettings() {
   const discoverable = document.querySelector('#discoverableInput');
   if (discoverable instanceof HTMLInputElement) {
     discoverable.checked = localStorage.getItem('evakage-discoverable') === '1';
-    discoverable.addEventListener('change', () => {
-      localStorage.setItem('evakage-discoverable', discoverable.checked ? '1' : '0');
-      wsSend({ type: 'set-discoverable', enabled: discoverable.checked });
+    discoverable.addEventListener('change', async () => {
+      const enabled = discoverable.checked;
+      discoverable.disabled = true;
+      preferenceSaveFeedback('Updating device advertising…');
+      try {
+        await requestServerAction('advertise', { type: 'set-discoverable', enabled },
+          (msg) => msg.type === 'discoverable-updated' && msg.enabled === enabled);
+        if (savePreference('evakage-discoverable', enabled ? '1' : '0', false))
+          {preferenceSaveFeedback(enabled ? 'This device is now advertised.' : 'This device is no longer advertised.');}
+      } catch (error) {
+        discoverable.checked = !enabled;
+        preferenceSaveFeedback(error.message, true);
+      } finally {
+        discoverable.disabled = false;
+      }
     });
   }
   const verifiedOnlyInput = $('#verifiedOnlyInput');
   verifiedOnlyInput.addEventListener('change', () => {
     state.verifiedOnly = verifiedOnlyInput.checked;
-    try {
-      localStorage.setItem('evakage-verified-only', state.verifiedOnly ? '1' : '0');
-    } catch {}
+    savePreference('evakage-verified-only', state.verifiedOnly ? '1' : '0');
     renderSession();
-    accountUI.push();
   });
   const roomApproval = $('#roomApprovalInput');
   roomApproval.addEventListener('change', () => {
-    try {
-      localStorage.setItem('evakage-room-access', roomApproval.checked ? 'private' : 'protected');
-    } catch {}
-    accountUI.push();
+    sessionRoomAccess = roomApproval.checked ? 'private' : 'protected';
+    if (savePreference('evakage-room-access', sessionRoomAccess)) sessionRoomAccess = undefined;
   });
   const dialog = $('#settingsDialog');
   const radios = incomingRadios();
@@ -4915,16 +5222,34 @@ function setupSettings() {
     radio.addEventListener('change', () => {
       if (!radio.checked) return;
       state.incomingPolicy = radio.value;
-      try {
-        localStorage.setItem('evakage-incoming', radio.value);
-      } catch {}
-      accountUI.push();
+      savePreference('evakage-incoming', radio.value);
     });
   }
   $('#settingsBtn').addEventListener('click', () => {
     openDialog(dialog, radios.find((radio) => radio.checked) || radios[0]);
     accountUI.pull();
   });
+}
+
+function preferenceSaveFeedback(message: string, failed = false) {
+  $('#settingsFeedback').textContent = message;
+  $('#settingsFeedback').classList.toggle('danger', failed);
+  if (activeConversation() && !$('#settingsDialog').open) {
+    $('#sessionFeedback').textContent = message;
+    $('#sessionFeedback').classList.toggle('danger', failed);
+  }
+  if (failed && !$('#settingsDialog').open && !document.querySelector('#accountDialog[open]')) toast(message);
+}
+
+function savePreference(key: string, value: string, sync = true) {
+  try {
+    localStorage.setItem(key, value);
+  } catch {
+    preferenceSaveFeedback('This browser could not save the setting. It only applies for this session.', true);
+    return false;
+  }
+  if (sync) accountUI.push();
+  return true;
 }
 
 function incomingRadios() {
@@ -4935,6 +5260,7 @@ function incomingRadios() {
 
 /** (Re)applies the account-synced settings from localStorage. */
 function loadSyncedPreferences() {
+  sessionRoomAccess = undefined;
   const stored = (key: string) => {
     try {
       return localStorage.getItem(key);
@@ -4971,10 +5297,7 @@ function setupRelayToggle() {
   toggle.classList.toggle('hidden', !relayEnabled());
   input.addEventListener('change', () => {
     state.forceRelay = input.checked;
-    try {
-      localStorage.setItem('evakage-force-relay', input.checked ? '1' : '0');
-    } catch {}
-    accountUI.push();
+    savePreference('evakage-force-relay', input.checked ? '1' : '0');
   });
 }
 
@@ -5035,9 +5358,28 @@ document.addEventListener('keydown', (event) => {
   }
 });
 
-$('#refreshBtn').addEventListener('click', () => {
-  wsSend({ type: 'presence-request' });
-  wsSend({ type: 'rooms-request' });
+$('#refreshBtn').addEventListener('click', async () => {
+  if (serverActions.has('refresh')) return;
+  const button = $('#refreshBtn');
+  setButtonBusy(button, true);
+  button.setAttribute('aria-label', 'Refreshing devices and rooms');
+  const progress = toast('Refreshing devices and rooms…', undefined, 0);
+  const received = new Set<string>();
+  try {
+    const pending = requestServerAction('refresh', { type: 'presence-request' }, (msg) => {
+      if (msg.type === 'presence' || msg.type === 'rooms') received.add(msg.type);
+      return received.size === 2;
+    });
+    wsSend({ type: 'rooms-request' });
+    await pending;
+    toast('Devices and rooms refreshed.');
+  } catch (error) {
+    toast(`Could not refresh: ${error.message}`);
+  } finally {
+    progress.remove();
+    setButtonBusy(button, false);
+    button.setAttribute('aria-label', 'Refresh');
+  }
 });
 
 window.addEventListener('beforeunload', () => {
@@ -5063,17 +5405,15 @@ const THEME_LABEL: Record<string, string> = {
   dark: 'Theme: dark',
 };
 
-function applyTheme(theme: string) {
+function applyTheme(theme: string, persist = false) {
   const chosen = THEMES.includes(theme) ? theme : 'system';
   if (chosen === 'system') document.documentElement.removeAttribute('data-theme');
   else document.documentElement.setAttribute('data-theme', chosen);
   themeIcon.textContent = THEME_GLYPH[chosen];
   themeBtn.setAttribute('aria-label', THEME_LABEL[chosen]);
   themeBtn.title = `${THEME_LABEL[chosen]} (click to change)`;
-  try {
-    localStorage.setItem('evakage-theme', chosen);
-  } catch {}
   state.theme = chosen;
+  return !persist || savePreference('evakage-theme', chosen);
 }
 
 function setupTheme() {
@@ -5083,8 +5423,8 @@ function setupTheme() {
   } catch {}
   applyTheme(stored);
   themeBtn.addEventListener('click', () => {
-    applyTheme(THEMES[(THEMES.indexOf(state.theme) + 1) % THEMES.length]);
-    accountUI.push();
+    if (applyTheme(THEMES[(THEMES.indexOf(state.theme) + 1) % THEMES.length], true))
+      {toast(THEME_LABEL[state.theme]);}
   });
 }
 
@@ -5111,6 +5451,18 @@ function openDialog(dialog: HTMLDialogElement, focusTarget?: Element | null) {
   );
   dialog.showModal();
   if (focusTarget instanceof HTMLElement) focusTarget.focus();
+}
+
+function confirmRemoval(title: string, description: string): Promise<boolean> {
+  const dialog = $('#deleteDialog');
+  if (dialog.open) return Promise.resolve(false);
+  $('#deleteHeading').textContent = title;
+  $('#deleteDescription').textContent = description;
+  dialog.returnValue = 'cancel';
+  return new Promise((resolve) => {
+    dialog.addEventListener('close', () => resolve(dialog.returnValue === 'delete'), { once: true });
+    openDialog(dialog, $('#deleteCancel'));
+  });
 }
 
 async function acceptPairing(peer: Device) {
@@ -5148,14 +5500,25 @@ function openCodePairing(id: string) {
 }
 $('#connectForm').addEventListener('submit', async (event) => {
   event.preventDefault();
-  const peer = await resolveCode($('#connectCode').value.trim().toUpperCase(), connectTargetId);
-  if (!peer) {
-    $('#connectFeedback').textContent =
-      'Code invalid or expired. Ask the owner for their current Connection code.';
-    return;
+  const button = $('#connectForm').querySelector<HTMLButtonElement>('button[type="submit"]')!;
+  if (button.disabled) return;
+  setButtonBusy(button, true);
+  $('#connectFeedback').textContent = 'Looking up device…';
+  try {
+    const peer = await resolveCode($('#connectCode').value.trim().toUpperCase(), connectTargetId);
+    if (!peer) {
+      $('#connectFeedback').textContent =
+        'Code invalid or expired. Ask the owner for their current Connection code.';
+      return;
+    }
+    $('#connectDialog').close();
+    openSession(peer.id);
+    toast(`Paired with ${peer.name}.`);
+  } catch (error) {
+    $('#connectFeedback').textContent = error.message;
+  } finally {
+    setButtonBusy(button, false);
   }
-  $('#connectDialog').close();
-  openSession(peer.id);
 });
 
 window.addEventListener('hashchange', () => {
@@ -5178,9 +5541,12 @@ async function handlePairingLink() {
   if (peer) {
     codeFeedback.textContent = `Paired with ${peer.name}`;
     openSession(peer.id);
+    toast(`Paired with ${peer.name}.`);
   } else
-    {codeFeedback.textContent =
-      'That QR pairing code is invalid or expired. Ask for a current code.';}
+    {
+      codeFeedback.textContent = 'That QR pairing code is invalid or expired. Ask for a current code.';
+      toast(codeFeedback.textContent);
+    }
 }
 
 let pairingDevice = '';
@@ -5206,10 +5572,16 @@ $('#pairingForm').addEventListener('submit', async (event) => {
   renderKnownDevices();
   renderPeers();
   renderSession();
+  deviceFeedback(`Verified ${displayName(pairingDevice)}.`);
   wsSend({ type: 'blobs-request' });
   for (const link of state.links.values())
     {if (deviceAllowed(link.peerId) && isSecure(link)) syncEverythingWith(link);}
 });
+
+function deviceFeedback(message: string) {
+  $('#knownDeviceFeedback').textContent = message;
+  if (!devicesDialog.open) toast(message);
+}
 
 function renderKnownDevices() {
   knownDeviceList.textContent = '';
@@ -5250,7 +5622,9 @@ function renderKnownDevices() {
     forget.disabled = !!record.blocked;
     if (record.blocked)
       {forget.title = 'Unblock this device before deleting its stored relationship.';}
-    forget.addEventListener('click', () => {
+    forget.addEventListener('click', async () => {
+      if (!(await confirmRemoval(`Delete pairing with ${record.name || 'this device'}?`,
+        'Delete the stored pairing and verification record. Pair by code again to exchange with this device.'))) return;
       forgetDevice(fingerprint);
       wsSend({ type: 'unpair-device', deviceId: fingerprint });
       releaseIdleLinks();
@@ -5259,7 +5633,7 @@ function renderKnownDevices() {
       renderKnownDevices();
       renderPeers();
       renderSession();
-      toast(
+      deviceFeedback(
         `Deleted the pairing with ${record.name || 'device'}. Pair by code again to exchange with it.`,
       );
     });
@@ -5281,6 +5655,7 @@ function renderKnownDevices() {
       renderKnownDevices();
       renderPeers();
       renderSession();
+      deviceFeedback(`${record.blocked ? 'Unblocked' : 'Blocked'} ${record.name || 'device'}.`);
     });
     const hide = document.createElement('button');
     hide.type = 'button';
@@ -5290,6 +5665,7 @@ function renderKnownDevices() {
       hideDevice(fingerprint, record.name, !record.hidden);
       renderKnownDevices();
       renderPeers();
+      deviceFeedback(`${record.hidden ? 'Showing' : 'Hidden'} ${record.name || 'device'}.`);
     });
     row.append(main, verify);
     if (!accountPeerIds.has(fingerprint)) row.append(hide, block);
@@ -5853,12 +6229,16 @@ boot();
 
 setupScanner({
   async pair(code, id) {
-    const peer = await resolveCode(code, id);
-    if (peer) {
-      $('#addDeviceDialog').close();
-      toast(`Paired with ${peer.name}`);
-      openSession(peer.id);
-    } else toast('Pairing code invalid, expired, or device unavailable.');
+    try {
+      const peer = await resolveCode(code, id);
+      if (peer) {
+        $('#addDeviceDialog').close();
+        toast(`Paired with ${peer.name}`);
+        openSession(peer.id);
+      } else toast('Pairing code invalid, expired, or device unavailable.');
+    } catch (error) {
+      toast(error.message || 'Pairing failed.');
+    }
   },
   joinRoom: joinRoomByCode,
 });
@@ -5896,4 +6276,5 @@ const accountUI = setupAccounts({
   },
   onSignOut: clearSignedOutDevice,
   onPreferences: loadSyncedPreferences,
+  onSaveStatus: preferenceSaveFeedback,
 });
