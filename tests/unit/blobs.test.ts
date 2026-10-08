@@ -65,7 +65,7 @@ async function offer(
 }
 
 const upload = (base: string, blobId: string, token: string, body: BodyInit) =>
-  fetch(`${base}/blob/${blobId}?token=${encodeURIComponent(token)}`, { method: 'PUT', body });
+  fetch(`${base}/blob/${encodeURIComponent(blobId)}?token=${encodeURIComponent(token)}`, { method: 'PUT', body });
 
 const settle = (ms = 200) => new Promise((r) => setTimeout(r, ms));
 
@@ -146,7 +146,7 @@ test('relay access expires at the deadline before the physical sweep', async (t)
   assert.ok((await app.blobStore.claim(reply.blobId, 'device_exp_recver')).error);
   assert.ok((await app.blobStore.claim(message.reply.blobId, 'device_exp_recver')).error);
   assert.equal(
-    (await fetch(`${base}/blob/${reply.blobId}?token=${claim.downloadToken}`)).status,
+    (await fetch(`${base}/blob/${encodeURIComponent(reply.blobId)}?token=${encodeURIComponent(claim.downloadToken)}`)).status,
     404,
   );
   assert.equal(
@@ -227,7 +227,7 @@ test('offer, upload, notify, claim, download, release — and the directory goes
   const claim = await claimed;
 
   const got = await fetch(
-    `${base}/blob/${reply.blobId}?token=${encodeURIComponent(claim.downloadToken)}`,
+    `${base}/blob/${encodeURIComponent(reply.blobId)}?token=${encodeURIComponent(claim.downloadToken)}`,
   );
   assert.equal(got.status, 200);
   assert.ok(
@@ -550,7 +550,7 @@ test('uploads and downloads are gated by their own tokens and the declared lengt
   assert.equal(
     (
       await fetch(
-        `${base}/blob/${third.reply.blobId}?token=${encodeURIComponent(third.reply.uploadToken)}`,
+        `${base}/blob/${encodeURIComponent(third.reply.blobId)}?token=${encodeURIComponent(third.reply.uploadToken)}`,
       )
     ).status,
     403,
@@ -708,7 +708,7 @@ test('chunk uploads commit boundaries and downloads refuse nonzero offsets', asy
     receiver.close();
   });
   const { reply, bytes } = await offer(sender, 'device_chunk_receiver', 2500);
-  const url = `${base}/blob/${reply.blobId}?token=${reply.uploadToken}`;
+  const url = `${base}/blob/${encodeURIComponent(reply.blobId)}?token=${encodeURIComponent(reply.uploadToken)}`;
   const body = Buffer.alloc(bytes, 37);
   const put = (offset: number, part: Buffer<ArrayBuffer>) =>
     fetch(`${url}&offset=${offset}`, { method: 'PUT', body: part });
@@ -718,7 +718,7 @@ test('chunk uploads commit boundaries and downloads refuse nonzero offsets', asy
   assert.equal((await put(0, body.subarray(0, CHUNK + 28))).status, 409);
   assert.equal((await put(10, body.subarray(0, CHUNK + 28))).status, 409);
 
-  const denied = await fetch(`${base}/blob/${reply.blobId}?token=wrong&offset=${CHUNK + 28}`, {
+  const denied = await fetch(`${base}/blob/${encodeURIComponent(reply.blobId)}?token=wrong&offset=${CHUNK + 28}`, {
     method: 'PUT',
     body: body.subarray(CHUNK + 28, 2 * (CHUNK + 28)),
   });
@@ -727,7 +727,7 @@ test('chunk uploads commit boundaries and downloads refuse nonzero offsets', asy
   assert.equal((await put(2 * (CHUNK + 28), body.subarray(2 * (CHUNK + 28)))).status, 204);
   const claim = await app.blobStore.claim(reply.blobId, 'device_chunk_receiver');
   assert.ok(claim.downloadToken);
-  const getUrl = `${base}/blob/${reply.blobId}?token=${claim.downloadToken}`;
+  const getUrl = `${base}/blob/${encodeURIComponent(reply.blobId)}?token=${encodeURIComponent(claim.downloadToken)}`;
   assert.equal((await fetch(`${getUrl}&offset=1`)).status, 416);
   const resumed = await fetch(`${getUrl}&offset=${CHUNK + 28}`);
   assert.equal(resumed.status, 416);
