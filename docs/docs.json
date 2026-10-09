@@ -8,6 +8,7 @@
       { "group": "Get started", "pages": ["index", "quickstart"] },
       { "group": "Using Evakage", "pages": ["guides/devices", "guides/rooms", "guides/transfers", "guides/mobile", "guides/accounts"] },
       { "group": "Self-hosting", "pages": ["hosting/deployment", "hosting/configuration", "hosting/privacy"] },
+      { "group": "API", "pages": ["api"] },
       { "group": "Contributing", "pages": ["development", "releases"] }
     ]
   },

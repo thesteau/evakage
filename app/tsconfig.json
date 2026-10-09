@@ -35,6 +35,8 @@
     "useUnknownInCatchVariables": false
   },
   "include": [
+    "core/**/*.ts",
+    "sdk/**/*.ts",
     "client/ts/**/*.ts",
     "../tests/unit/**/*.ts",
     "../tests/support/**/*.ts",

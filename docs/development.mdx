@@ -55,6 +55,7 @@ npm run test:e2e:platform
 | `npm run test:e2e` | Main browser suite |
 | `npm run test:e2e:platform` | Chromium, Firefox, and WebKit smoke tests |
 | `npm run build` | Build the Go binaries, compile browser TypeScript, and assemble assets |
+| `npm run pack:client` | Build the installable Node SDK and CLI tarball |
 | `npm run test:go` | Backend Go tests |
 
 The unit and browser test commands build the app automatically. Release tests use mocked APIs and temporary repositories; they do not publish real releases.
@@ -69,6 +70,8 @@ Open one with `npx playwright show-trace <path-to-trace.zip>`.
 | `app/server/` | Go HTTP, WebSockets, accounts, and relay |
 | `app/cmd/evakage/` | Production server entry point |
 | `app/client/` | Browser markup, styles, TypeScript, and assets |
+| `app/core/` | Shared device crypto, signed messages and relay formats |
+| `app/sdk/` | Node SDK, CLI and device storage |
 | `tests/` | Unit, browser, and release tests |
 | `scripts/` | Build, release, and benchmark scripts |
 | `deploy/` | Docker setup for the published image |

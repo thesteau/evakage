@@ -553,6 +553,7 @@ func (s *Server) register(ws *socket, m object) {
 	}
 	c := &client{Socket: ws, ID: id, Code: code, Name: "Device " + code, Platform: platform, Browser: browser, ConnectedAt: s.config.Now(), IdentityKey: m["identityKey"], SealKey: m["sealKey"], SealKeySignature: m["sealKeySignature"], Discoverable: m["discoverable"] == true, Verified: verified, Watched: set{}, RoomsSnapshot: "[]"}
 	s.clients[id] = c
+	c.RelayOnly = m["relayOnly"] == true
 	s.online.Store(id, true)
 	s.noteSeen(id)
 	s.blobs.refresh()

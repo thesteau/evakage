@@ -1,0 +1,201 @@
+---
+title: "API and headless clients"
+description: "Run the backend without a UI and exchange encrypted chat and files from Node or the command line."
+---
+
+Evakage exposes HTTP endpoints and a WebSocket device protocol. A Node or command-line client can pair with a browser device and exchange encrypted messages and files through the server relay. Both devices are **online while their registered WebSocket connections remain active**. Closing the connection, losing it, or stopping the process makes the device offline once the server detects the disconnect.
+
+There are two ways to use this:
+
+- **Browser and API devices together:** run the normal server with its UI enabled. The API client needs no browser or browser automation.
+- **An API-only server:** disable the server's UI when all your clients use the API. Its HTTP and WebSocket endpoints keep working.
+
+The first client release uses the encrypted server relay. It advertises `relayOnly: true` during registration, so browser peers skip WebRTC negotiation and show **Online · via server**. Rooms containing an API device use relay transport for every member; other browser conversations use WebRTC where available. Keys, signatures, sealed envelopes and file encryption are shared between the browser and Node clients; the server does not receive plaintext chat or files.
+
+## Run only the backend
+
+Set this in your deployment `.env` and recreate the container:
+
+```dotenv
+API_ONLY=1
+```
+
+```bash
+docker compose up -d --force-recreate
+```
+
+The server returns `404` for browser assets, the service worker, manifest and `/share`. `/healthz`, `/config.json`, account routes, encrypted blob routes and the WebSocket at `/` remain available. Leave `API_ONLY=0` for a server that browser users also open.
+
+From source, Go alone can run the backend; no Node build is required:
+
+```bash
+cd app
+go run ./cmd/evakage --api-only
+```
+
+The `--api-only` flag overrides the environment setting. Source runs have accounts disabled unless you set `ACCOUNTS_DB`. Set `HOST`, `PORT` and other configuration in your shell; Go does not load `.env` files automatically.
+
+To build a container without the browser build or assets, run from the repository root:
+
+```bash
+docker build --target api-only -f app/Dockerfile -t evakage-api .
+docker run --rm -p 3712:3000 -v evakage-accounts:/home/node/evakage-accounts evakage-api
+```
+
+The API-only target defaults to `API_ONLY=1` and preserves the normal account volume and health check. Keep relay storage temporary. See [configuration](/hosting/configuration) for HTTPS proxies, access controls and capacity limits.
+
+## Install the Node client
+
+Use Node 24 or newer. The package is currently built from source rather than published on npm. In a checkout:
+
+```bash
+cd app
+npm ci
+npm run pack:client
+```
+
+This creates `app/dist/evakage-client-0.1.0.tgz`. In the project that will use the API, install that file:
+
+```bash
+npm install /path/to/evakage/app/dist/evakage-client-0.1.0.tgz
+```
+
+The package exports the SDK and installs the `evakage-client` command. You can also run the compiled CLI from the checkout with `node app/dist/app/sdk/cli.js --help`.
+
+## Chat with a browser user
+
+On the normal server, the browser user opens **Connection details** to share their private pairing code. Pair with that code from Node:
+
+```js
+import { EvakageClient, FileStore } from '@evakage/client';
+
+const client = new EvakageClient({
+  url: 'http://localhost:3712',
+  token: process.env.EVAKAGE_TOKEN,
+  store: new FileStore('./data/api-device'),
+});
+
+client.on('online', self => console.log('Online:', self.id, self.pairingCode));
+client.on('offline', reason => console.log('Offline:', reason));
+client.on('client-error', error => console.error(error.message));
+client.on('message', message => console.log(message.from, message.text));
+
+await client.connect();
+const peer = await client.pair('BROWSER_PAIRING_CODE');
+await client.sendText(peer.id, 'Hello from the API');
+```
+
+Keep this process running to receive replies and remain online. The browser sees it as a device with platform `Node` and client `API`. Alternatively, the browser user can pair using the API client's pairing code. `pair(code, expectedFingerprint)` can pin the expected device fingerprint when it is known.
+
+`FileStore` retains the device identity and paired-device records. After restarting your script, connect using the same store and send to a remembered `client.peers()[0].id`. Private keys are stored in the state directory. Unix directories and files are created with `0700` and `0600` permissions; on Windows, protect the directory with your user ACLs. `MemoryStore` is available for temporary clients and tests.
+
+Use **one live process per identity directory**. A second connection with the same identity replaces the first. The SDK reconnects after ordinary connection loss, but stops automatic retries after access denial or identity replacement. Call `await client.disconnect()` to stop intentionally. Messages are not retried automatically after an uncertain send result.
+
+## Send and receive files
+
+Sending a local file hashes and encrypts it in chunks:
+
+```js
+await client.sendFile(peer.id, './report.pdf');
+await client.sendFile(peer.id, new Blob(['Hello']), { name: 'hello.txt' });
+```
+
+Register a file listener before connecting. Receiving a notification does not download the file. Choose an explicit output path:
+
+```js
+import fs from 'node:fs/promises';
+await fs.mkdir('./downloads', { recursive: true });
+
+client.on('file', file => {
+  console.log('Incoming:', file.meta.name, file.meta.size);
+  const destination = `./downloads/${crypto.randomUUID()}.bin`;
+  file.save(destination).catch(error => console.error(error.message));
+  // Or call file.discard() to release this recipient's copy.
+});
+```
+
+The receiver verifies the encrypted file and SHA-256 before publishing the destination. Downloads use two passes, keeping chunk digests instead of the entire file in memory. Saving refuses to overwrite an existing path; it does not use the sender's filename as a filesystem path. A failed save can be retried while the relay copy remains available.
+
+## Command line
+
+```bash
+export EVAKAGE_URL=http://localhost:3712
+# Set EVAKAGE_TOKEN as well if this server requires AUTH_TOKEN.
+
+npx evakage-client --state ./data/api-device pair BROWSER_PAIRING_CODE
+npx evakage-client --state ./data/api-device peers
+npx evakage-client --state ./data/api-device send-text FINGERPRINT "Hello"
+npx evakage-client --state ./data/api-device send-file FINGERPRINT ./report.pdf
+npx evakage-client --state ./data/api-device listen
+```
+
+In PowerShell, use `$env:EVAKAGE_URL = 'http://localhost:3712'` instead of `export`.
+
+`listen` keeps the client online and prints incoming events as newline-delimited JSON. Add `--output ./downloads` to explicitly enable automatic file saving. Saved filenames have a random prefix and a sanitized sender filename. Without `--output`, files are only announced.
+
+For simultaneous sending and receiving with one connection, use `chat`. Enter one JSON command per line:
+
+```bash
+npx evakage-client --state ./data/api-device chat
+```
+
+```json
+{"type":"pair","code":"BROWSER_PAIRING_CODE"}
+{"type":"send-text","to":"FINGERPRINT","text":"Hello browser"}
+{"type":"send-file","to":"FINGERPRINT","path":"./report.pdf"}
+```
+
+Do not run a separate send command with the same identity while `listen` or `chat` is active; it would replace that connection. Use another `--state` directory for another device. Ctrl+C closes the connection.
+
+In `chat`, `{"type":"disconnect"}` also closes the connection and exits.
+
+## Accounts and rooms
+
+Accounts are optional for direct chat, files and joining rooms. Creating rooms requires accounts enabled on the server and a signed-in client:
+
+```js
+await client.login('username', process.env.EVAKAGE_PASSWORD);
+// Pass true as the third argument to register a new account instead.
+const room = await client.createRoom('Automation', 'protected');
+await client.sendText(`room:${room.id}`, 'Hello room');
+await client.sendFile(`room:${room.id}`, './report.pdf');
+```
+
+`joinRoom(code)` joins by invitation. Private rooms return `{ pending: true, id, name }` while the owner approves; listen for the `room` event for admission. Owners can call `approveRoom(roomId, deviceId, approve)` and `setRoomAccess(roomId, access)`. `leaveRoom(roomId)` leaves, and `logout()` revokes the account session. `rooms()` returns the latest room views. The CLI `chat` also accepts `login`, `create-room`, `join-room` and `leave-room` JSON commands with the corresponding fields.
+
+Account credentials and cookies stay in process memory. After an account session expires or the server restarts, sign in again. Reconnecting can restore room seats while they still exist, but rooms are temporary and do not survive a server restart.
+
+## HTTP and WebSocket contract
+
+`GET /config.json` advertises `protocol: 3`, server limits and relay capabilities. This SDK requires protocol 3. Use matching server and client releases; it rejects incompatible protocol versions. HTTP paths themselves are unversioned.
+
+| HTTP route | Method | Purpose |
+| --- | --- | --- |
+| `/healthz` | GET | Health and aggregate relay statistics; open even with `AUTH_TOKEN` |
+| `/config.json` | GET | Protocol version, ICE settings, account support and limits |
+| `/account/register`, `/account/login` | POST | Authenticate with JSON `{ username, password }` |
+| `/account/session` | GET | Current account and preference revision |
+| `/account/connect` | POST | One-use, device-bound socket ticket from `{ deviceId }` |
+| `/account/preferences` | PUT | Save JSON `{ preferences, revision }`; stale revisions return 409 |
+| `/account/logout` | POST | Revoke the current account session; JSON body `{}` |
+| `/account/delete` | DELETE | Delete the account with JSON `{ password }` |
+| `/blob/ID?token=CAPABILITY&offset=N` | PUT | Upload ciphertext at an exact byte offset |
+| `/blob/ID?token=CAPABILITY` | GET | Download ciphertext from the beginning |
+
+With `AUTH_TOKEN`, the SDK exchanges `/?token=TOKEN` for an `evakage_auth` cookie and supplies it on HTTP and WebSocket requests. Account calls use a separate `evakage_account` cookie and same-origin JSON headers. WebSocket origins remain subject to `ALLOWED_ORIGINS`; account changes require the server origin regardless of that setting. The SDK uses the configured server origin. There is no bearer-token or plaintext `/send` endpoint.
+
+Open a WebSocket at `/`. The server sends `registration-challenge`; a client signs the challenge with its device identity and sends `register`. The `registered` reply establishes its online presence. Frames are JSON text with a `type` field and a maximum size of 256 KiB. Device identities are SHA-256 fingerprints of their signing keys, and seal keys must carry a valid identity signature.
+
+| Message family | Requests |
+| --- | --- |
+| Pairing and discovery | `pair-device`, `unpair-device`, `resolve-code`, `lookup-devices`, `presence-request`, `set-discoverable` |
+| Accounts | `account-connect` with a one-use HTTP ticket |
+| Rooms | `create-room`, `join-room`, `leave-room`, `room-approve`, `room-access`, `rooms-request` |
+| Relay | `blob-offer`, `blob-claim`, `blob-release`, `blob-cancel`, `blobs-request`, `self-clear` |
+| WebRTC signaling | `signal`; the Node client uses relay transport |
+
+`blob-offer` carries `conv` (`direct` or `room:ID`), `kind` (`message` or `file`), ciphertext size/chunk counts and an encrypted envelope per recipient. Text lives inside those signed, sealed envelopes and has no HTTP body. File offers return an upload capability; completed files are announced as `blob-available`, and `blob-claim` grants a recipient's download capability. Receivers decrypt and verify locally, then release their copies.
+
+Offer, pairing and lookup requests support `requestId`; their replies echo it. Claims correlate by `blobId`. Protocol failures use `{ type: "error", context, message }` with applicable correlation fields. The SDK rejects pending operations and emits unmatched failures through `client-error`. HTTP account errors are JSON; blob failures can be plain text. Successful uploads return `204`.
+
+Successful sends mean **accepted by the relay**, not read by a recipient. Delivery retains Evakage's existing [expiry and capacity rules](/guides/transfers#how-long-server-copies-last). Offline recipients must remain recently reachable; the relay is not a durable queue. Pending messages, files and rooms disappear on server restart. The SDK retains identity and pairing records, not chat history or file payloads.

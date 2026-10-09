@@ -14,7 +14,7 @@
 // DOM lib does not know about.
 const worker = self as unknown as ServiceWorkerGlobalScope;
 
-const CACHE = 'evakage-v49';
+const CACHE = 'evakage-v50';
 
 const SHELL = [
   '/',
@@ -32,6 +32,11 @@ const SHELL = [
   '/sha256.js',
   '/identity.js',
   '/relay.js',
+  '/core/identity.js',
+  '/core/relay.js',
+  '/core/messages.js',
+  '/core/sha256.js',
+  '/core/frames.js',
   '/savestream.js',
   '/manifest.webmanifest',
   '/icon.svg',
