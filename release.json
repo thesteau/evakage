@@ -1,8 +1,8 @@
 {
-  "version": "1.0.2",
-  "tag": "v1.0.2",
-  "prodSha": "7e11915f77d9f8046e52f83198ffeea1d5c0b63e",
-  "previousTag": "v1.0.1",
-  "previousSha": "15578919e942febff2c25caedb3aedbfd1a0e6ca",
-  "notes": "## [1.0.2](https://github.com/thesteau/evakage/compare/v1.0.1...v1.0.2) (2026-10-08)\n\n\n### Bug Fixes\n\n* resolve sec issues ([7e11915](https://github.com/thesteau/evakage/commit/7e11915f77d9f8046e52f83198ffeea1d5c0b63e))\n* resolve sec issues ([122b354](https://github.com/thesteau/evakage/commit/122b35480bf75f94deaaf2bd5746e2368d9bc354))\n\n\n### Performance Improvements\n\n* Add performance update ([f152116](https://github.com/thesteau/evakage/commit/f1521160276736f889ad61ed7ce64848b6418447))"
+  "version": "1.1.0",
+  "tag": "v1.1.0",
+  "prodSha": "464cbe562a7be2736886d3281dd4d362feca110f",
+  "previousTag": "v1.0.2",
+  "previousSha": "7e11915f77d9f8046e52f83198ffeea1d5c0b63e",
+  "notes": "## [1.1.0](https://github.com/thesteau/evakage/compare/v1.0.2...v1.1.0) (2026-10-09)\n\n\n### Features\n\n* isolate api ([464cbe5](https://github.com/thesteau/evakage/commit/464cbe562a7be2736886d3281dd4d362feca110f))\n* isolate api ([cae32df](https://github.com/thesteau/evakage/commit/cae32df69be0c751213a0d0a8274e0951e0f28b2))\n\n\n### Bug Fixes\n\n* address API client security scan findings ([fdfd329](https://github.com/thesteau/evakage/commit/fdfd329c174f7cf1a3ff771417e57173c2958a81))"
 }

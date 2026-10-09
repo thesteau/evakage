@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.1.0](https://github.com/thesteau/evakage/compare/v1.0.2...v1.1.0) (2026-10-09)
+
+
+### Features
+
+* isolate api ([464cbe5](https://github.com/thesteau/evakage/commit/464cbe562a7be2736886d3281dd4d362feca110f))
+* isolate api ([cae32df](https://github.com/thesteau/evakage/commit/cae32df69be0c751213a0d0a8274e0951e0f28b2))
+
+
+### Bug Fixes
+
+* address API client security scan findings ([fdfd329](https://github.com/thesteau/evakage/commit/fdfd329c174f7cf1a3ff771417e57173c2958a81))
+
 ## [1.0.2](https://github.com/thesteau/evakage/compare/v1.0.1...v1.0.2) (2026-10-08)
 
 
