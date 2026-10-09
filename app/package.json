@@ -39,7 +39,7 @@
     "jsqr": "1.4.0",
     "qrcode-generator": "2.0.4",
     "release-please": "17.11.2",
-    "typescript": "^5.9.3",
+    "typescript": "^7.0.2",
     "typescript-eslint": "^8.71.1"
   }
 }
