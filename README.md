@@ -92,6 +92,7 @@ Read the [hosted documentation](https://evakage.docs.thesteau.com).
 - [Accounts and preferences](https://evakage.docs.thesteau.com/guides/accounts) and [mobile use](https://evakage.docs.thesteau.com/guides/mobile)
 - [Deployment](https://evakage.docs.thesteau.com/hosting/deployment), [configuration](https://evakage.docs.thesteau.com/hosting/configuration), and [privacy](https://evakage.docs.thesteau.com/hosting/privacy)
 - [Development](https://evakage.docs.thesteau.com/development) and [releases](https://evakage.docs.thesteau.com/releases)
+- [API and headless clients](https://evakage.docs.thesteau.com/api): Go-only hosting, Node SDK and CLI
 
 Documentation source is in [docs/](docs/).
 Maintainer measurements and security review material are in [maintainer/](maintainer/README.md).

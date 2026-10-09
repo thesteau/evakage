@@ -1160,7 +1160,7 @@ function neededPeerIds() {
   for (const conv of state.conversations.values()) {
     // A large room runs entirely through the relay, so it needs no links.
     if (isRelayRoom(conv)) continue;
-    for (const id of onlineMembers(conv)) if (deviceAllowed(id)) needed.add(id);
+    for (const id of onlineMembers(conv)) if (deviceAllowed(id) && !state.peers.get(id)?.relayOnly) needed.add(id);
   }
   return needed;
 }
@@ -1169,7 +1169,9 @@ function neededPeerIds() {
 // the room, so every member makes the same choice.
 
 function isRelayRoom(conv: Conversation) {
-  return conv.kind === 'room' && state.rooms.get(conv.roomId)?.transport === 'relay';
+  if (conv.kind !== 'room') return false;
+  const room = state.rooms.get(conv.roomId);
+  return room?.transport === 'relay' || Boolean(room && [...room.members, ...(room.away || [])].some(peer => peer.relayOnly));
 }
 
 function releaseIdleLinks() {
@@ -1317,6 +1319,7 @@ function negotiatingCount() {
 }
 
 async function ensureLink(peerId: string, force = false) {
+  if (state.peers.get(peerId)?.relayOnly) return;
   if (!deviceAllowed(peerId)) return;
   if (deviceTrust(peerId)?.blocked) return;
   if (typeof RTCPeerConnection === 'undefined') return;
@@ -2358,6 +2361,7 @@ function requestRoomHistory(roomId: string) {
 /* ---------- sending ---------- */
 
 async function waitForSecure(peerId: string, timeoutMs = 12000) {
+  if (state.peers.get(peerId)?.relayOnly) throw new Error('This device receives through the server relay');
   if (typeof RTCPeerConnection === 'undefined')
     {throw new Error('Direct connections are unavailable in this browser.');}
   const link = state.links.get(peerId);
@@ -2412,7 +2416,7 @@ async function sendChat(conv: Conversation, text: string) {
   await Promise.all(
     recipients.map(async (peerId) => {
       const link = state.links.get(peerId);
-      if (relayOnly) {
+      if (relayOnly || state.peers.get(peerId)?.relayOnly) {
         viaRelay.push(peerId);
         return;
       }
@@ -3811,7 +3815,7 @@ function renderPeersNow() {
       ? 'Your browser'
       : deviceTrust(peer.id)?.blocked
         ? 'Blocked'
-        : formatStatus(link?.status || 'idle');
+        : peer.relayOnly ? 'Online · via server' : formatStatus(link?.status || 'idle');
     if (link?.gaveUp || link?.incompatible) statusTd.classList.add('danger');
     if (link?.protocol) statusTd.title = `Evakage protocol v${link.protocol}`;
 
@@ -4352,9 +4356,11 @@ function renderRoomsNow() {
       const base =
         room.transport === 'relay'
           ? 'Via server · large room'
-          : others.length
-            ? `${secured} / ${others.length} encrypted`
-            : 'Waiting for members';
+          : conv && isRelayRoom(conv)
+            ? 'Via server'
+            : others.length
+              ? `${secured} / ${others.length} encrypted`
+              : 'Waiting for members';
       const awayOthers = away.filter((m) => m.id !== state.self?.id).length;
       const waiting = room.requests?.length || 0;
       statusTd.textContent = [base, awayOthers && `${awayOthers} away`, waiting && `${waiting} waiting`]
@@ -4576,6 +4582,11 @@ function renderSessionNow() {
             : 'Offline';
       secureState.title = `Sealed to this device and left on the server for up to ${relayWindowText()}.`;
       secureState.classList.remove('ready');
+    } else if (state.peers.get(conv.peerId)?.relayOnly) {
+      secureState.textContent = 'Encrypted · via server';
+      secureState.title = 'This device exchanges signed, encrypted messages and files through the server relay.';
+      secureState.classList.add('ready');
+      secureState.classList.remove('unverified');
     } else {
       secureState.textContent =
         link?.dc?.readyState === 'open' ? 'Verifying device identity…' : 'Connecting…';
@@ -4584,8 +4595,10 @@ function renderSessionNow() {
   } else if (isRelayRoom(conv)) {
     // No links at all in a large room: everything is sealed to each member and
     // signed by the sender, then goes through the server.
-    secureState.textContent = 'Large room · sealed to each member via server';
-    secureState.title = `Past ${state.config.roomMeshMax || 6} devices a room stops opening direct connections between every pair and uses the server relay instead.`;
+    secureState.textContent = state.rooms.get(conv.roomId)?.transport === 'relay'
+      ? 'Large room · sealed to each member via server'
+      : 'Room · sealed to each member via server';
+    secureState.title = `Rooms past ${state.config.roomMeshMax || 6} devices, or containing an API device, use signed encrypted copies through the server relay.`;
     secureState.classList.add('ready');
   } else {
     const secured = others.filter((id) => isSecure(state.links.get(id))).length;

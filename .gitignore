@@ -1,6 +1,7 @@
 node_modules/
 /dist/
 /app/dist/
+/app/sdk/dist/
 *.tsbuildinfo
 .env
 .env.*

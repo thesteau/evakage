@@ -17,6 +17,7 @@ When running from source with `npm run dev` or `npm start`, set environment vari
 | --- | --- | --- |
 | `PORT` | `3000` | Server port |
 | `HOST` | `0.0.0.0` | Listen address |
+| `API_ONLY` | `0` | Disable browser assets while keeping HTTP and WebSocket APIs |
 | `AUTH_TOKEN` | Unset | Require a token to access the app |
 | `DEVICE_ALLOWLIST` | Unset | Allow only listed full device fingerprints |
 | `ALLOWED_ORIGINS` | Same host | Allowed WebSocket origins, comma-separated |
@@ -24,6 +25,8 @@ When running from source with `npm run dev` or `npm start`, set environment vari
 | `ICE_SERVERS_JSON` | `[]` | STUN/TURN servers as a JSON array |
 
 With `AUTH_TOKEN` set, open `https://host/?token=THE_TOKEN` once to establish an access cookie. The health endpoint remains open.
+
+See [API and headless clients](/api) to use Node or the command line, or run a Go-only server. Leave `API_ONLY=0` when browser users open this instance.
 
 For `DEVICE_ALLOWLIST`, copy full fingerprints from the QR icon in Devices (**Connection details**) or **Known devices**. Devices must prove they hold the matching key. Remove a fingerprint and restart to revoke access.
 

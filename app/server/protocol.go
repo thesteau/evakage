@@ -67,6 +67,9 @@ func validAccess(v any) bool {
 	return ok && (s == "private" || s == "protected" || s == "public")
 }
 func validMessage(m object) bool {
+	if m["type"] == "register" && m["relayOnly"] != nil && !boolean(m["relayOnly"]) {
+		return false
+	}
 	switch str(m["type"]) {
 	case "register":
 		return matches(devicePattern, m["deviceId"]) && optional(m["name"], 512) && optional(m["platform"], 512) && optional(m["browser"], 512) && (m["discoverable"] == nil || boolean(m["discoverable"])) && optional(m["registrationProof"], 128) && optional(m["identityKey"], 256) && optional(m["sealKey"], 256) && optional(m["sealKeySignature"], 256)
