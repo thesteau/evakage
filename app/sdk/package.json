@@ -1,0 +1,27 @@
+{
+  "name": "@evakage/client",
+  "version": "0.1.0",
+  "description": "Encrypted Evakage chat and file sharing from Node and the command line.",
+  "type": "module",
+  "license": "MIT",
+  "engines": {
+    "node": ">=24"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/sdk/index.d.ts",
+      "import": "./dist/sdk/index.js"
+    }
+  },
+  "bin": {
+    "evakage-client": "./dist/sdk/cli.js"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "dependencies": {
+    "ws": "^8.22.0"
+  }
+}

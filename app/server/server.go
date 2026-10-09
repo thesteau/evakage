@@ -27,6 +27,7 @@ type client struct {
 	ConnectedAt                                      int64
 	IdentityKey, SealKey, SealKeySignature           any
 	Discoverable, Verified                           bool
+	RelayOnly                                        bool
 	Session                                          string
 	Watched                                          set
 	PresenceSnapshot, RoomsSnapshot, AccountSnapshot string
@@ -57,6 +58,7 @@ func roomAccess(v any) string {
 	}
 	return roomPrivate
 }
+
 type recentDevice struct {
 	Record   object
 	LastSeen int64
@@ -282,6 +284,10 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if path == "/share" {
+		if s.config.APIOnly {
+			http.NotFound(w, r)
+			return
+		}
 		_, _ = io.Copy(io.Discard, io.LimitReader(r.Body, 8<<20))
 		w.Header().Set("Cache-Control", "no-store")
 		w.Header().Set("Connection", "close")
@@ -324,6 +330,10 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	if strings.HasPrefix(path, "/blob/") {
 		s.blobHTTP(w, r)
+		return
+	}
+	if s.config.APIOnly {
+		http.NotFound(w, r)
 		return
 	}
 	if r.Method != "GET" && r.Method != "HEAD" {
@@ -440,7 +450,11 @@ func (s *Server) stableCode(id string) string {
 	return fmt.Sprintf("%X", randomBytes(6))
 }
 func public(c *client) object {
-	return object{"id": c.ID, "code": c.Code, "name": c.Name, "platform": c.Platform, "browser": c.Browser, "connectedAt": c.ConnectedAt, "identityKey": c.IdentityKey, "sealKey": c.SealKey, "sealKeySignature": c.SealKeySignature}
+	view := object{"id": c.ID, "code": c.Code, "name": c.Name, "platform": c.Platform, "browser": c.Browser, "connectedAt": c.ConnectedAt, "identityKey": c.IdentityKey, "sealKey": c.SealKey, "sealKeySignature": c.SealKeySignature}
+	if c.RelayOnly {
+		view["relayOnly"] = true
+	}
+	return view
 }
 func (s *Server) sortedClients() []*client {
 	out := []*client{}
@@ -582,6 +596,7 @@ func (s *Server) deviceRecord(id string) object {
 	p["lastSeen"] = r.LastSeen
 	return p
 }
+
 // roomOwner reports whether a device is signed into the account that created
 // the room. Any such device may approve requests and change access.
 func (s *Server) roomOwner(c *client, r *room) bool {

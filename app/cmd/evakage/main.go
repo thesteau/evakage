@@ -14,10 +14,12 @@ import (
 )
 
 func main() {
+	c := server.DefaultConfig()
+	apiOnly := flag.Bool("api-only", c.APIOnly, "serve HTTP and WebSocket APIs without the browser UI")
 	health := flag.Bool("healthcheck", false, "check the running server")
 	sweep := flag.Bool("sweep-blobs", false, "remove expired relay files and exit")
 	flag.Parse()
-	c := server.DefaultConfig()
+	c.APIOnly = *apiOnly
 	if *health {
 		client := http.Client{Timeout: 2 * time.Second}
 		r, e := client.Get(fmt.Sprintf("http://127.0.0.1:%d/healthz", c.Port))

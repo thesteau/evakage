@@ -93,6 +93,9 @@ func applyOptions(target any, m object) {
 	for i := 0; i < v.NumField(); i++ {
 		field := typ.Field(i)
 		key := strings.ToLower(field.Name[:1]) + field.Name[1:]
+		if field.Name == "APIOnly" {
+			key = "apiOnly"
+		}
 		aliases := map[string]string{"AccountsDB": "accountsDb", "RecentWindowMS": "recentWindowMs", "RejoinGraceMS": "rejoinGraceMs", "IdleGraceMS": "idleGraceMs", "SoloMaxMS": "soloMaxMs", "MaxAgeMS": "maxAgeMs", "SweepEveryMS": "sweepEveryMs", "ConnectionsPerIP": "connectionsPerIp"}
 		if a := aliases[field.Name]; a != "" {
 			key = a

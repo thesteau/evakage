@@ -19,7 +19,7 @@ ARG TARGETOS
 ARG TARGETARCH
 RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -trimpath -ldflags="-s -w" -o /evakage ./cmd/evakage
 
-FROM alpine:3.24
+FROM alpine:3.24 AS runtime
 # The base image already ships ca-certificates-bundle for outbound TLS.
 RUN addgroup -g 1000 evakage && adduser -D -u 1000 -G evakage evakage && \
     mkdir -p /home/node/evakage-accounts && chown 1000:1000 /home/node/evakage-accounts
@@ -32,7 +32,6 @@ ENV PORT=3000 \
     ACCOUNTS_DB=/home/node/evakage-accounts/accounts.sqlite
 WORKDIR /app
 COPY --from=backend /evakage /usr/local/bin/evakage
-COPY --from=client --chown=1000:1000 /build/app/dist/app/public ./public
 VOLUME /home/node/evakage-accounts
 USER 1000:1000
 EXPOSE 3000
@@ -46,3 +45,9 @@ LABEL org.opencontainers.image.title="Evakage" \
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
   CMD ["evakage", "--healthcheck"]
 CMD ["evakage"]
+
+FROM runtime AS api-only
+ENV API_ONLY=1
+
+FROM runtime AS app
+COPY --from=client --chown=1000:1000 /build/app/dist/app/public ./public

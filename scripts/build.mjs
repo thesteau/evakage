@@ -16,13 +16,20 @@ if (path.dirname(outputDir) !== path.resolve(root, 'app') || path.relative(root,
   throw new Error('Build output must stay inside the repository.');
 }
 await fs.rm(stagingDir, { recursive: true, force: true });
-const result = spawnSync(process.execPath, [path.join(root, 'app/node_modules/typescript/bin/tsc'), '-p', 'app/tsconfig.json', '--outDir', stagingDir], { cwd: root, stdio: 'inherit' });
+// The typescript alias supplies ESLint's v6 API; builds use the native v7 compiler.
+const result = spawnSync(process.execPath, [path.join(root, 'app/node_modules/@typescript/native/bin/tsc'), '-p', 'app/tsconfig.json', '--outDir', stagingDir], { cwd: root, stdio: 'inherit' });
 if (result.status !== 0) process.exit(result.status || 1);
 const publicDir = path.join(stagingDir, 'app/public');
 for (const dir of ['html', 'css', 'assets']) {
   await fs.cp(path.join(root, 'app/client', dir), publicDir, { recursive: true, filter: source => !source.endsWith('.ts') && !source.endsWith('.mts') });
 }
 await fs.cp(path.join(stagingDir, 'app/client/ts'), publicDir, { recursive: true });
+await fs.cp(path.join(stagingDir, 'app/core'), path.join(publicDir, 'core'), { recursive: true });
+// Browser facade imports resolve from /, while Node tests use the source layout.
+for (const name of ['identity', 'types', 'relay', 'messages', 'sha256', 'frames']) {
+  const file = path.join(publicDir, `${name}.js`);
+  await fs.writeFile(file, (await fs.readFile(file, 'utf8')).replaceAll('../../core/', './core/'));
+}
 const indexPath = path.join(publicDir, 'index.html');
 await fs.writeFile(indexPath, (await fs.readFile(indexPath, 'utf8')).replace(
   '<span id="buildLabel" class="build-label">build local</span>',

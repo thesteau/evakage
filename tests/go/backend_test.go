@@ -305,6 +305,50 @@ func TestHealthConfigAndTokenCookie(t *testing.T) {
 	}
 }
 
+func TestAPIOnlyDisablesUIAndRetainsProtocol(t *testing.T) {
+	c := testConfig(t)
+	c.APIOnly = true
+	for _, name := range []string{"index.html", "app.js", "sw.js", "manifest.webmanifest"} {
+		if e := os.WriteFile(filepath.Join(c.PublicDir, name), []byte("UI must not be served"), 0600); e != nil {
+			t.Fatal(e)
+		}
+	}
+	_, base := startTestServer(t, c)
+	for _, path := range []string{"/", "/index.html", "/app.js", "/sw.js", "/manifest.webmanifest", "/share"} {
+		response, e := http.Get(base + path)
+		if e != nil {
+			t.Fatal(e)
+		}
+		_, _ = io.Copy(io.Discard, response.Body)
+		_ = response.Body.Close()
+		if response.StatusCode != 404 {
+			t.Fatalf("%s: expected 404, got %d", path, response.StatusCode)
+		}
+	}
+	for _, path := range []string{"/healthz", "/config.json"} {
+		response, e := http.Get(base + path)
+		if e != nil {
+			t.Fatal(e)
+		}
+		_, _ = io.Copy(io.Discard, response.Body)
+		_ = response.Body.Close()
+		if response.StatusCode != 200 {
+			t.Fatalf("%s: API is unavailable", path)
+		}
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	ws, _, e := websocket.Dial(ctx, strings.Replace(base, "http://", "ws://", 1), nil)
+	if e != nil {
+		t.Fatal(e)
+	}
+	defer ws.CloseNow()
+	_, message, e := ws.Read(ctx)
+	if e != nil || !bytes.Contains(message, []byte("registration-challenge")) {
+		t.Fatal("API-only WebSocket did not issue a challenge", e)
+	}
+}
+
 func TestStartupDoesNotEraseUnrelatedFiles(t *testing.T) {
 	c := testConfig(t)
 	if e := os.MkdirAll(c.Blobs.Dir, 0700); e != nil {
