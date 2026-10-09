@@ -1,4 +1,5 @@
 import fs from 'node:fs/promises';
+import { constants } from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import { bytesToBase64, fingerprintOf, signTranscript } from '../core/identity.js';
@@ -11,6 +12,20 @@ export interface ClientStore {
 }
 
 type Keys = { v: 1; signing: JsonWebKey; sealing: JsonWebKey; createdAt: number };
+
+async function readKeys(file: string): Promise<Keys> {
+  // Hold the descriptor through validation and reading; replacing the path
+  // after validation cannot change the identity being read.
+  const handle = await fs.open(file, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
+  try {
+    const [opened, entry] = await Promise.all([handle.stat({ bigint: true }), fs.lstat(file, { bigint: true })]);
+    // Windows lacks O_NOFOLLOW. Check the entry against the already open file
+    // there too, and reject symlinks, non-files and replacements during open.
+    if (entry.isSymbolicLink() || !opened.isFile() || entry.dev !== opened.dev || entry.ino !== opened.ino)
+      {throw new Error('Identity file must be a regular file and must not be a symbolic link');}
+    return JSON.parse(await handle.readFile('utf8'));
+  } finally { await handle.close(); }
+}
 
 async function createKeys(): Promise<Keys> {
   const signing = await crypto.subtle.generateKey({ name: 'ECDSA', namedCurve: 'P-256' }, true, ['sign', 'verify']);
@@ -48,8 +63,9 @@ export class FileStore implements ClientStore {
   private async load() {
     await fs.mkdir(this.directory, { recursive: true, mode: 0o700 });
     const file = path.join(this.directory, 'identity.json');
+    let keys: Keys;
     try {
-      await fs.access(file);
+      keys = await readKeys(file);
     } catch (error) {
       if (error.code !== 'ENOENT') throw error;
       const temporary = path.join(this.directory, `identity-${crypto.randomUUID()}.tmp`);
@@ -58,9 +74,9 @@ export class FileStore implements ClientStore {
         try { await fs.link(temporary, file); }
         catch (error) { if (error.code !== 'EEXIST') throw error; }
       } finally { await fs.rm(temporary, { force: true }); }
+      keys = await readKeys(file);
     }
-    if ((await fs.lstat(file)).isSymbolicLink()) throw new Error('Identity file must not be a symbolic link');
-    return importIdentity(JSON.parse(await fs.readFile(file, 'utf8')));
+    return importIdentity(keys);
   }
   async peers(): Promise<Device[]> {
     try {

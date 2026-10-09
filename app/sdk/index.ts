@@ -32,7 +32,7 @@ export interface ClientOptions {
   autoReconnect?: boolean;
   timeoutMs?: number;
 }
-type Waiter = { match: (m: Wire) => boolean; context: string; requestId?: string; blobId?: string; resolve: (m: Wire) => void; reject: (e: Error) => void; timer: ReturnType<typeof setTimeout> };
+type Waiter = { accepts: (m: Wire) => boolean; context: string; requestId?: string; blobId?: string; resolve: (m: Wire) => void; reject: (e: Error) => void; timer: ReturnType<typeof setTimeout> };
 
 /** A registered device speaking the same encrypted relay protocol as the browser. */
 export class EvakageClient extends EventEmitter<ClientEvents> {
@@ -173,9 +173,9 @@ export class EvakageClient extends EventEmitter<ClientEvents> {
     if (Buffer.byteLength(text) > FRAME_LIMIT) throw new Error('Message exceeds the protocol frame limit');
     this.socket.send(text);
   }
-  private wait(match: Waiter['match'], context: string, send?: () => void, requestId?: string, blobId?: string): Promise<Wire> {
+  private wait(accepts: Waiter['accepts'], context: string, send?: () => void, requestId?: string, blobId?: string): Promise<Wire> {
     return new Promise((resolve, reject) => {
-      const waiter: Waiter = { match, context, requestId, blobId, resolve, reject, timer: setTimeout(() => {
+      const waiter: Waiter = { accepts, context, requestId, blobId, resolve, reject, timer: setTimeout(() => {
         this.pending.delete(waiter); reject(new Error(`Timed out waiting for ${context}`));
       }, this.timeout) };
       this.pending.add(waiter);
@@ -258,7 +258,7 @@ export class EvakageClient extends EventEmitter<ClientEvents> {
     let matched = false;
     for (const waiter of this.pending) {
       const failed = m.type === 'error' && m.context === waiter.context && (!waiter.requestId || m.requestId === waiter.requestId) && (!waiter.blobId || m.blobId === waiter.blobId);
-      if (failed || waiter.match(m)) {
+      if (failed || waiter.accepts(m)) {
         clearTimeout(waiter.timer); this.pending.delete(waiter); matched = true;
         if (failed) waiter.reject(new Error(m.message)); else waiter.resolve(m);
       }
@@ -379,40 +379,50 @@ export class EvakageClient extends EventEmitter<ClientEvents> {
   private async receive(notice: Wire) {
     if (!this.allowed(notice) || this.inbound.has(notice.blobId)) return;
     this.inbound.add(notice.blobId);
-    const identity = this.identity!;
-    const options = { sealPrivateKey: identity.sealPrivateKey, box: notice.envelope, selfId: identity.deviceId, expectedFrom: notice.from };
     try {
-      if (notice.kind === 'message') {
-        const opened = await openMessageEnvelope(options);
-        if (opened.conv !== notice.conv) throw new Error('Conversation mismatch');
-        const message = await verifyMessage(opened.message, messageScope(notice.conv, [identity.deviceId, notice.from]));
-        if (!message) throw new Error('Message signature did not verify');
-        const key = messageKey(message);
-        if (!this.seenMessages.has(key)) {
-          this.seenMessages.add(key);
-          if (this.seenMessages.size > 2000) this.seenMessages.delete(this.seenMessages.values().next().value!);
-          this.emit('message', { ...message, conv: notice.conv, blobId: notice.blobId } satisfies ReceivedMessage);
-        }
-        this.send({ type: 'blob-release', blobId: notice.blobId });
-        this.inbound.delete(notice.blobId);
-      } else if (notice.kind === 'file') {
-        const opened = await openEnvelope(options);
-        if (opened.meta.conv !== notice.conv || opened.meta.size > this.config!.maxFileBytes) throw new Error('Invalid file scope or size');
-        if (typeof opened.meta.name !== 'string' || !opened.meta.name || opened.meta.name.length > 512 || !Number.isSafeInteger(opened.meta.size) || opened.meta.chunkSize > 1024 * 1024 || notice.chunkSize !== opened.meta.chunkSize)
-          {throw new Error('Invalid file metadata');}
-        const expected = cipherLayout(opened.meta.size, opened.meta.chunkSize);
-        if (expected.bytes !== notice.bytes || expected.totalChunks !== notice.totalChunks) throw new Error('File layout mismatch');
-        let saving: Promise<void> | undefined;
-        const incoming: IncomingFile = { blobId: notice.blobId, from: notice.from, conv: notice.conv, expiresAt: notice.expiresAt, meta: opened.meta,
-          save: destination => saving ??= this.save(notice, opened, destination).finally(() => { saving = undefined; }),
-          discard: () => { this.send({ type: 'blob-release', blobId: notice.blobId }); this.inbound.delete(notice.blobId); } };
-        this.emit('file', incoming);
+      // The transport kind only selects a parser. Each parser verifies the
+      // signed envelope's kind and sender before exposing its payload.
+      switch (notice.kind) {
+        case 'message': await this.receiveMessage(notice); break;
+        case 'file': await this.receiveFile(notice); break;
+        default: throw new Error('Unsupported relay item kind');
       }
     } catch (error) {
       if (this.online) this.send({ type: 'blob-release', blobId: notice.blobId });
       this.inbound.delete(notice.blobId);
       this.notify(error);
     }
+  }
+  private envelopeOptions(notice: Wire) {
+    const identity = this.identity!;
+    return { sealPrivateKey: identity.sealPrivateKey, box: notice.envelope, selfId: identity.deviceId, expectedFrom: notice.from };
+  }
+  private async receiveMessage(notice: Wire) {
+    const opened = await openMessageEnvelope(this.envelopeOptions(notice));
+    if (opened.conv !== notice.conv) throw new Error('Conversation mismatch');
+    const message = await verifyMessage(opened.message, messageScope(notice.conv, [this.identity!.deviceId, notice.from]));
+    if (!message) throw new Error('Message signature did not verify');
+    const key = messageKey(message);
+    if (!this.seenMessages.has(key)) {
+      this.seenMessages.add(key);
+      if (this.seenMessages.size > 2000) this.seenMessages.delete(this.seenMessages.values().next().value!);
+      this.emit('message', { ...message, conv: notice.conv, blobId: notice.blobId } satisfies ReceivedMessage);
+    }
+    this.send({ type: 'blob-release', blobId: notice.blobId });
+    this.inbound.delete(notice.blobId);
+  }
+  private async receiveFile(notice: Wire) {
+    const opened = await openEnvelope(this.envelopeOptions(notice));
+    if (opened.meta.conv !== notice.conv || opened.meta.size > this.config!.maxFileBytes) throw new Error('Invalid file scope or size');
+    if (typeof opened.meta.name !== 'string' || !opened.meta.name || opened.meta.name.length > 512 || !Number.isSafeInteger(opened.meta.size) || opened.meta.chunkSize > 1024 * 1024 || notice.chunkSize !== opened.meta.chunkSize)
+      {throw new Error('Invalid file metadata');}
+    const expected = cipherLayout(opened.meta.size, opened.meta.chunkSize);
+    if (expected.bytes !== notice.bytes || expected.totalChunks !== notice.totalChunks) throw new Error('File layout mismatch');
+    let saving: Promise<void> | undefined;
+    const incoming: IncomingFile = { blobId: notice.blobId, from: notice.from, conv: notice.conv, expiresAt: notice.expiresAt, meta: opened.meta,
+      save: destination => saving ??= this.save(notice, opened, destination).finally(() => { saving = undefined; }),
+      discard: () => { this.send({ type: 'blob-release', blobId: notice.blobId }); this.inbound.delete(notice.blobId); } };
+    this.emit('file', incoming);
   }
   private async body(blobId: string, signal: AbortSignal) {
     const claim = await this.wait(m => m.type === 'blob-claimed' && m.blobId === blobId, 'blob-claim', () => this.send({ type: 'blob-claim', blobId }), undefined, blobId);

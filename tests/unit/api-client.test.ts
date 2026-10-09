@@ -5,6 +5,8 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { EvakageClient, FileStore, MemoryStore, type Device, type IncomingFile, type ClientOptions } from '../../app/sdk/index.js';
+import { base64ToBytes } from '../../app/core/identity.js';
+import { buildEnvelope, buildMessageEnvelope, generateContentKey } from '../../app/core/relay.js';
 import { startServer } from './helpers.js';
 
 function event<T = any>(client: EvakageClient, name: string): Promise<T> {
@@ -114,6 +116,36 @@ test('tampered relay ciphertext never publishes an API download', async t => {
   assert.deepEqual(await fs.readdir(directory), []);
 });
 
+test('API relay handlers verify signed kinds and message proofs before emitting payloads', async t => {
+  const { base, app } = await startServer(t);
+  const store = new MemoryStore();
+  const sender = device(t, base, { store }), recipient = device(t, base);
+  const first = await sender.connect(), second = await recipient.connect();
+  await sender.pair(second.pairingCode!);
+  const identity = await store.identity();
+  const options = { identity, recipientId: second.id, recipientSealRaw: base64ToBytes(second.sealKey!), conv: 'direct' };
+  const key = await generateContentKey();
+  const fileBox = await buildEnvelope({ ...options, contentKeyRaw: key.raw, meta: {
+    id: crypto.randomUUID(), name: 'empty.bin', size: 0, sha256: 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855', chunkSize: 262144, totalChunks: 0,
+  } });
+  const unsignedMessageBox = await buildMessageEnvelope({ ...options, message: { id: crypto.randomUUID(), text: 'Missing message proof', fromName: first.name, at: Date.now() } });
+  let messages = 0, files = 0;
+  recipient.on('message', () => messages++);
+  recipient.on('file', () => files++);
+  for (const [kind, envelope, expected] of [
+    ['message', fileBox, /Expected a message envelope/],
+    ['file', unsignedMessageBox, /Expected a file envelope/],
+    ['message', unsignedMessageBox, /Message signature did not verify/],
+    ['unsupported', unsignedMessageBox, /Unsupported relay item kind/],
+  ] as const) {
+    const failure = event<Error>(recipient, 'client-error');
+    app.clients.get(second.id)!.ws.send(JSON.stringify({ type: 'blob-available', blobId: crypto.randomUUID(), from: first.id, conv: 'direct', kind, envelope }));
+    assert.match((await failure).message, expected);
+  }
+  assert.equal(messages, 0);
+  assert.equal(files, 0);
+});
+
 test('filesystem identities initialize atomically and paired devices survive reload', async t => {
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'evakage-api-identity-'));
   const a = new FileStore(directory), b = new FileStore(directory);
@@ -131,6 +163,36 @@ test('filesystem identities initialize atomically and paired devices survive rel
   await next.connect();
   assert.equal(next.peers()[0].id, other.id);
   assert.equal(next.self!.id, first.deviceId);
+});
+
+test('identity reads retain the validated file when its path is replaced', async t => {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'evakage-api-identity-race-'));
+  t.after(() => fs.rm(directory, { recursive: true, force: true }));
+  const identity = await new FileStore(directory).identity();
+  const file = path.join(directory, 'identity.json');
+  const lstat = fs.lstat;
+  t.mock.method(fs, 'lstat', async (...args: Parameters<typeof fs.lstat>) => {
+    const entry = await lstat(...args);
+    if (args[0] === file) {
+      await fs.rename(file, path.join(directory, 'original.json'));
+      await fs.writeFile(file, 'replaced after validation');
+    }
+    return entry;
+  });
+  assert.equal((await new FileStore(directory).identity()).deviceId, identity.deviceId);
+});
+
+test('identity reads refuse symbolic links', async t => {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'evakage-api-identity-link-'));
+  t.after(() => fs.rm(directory, { recursive: true, force: true }));
+  const target = path.join(directory, 'target');
+  await new FileStore(target).identity();
+  try { await fs.symlink(path.join(target, 'identity.json'), path.join(directory, 'identity.json'), 'file'); }
+  catch (error) {
+    if (process.platform === 'win32' && error.code === 'EPERM') { t.skip('Creating symlinks requires Windows developer mode or elevated permissions'); return; }
+    throw error;
+  }
+  await assert.rejects(new FileStore(directory).identity(), error => error instanceof Error && (('code' in error && error.code === 'ELOOP') || /symbolic link/.test(error.message)));
 });
 
 test('API accounts attach verified sockets and room messages retain their scope', async t => {
