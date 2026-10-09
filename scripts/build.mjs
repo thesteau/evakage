@@ -16,7 +16,8 @@ if (path.dirname(outputDir) !== path.resolve(root, 'app') || path.relative(root,
   throw new Error('Build output must stay inside the repository.');
 }
 await fs.rm(stagingDir, { recursive: true, force: true });
-const result = spawnSync(process.execPath, [path.join(root, 'app/node_modules/typescript/bin/tsc'), '-p', 'app/tsconfig.json', '--outDir', stagingDir], { cwd: root, stdio: 'inherit' });
+// The typescript alias supplies ESLint's v6 API; builds use the native v7 compiler.
+const result = spawnSync(process.execPath, [path.join(root, 'app/node_modules/@typescript/native/bin/tsc'), '-p', 'app/tsconfig.json', '--outDir', stagingDir], { cwd: root, stdio: 'inherit' });
 if (result.status !== 0) process.exit(result.status || 1);
 const publicDir = path.join(stagingDir, 'app/public');
 for (const dir of ['html', 'css', 'assets']) {
