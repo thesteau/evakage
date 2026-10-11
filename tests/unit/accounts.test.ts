@@ -154,6 +154,73 @@ test('account discovery requires identity-bound one-use tickets; sign-out revoke
   assert.ok(!app.rooms.has(secondRoom.id));
   assert.ok(!app.blobStore.blobs.has(buffered.blob.id));
 });
+test('sign out of all devices revokes every session and unused ticket without deleting the account', async (t) => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'evakage-logout-all-'));
+  const file = path.join(dir, 'accounts.sqlite');
+  const { base, wsBase, app } = await startServer(t, { accountsDb: file });
+  const credentials = { username: 'all_devices', password: 'correct horse battery staple' };
+  const registered = await request(base, 'register', credentials);
+  const signedIn = await request(base, 'login', credentials);
+  const cookies = [registered, signedIn].map((r) => r.headers.get('set-cookie')?.split(';')[0] || '');
+  const outsider = await request(base, 'register', { ...credentials, username: 'other_owner' });
+  const outsiderCookie = outsider.headers.get('set-cookie')?.split(';')[0] || '';
+  const preferences = { 'evakage-theme': 'dark' };
+  assert.equal((await request(base, 'preferences', { preferences, revision: 0 }, cookies[0], 'PUT')).status, 200);
+  const devices = [] as { ws: WebSocket; unused: string }[];
+  for (const cookie of cookies) {
+    const keys = await crypto.subtle.generateKey({ name: 'ECDSA', namedCurve: 'P-256' }, true, ['sign', 'verify']);
+    const raw = new Uint8Array(await crypto.subtle.exportKey('raw', keys.publicKey));
+    const id = await fingerprintOf(raw);
+    const ws = await openWs(wsBase);
+    t.after(() => ws.close());
+    const { challenge } = await waitFor(ws, (m) => m.type === 'registration-challenge');
+    const ready = waitFor(ws, (m) => m.type === 'registered');
+    ws.send(JSON.stringify({
+      type: 'register', deviceId: id, identityKey: bytesToBase64(raw),
+      registrationProof: await signTranscript(keys.privateKey, JSON.stringify(['evakage/register/1', challenge, id])),
+    }));
+    await ready;
+    const { token } = await request(base, 'connect', { deviceId: id }, cookie).then((r) => r.json());
+    const attached = waitFor(ws, (m) => m.type === 'account-peers' && m.signedIn);
+    ws.send(JSON.stringify({ type: 'account-connect', token }));
+    await attached;
+    const unused = await request(base, 'connect', { deviceId: id }, cookie).then((r) => r.json());
+    devices.push({ ws, unused: unused.token });
+  }
+  assert.equal((await request(base, 'logout-all', {})).status, 401);
+  assert.equal((await fetch(`${base}/account/logout-all`, {
+    method: 'POST', headers: { origin: 'https://evil.example', 'content-type': 'application/json', cookie: cookies[0] }, body: '{}',
+  })).status, 403);
+  const resets = devices.map(({ ws }) => waitFor(ws, (m) => m.type === 'account-reset'));
+  const response = await request(base, 'logout-all', {}, cookies[0]);
+  assert.equal(response.status, 200);
+  assert.match(response.headers.get('set-cookie') || '', /Max-Age=0/);
+  await Promise.all(resets);
+  for (const [index, { ws, unused }] of devices.entries()) {
+    assert.equal((await request(base, 'connect', { deviceId: 'a'.repeat(43) }, cookies[index])).status, 401);
+    const rejected = waitFor(ws, (m) => m.type === 'error' && m.context === 'account-connect');
+    ws.send(JSON.stringify({ type: 'account-connect', token: unused }));
+    await rejected;
+    ws.close();
+  }
+  await app.stop();
+  const restarted = await startServer(t, { accountsDb: file });
+  t.after(() => fs.rm(dir, { recursive: true, force: true }));
+  for (const cookie of cookies) {
+    assert.equal((await fetch(`${restarted.base}/account/session`, { headers: { cookie } }).then((r) => r.json())).username, null);
+  }
+  assert.equal(
+    (await fetch(`${restarted.base}/account/session`, { headers: { cookie: outsiderCookie } }).then((r) => r.json())).username,
+    'other_owner',
+    'sessions for other accounts must survive',
+  );
+  const login = await request(restarted.base, 'login', credentials);
+  assert.equal(login.status, 200);
+  const restored = await login.json();
+  assert.deepEqual(restored.preferences, preferences);
+  assert.equal(restored.revision, 1);
+});
+
 test('accounts are optional; durable preferences sync with conflict protection and session isolation', async (t) => {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'evakage-accounts-'));
 
@@ -250,9 +317,39 @@ test('accounts are optional; durable preferences sync with conflict protection a
   );
   await app.stop();
   const restarted = await startServer(t, { accountsDb: file });
-  const login = await request(restarted.base, 'login', credentials);
+  const restored = await fetch(`${restarted.base}/account/session`, {
+    headers: { cookie: otherCookie },
+  }).then((response) => response.json());
+  assert.equal(restored.username, credentials.username, 'active logins must survive a server update');
+  assert.deepEqual(restored.preferences, preferences);
+  assert.equal(restored.revision, 1);
+  assert.equal(
+    (await request(restarted.base, 'connect', { deviceId: 'a'.repeat(43) }, otherCookie)).status,
+    200,
+    'a restored login can obtain a new device-bound socket ticket',
+  );
+  assert.equal(
+    (await fetch(`${restarted.base}/account/session`, { headers: { cookie } }).then((r) => r.json())).username,
+    null,
+    'signed-out logins must stay revoked after a restart',
+  );
+  const login = await request(restarted.base, 'login', credentials, otherCookie);
   assert.equal(login.status, 200);
   assert.deepEqual((await login.json()).preferences, preferences);
+  const renewedCookie = login.headers.get('set-cookie')?.split(';')[0] || '';
+  await restarted.app.stop();
+  const updated = await startServer(t, { accountsDb: file });
+  for (const revokedCookie of [cookie, otherCookie]) {
+    assert.equal(
+      (await fetch(`${updated.base}/account/session`, { headers: { cookie: revokedCookie } }).then((r) => r.json())).username,
+      null,
+      'logout and session rotation must remain effective across updates',
+    );
+  }
+  assert.equal(
+    (await fetch(`${updated.base}/account/session`, { headers: { cookie: renewedCookie } }).then((r) => r.json())).username,
+    credentials.username,
+  );
   t.after(() => fs.rm(dir, { recursive: true, force: true }));
 });
 test('account requests use the public host only behind a trusted proxy', async (t) => {
@@ -416,6 +513,7 @@ test('deleting an account requires its password, removes saved data and revokes 
   const db = new DatabaseSync(file, { readOnly: true });
   try {
     assert.equal(db.prepare('SELECT count(*) AS count FROM accounts').get()?.count, 0);
+    assert.equal(db.prepare('SELECT count(*) AS count FROM account_sessions').get()?.count, 0);
   } finally {
     db.close();
   }
@@ -424,6 +522,13 @@ test('deleting an account requires its password, removes saved data and revokes 
   const fresh = await request(restarted.base, 'register', credentials);
   assert.equal(fresh.status, 200);
   assert.deepEqual((await fresh.json()).preferences, {});
+  for (const cookie of cookies) {
+    assert.equal(
+      (await fetch(`${restarted.base}/account/session`, { headers: { cookie } }).then((r) => r.json())).username,
+      null,
+      'deleted sessions must not return after restart or username reuse',
+    );
+  }
   await restarted.app.stop();
 });
 
@@ -479,7 +584,7 @@ test('SQLite coordinates independent connections without duplicate accounts or l
         .prepare("SELECT name FROM sqlite_schema WHERE type = 'table'")
         .all()
         .map((row) => row.name),
-      ['accounts'],
+      ['accounts', 'account_sessions'],
     );
     assert.deepEqual(
       db
@@ -492,9 +597,25 @@ test('SQLite coordinates independent connections without duplicate accounts or l
     assert.equal(rows.length, 1);
     assert.match(String(rows[0].hash), /^[a-f0-9]{128}$/);
     assert.ok(!JSON.stringify(rows).includes(credentials.password));
+    const sessions = db.prepare('SELECT * FROM account_sessions').all();
+    assert.equal(sessions.length, 3);
+    for (const session of sessions) {
+      assert.match(String(session.token_hash), /^[a-f0-9]{64}$/);
+      assert.equal(session.username, credentials.username);
+      assert.equal(session.salt, rows[0].salt);
+    }
+    for (const cookie of cookies) {
+      assert.ok(!JSON.stringify(sessions).includes(cookie.split('=')[1]), 'only cookie hashes are persisted');
+    }
   } finally {
     db.close();
   }
+  assert.equal((await request(first.base, 'logout', {}, cookies[1])).status, 200);
+  assert.equal(
+    (await fetch(`${second.base}/account/session`, { headers: { cookie: cookies[1] } }).then((r) => r.json())).username,
+    null,
+    'logout on another instance must invalidate the persisted session',
+  );
   const forbidden = await request(
     first.base,
     'preferences',

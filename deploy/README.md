@@ -50,7 +50,7 @@ an available `vX.Y.Z` tag in `docker-compose.yml`.
 
 SQLite accounts are enabled by default. The Docker-managed `account-data` volume
 stores the database at `/home/node/evakage-accounts/accounts.sqlite`, preserving
-accounts and preferences across container replacement. This path is preserved
+accounts, preferences, and valid login sessions across container replacement. This path is preserved
 for compatibility with existing account volumes. An account is required
 to create rooms; chat, files and joining by code work without one. Text, files
 and device private keys never enter this database.
@@ -123,8 +123,11 @@ docker compose pull
 docker compose up -d
 ```
 
-Updates clear relay content and end login sessions. Accounts and saved settings
-survive in the `account-data` volume.
+Updates clear relay content. Accounts, saved settings, and valid login sessions
+survive in the `account-data` volume. Sessions expire 30 days after sign-in.
+The first update from a version with in-memory sessions requires one sign-in;
+the database migrates automatically, and subsequent updates preserve sessions.
+Use **Account → Sign out of all devices** to revoke every session for an account.
 
 For an account backup, stop the app and copy the SQLite database together with
 any `-wal` and `-shm` files, then start it again. For a live backup, use SQLite's

@@ -90,14 +90,14 @@ func newAccounts(file string, now func() int64) (*accounts, error) {
 	db.SetMaxOpenConns(1)
 	a.db = db
 	fail := func(e error) (*accounts, error) { _ = db.Close(); return nil, e }
-	if _, e = db.Exec(`PRAGMA busy_timeout=1000; PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA trusted_schema=OFF; PRAGMA secure_delete=ON;`); e != nil {
+	if _, e = db.Exec(`PRAGMA busy_timeout=1000; PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA trusted_schema=OFF; PRAGMA secure_delete=ON; PRAGMA foreign_keys=ON;`); e != nil {
 		return fail(e)
 	}
 	var version int
 	if e = db.QueryRow("PRAGMA user_version").Scan(&version); e != nil {
 		return fail(e)
 	}
-	if version != 0 && version != 1 {
+	if version < 0 || version > 2 {
 		return fail(fmt.Errorf("unsupported account database version: %d", version))
 	}
 	if version == 0 {
@@ -112,6 +112,21 @@ func newAccounts(file string, now func() int64) (*accounts, error) {
 		if e != nil {
 			return fail(e)
 		}
+	}
+	if version < 2 {
+		_, e = db.Exec(`BEGIN IMMEDIATE;
+ CREATE TABLE IF NOT EXISTS account_sessions (
+ token_hash TEXT PRIMARY KEY NOT NULL CHECK(length(token_hash)=64 AND token_hash NOT GLOB '*[^0-9a-f]*'),
+ username TEXT NOT NULL REFERENCES accounts(username) ON DELETE CASCADE,
+ salt TEXT NOT NULL CHECK(length(salt)=32 AND salt NOT GLOB '*[^0-9a-f]*'),
+ expires INTEGER NOT NULL CHECK(expires>0)
+ ) STRICT; PRAGMA user_version=2; COMMIT;`)
+		if e != nil {
+			return fail(e)
+		}
+	}
+	if e = a.pruneLocked(); e != nil {
+		return fail(e)
 	}
 	return a, nil
 }
@@ -142,19 +157,42 @@ func (a *accounts) revoke(key string) {
 	}
 	a.revoked = append(a.revoked, key)
 }
-func (a *accounts) pruneLocked() {
+func (a *accounts) pruneLocked() error {
 	now := a.now()
-	for key, s := range a.sessions {
-		row, e := a.get(s.Name)
-		if e != nil || row == nil || s.Expires <= now || row.Salt != s.Salt {
+	if _, e := a.db.Exec(`DELETE FROM account_sessions WHERE expires<=? OR NOT EXISTS
+ (SELECT 1 FROM accounts WHERE accounts.username=account_sessions.username AND accounts.salt=account_sessions.salt)`, now); e != nil {
+		return e
+	}
+	rows, e := a.db.Query(`SELECT token_hash,username,salt,expires FROM account_sessions`)
+	if e != nil {
+		return e
+	}
+	defer rows.Close()
+	sessions := map[string]accountSession{}
+	for rows.Next() {
+		var key string
+		var s accountSession
+		if e = rows.Scan(&key, &s.Name, &s.Salt, &s.Expires); e != nil {
+			return e
+		}
+		sessions[key] = s
+	}
+	if e = rows.Err(); e != nil {
+		return e
+	}
+	// The database is authoritative, including revocations from other instances.
+	for key := range a.sessions {
+		if _, live := sessions[key]; !live {
 			a.revoke(key)
 		}
 	}
+	a.sessions = sessions
 	for key, t := range a.tickets {
 		if t.Expires <= now {
 			delete(a.tickets, key)
 		}
 	}
+	return nil
 }
 func (a *accounts) drainRevocations() []string {
 	a.mu.Lock()
@@ -167,7 +205,11 @@ func (a *accounts) prune() {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	if a.db != nil {
-		a.pruneLocked()
+		if e := a.pruneLocked(); e != nil {
+			for key := range a.sessions {
+				a.revoke(key)
+			}
+		}
 	}
 }
 func (a *accounts) name(key string) string {
@@ -192,7 +234,10 @@ func (a *accounts) consume(token, id string) string {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	if a.db != nil {
-		a.pruneLocked()
+		if e := a.pruneLocked(); e != nil {
+			delete(a.tickets, token)
+			return ""
+		}
 	}
 	t, ok := a.tickets[token]
 	delete(a.tickets, token)
@@ -248,7 +293,10 @@ func (a *accounts) handle(w http.ResponseWriter, r *http.Request, host string, s
 		reply(503, "Accounts are disabled on this server.")
 		return
 	}
-	a.pruneLocked()
+	if e := a.pruneLocked(); e != nil {
+		reply(503, "Could not load account sessions.")
+		return
+	}
 	now := a.now()
 	for ip, v := range a.attempts {
 		if v.Until <= now {
@@ -306,8 +354,27 @@ func (a *accounts) handle(w http.ResponseWriter, r *http.Request, host string, s
 	setCookie := func(t string, age int) {
 		http.SetCookie(w, &http.Cookie{Name: "evakage_account", Value: t, Path: "/account", HttpOnly: true, SameSite: http.SameSiteStrictMode, MaxAge: age, Secure: secure})
 	}
-	if r.Method == "POST" && path == "/account/logout" {
-		a.revoke(key)
+	if r.Method == "POST" && (path == "/account/logout" || path == "/account/logout-all") {
+		all := path == "/account/logout-all"
+		query := "DELETE FROM account_sessions WHERE token_hash=?"
+		args := []any{key}
+		if all {
+			if row == nil {
+				reply(401, "Sign in first.")
+				return
+			}
+			query = "DELETE FROM account_sessions WHERE username=? AND salt=?"
+			args = []any{session.Name, session.Salt}
+		}
+		if _, e := a.db.Exec(query, args...); e != nil {
+			reply(503, "Could not sign out. Please try again.")
+			return
+		}
+		for k, s := range a.sessions {
+			if k == key || all && s.Name == session.Name && s.Salt == session.Salt {
+				a.revoke(k)
+			}
+		}
 		setCookie("", -1)
 		jsonReply(w, 200, object{"username": nil})
 		return
@@ -452,14 +519,47 @@ func (a *accounts) handle(w http.ResponseWriter, r *http.Request, host string, s
 			return
 		}
 	}
-	a.revoke(key)
-	t := token()
-	a.sessions[digest(t)] = accountSession{name, salt, now + 30*86400000}
-	setCookie(t, 30*86400)
 	current, e := a.get(name)
-	if e != nil || current == nil {
+	if e != nil || current == nil || current.Salt != salt {
 		reply(503, "Could not load account.")
 		return
 	}
+	t := token()
+	nextKey := digest(t)
+	next := accountSession{name, salt, now + 30*86400000}
+	tx, e := a.db.Begin()
+	if e != nil {
+		reply(503, "Could not save account session.")
+		return
+	}
+	defer tx.Rollback()
+	if _, e = tx.Exec("DELETE FROM account_sessions WHERE token_hash=?", key); e != nil {
+		reply(503, "Could not save account session.")
+		return
+	}
+	// Persist only the cookie's hash; never store the reusable cookie itself.
+	result, e := tx.Exec(`INSERT INTO account_sessions(token_hash,username,salt,expires)
+ SELECT ?,?,?,? WHERE (SELECT count(*) FROM account_sessions)<4096
+ AND EXISTS (SELECT 1 FROM accounts WHERE username=? AND salt=?)`, nextKey, name, salt, next.Expires, name, salt)
+	if e != nil {
+		reply(503, "Could not save account session.")
+		return
+	}
+	n, e := result.RowsAffected()
+	if e != nil {
+		reply(503, "Could not save account session.")
+		return
+	}
+	if n != 1 {
+		reply(429, "Try again later.")
+		return
+	}
+	if e = tx.Commit(); e != nil {
+		reply(503, "Could not save account session.")
+		return
+	}
+	a.revoke(key)
+	a.sessions[nextKey] = next
+	setCookie(t, 30*86400)
 	jsonReply(w, 200, object{"username": name, "preferences": current.Preferences, "revision": current.Revision})
 }
