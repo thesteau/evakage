@@ -20,6 +20,7 @@ Messages and files are encrypted on the sending device and decrypted on the rece
 | Device identity keys | Browser IndexedDB | Until browser data is cleared |
 | Pairings, trust records, preferences | Browser storage | Until removed or cleared |
 | Optional accounts and saved settings | Account database | Until deleted by the user or operator |
+| Hashed account login tokens | Account database | Until the session expires after 30 days, is signed out, or its account is deleted |
 
 Accounts do not store messages, files, or device private keys.
 

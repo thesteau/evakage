@@ -46,4 +46,12 @@ In **Settings**, choose how to handle incoming files: **Ask for new devices**, *
 
 Hover over **Status** for connection details. Active transfers show speed and estimated time remaining.
 
+## When a direct connection cannot connect
+
+A green dot means the device is online with the server. **Connecting** refers to the direct browser connection. If that connection fails, open the conversation for **Connection help** and **Retry connection**. Messages and files automatically fall back to encrypted server delivery when the relay is available; **Via server** skips waiting for a direct connection.
+
+On macOS, open **System Settings → Privacy & Security → Local Network** and allow the browser you use for Evakage. Fully quit and reopen the browser, then retry. See [Apple’s Local Network instructions](https://support.apple.com/guide/mac-help/mchla4f49138/mac). Evakage cannot read this macOS permission, so a failed connection does not prove it was denied.
+
+Also check **Local network access** in the browser’s site settings if offered. A VPN, firewall, or Wi-Fi device isolation can block direct connections even on the same Wi-Fi. Check both devices. Camera permission is only needed for QR scanning.
+
 Administrators can restrict server access with `AUTH_TOKEN` or `DEVICE_ALLOWLIST`. See the [access settings](/hosting/configuration#server-and-access).

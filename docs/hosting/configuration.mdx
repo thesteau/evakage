@@ -86,7 +86,7 @@ Rooms are exempt from the one-device expiry rule. Self-chat has a 24-hour offlin
 
 | Variable | Docker default | Purpose |
 | --- | --- | --- |
-| `ACCOUNTS_DB` | `/home/node/evakage-accounts/accounts.sqlite` | Persistent accounts and saved settings |
+| `ACCOUNTS_DB` | `/home/node/evakage-accounts/accounts.sqlite` | Persistent accounts, login sessions, and saved settings |
 | `BLOB_DIR` | `/tmp/evakage-blobs` | Temporary encrypted relay buffer |
 
 Keep accounts in their separate named volume. **Do not mount a persistent relay volume.**

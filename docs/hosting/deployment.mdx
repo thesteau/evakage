@@ -78,7 +78,7 @@ The server expires content and cleans up automatically. No cron job is needed. S
 
 ## Accounts
 
-Accounts are enabled by default. The named `account-data` volume holds usernames, password hashes, and saved settings at `/home/node/evakage-accounts/accounts.sqlite`. The Go image keeps this path for compatibility with existing account volumes.
+Accounts are enabled by default. The named `account-data` volume holds usernames, password hashes, saved settings, and hashed login sessions at `/home/node/evakage-accounts/accounts.sqlite`. The Go image keeps this path for compatibility with existing account volumes.
 
 To disable accounts, set `ACCOUNTS_DB=` in `.env`. Chat, files, and joining rooms still work; creating rooms requires an account.
 
@@ -100,7 +100,9 @@ docker compose pull
 docker compose up -d
 ```
 
-Updates clear relay content and end login sessions. Accounts and saved settings survive in the named volume.
+Updates clear relay content. Accounts, saved settings, and valid login sessions survive in the named volume. Sessions keep their original 30-day expiry; updates do not extend it.
+
+The first update from a version with in-memory login sessions requires users to sign in again. The database migrates automatically, and subsequent updates preserve valid sessions. Users can revoke all their sessions with **Account → Sign out of all devices**.
 
 For a simple account backup, stop the app, copy the SQLite database with its `-wal` and `-shm` files, then start it again. Use SQLite's backup API for a live backup.
 

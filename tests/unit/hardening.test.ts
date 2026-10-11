@@ -161,6 +161,32 @@ test('oversized SDP and malformed ICE candidates never reach the other peer', as
   b.close();
 });
 
+test('explicit connection retries pass through signaling only as a boolean', async (t) => {
+  const { wsBase } = await withServer(t);
+  const a = await register(wsBase, 'device_A_12345678', 'A');
+  const b = await register(wsBase, 'device_B_12345678', 'B');
+  t.after(() => { a.close(); b.close(); });
+  let delivered = 0;
+  b.addEventListener('message', (event) => {
+    if (JSON.parse(String(event.data)).type === 'signal') delivered++;
+  });
+  for (const retry of ['true', null, { enabled: true }]) {
+    const refused = waitFor(a, (m) => m.type === 'error' && m.context === 'signal');
+    a.send(JSON.stringify({ type: 'signal', to: 'device_B_12345678', data: { type: 'knock', retry } }));
+    assert.match((await refused).message, /schema/i);
+  }
+  for (const retry of [undefined, false, true]) {
+    const forwarded = waitFor(b, (m) => m.type === 'signal');
+    a.send(JSON.stringify({
+      type: 'signal', to: 'device_B_12345678',
+      data: { type: 'knock', retry, extra: 'smuggled' },
+    }));
+    assert.deepEqual((await forwarded).data, retry === undefined
+      ? { type: 'knock' } : { type: 'knock', retry });
+  }
+  assert.equal(delivered, 3, 'malformed retry requests must not reach the peer');
+});
+
 test('flooding messages trips the rate limiter', async (t) => {
   const { wsBase } = await withServer(t);
   const ws = await register(wsBase, 'device_A_12345678');

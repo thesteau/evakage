@@ -7,6 +7,7 @@ import (
 	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/base64"
 	"encoding/hex"
 	"io"
@@ -224,8 +225,15 @@ func TestUploadExpiresWhileBodyIsStreaming(t *testing.T) {
 
 func TestSQLiteCredentialsRemainCompatible(t *testing.T) {
 	file := filepath.Join(t.TempDir(), "accounts.sqlite")
-	a, e := newAccounts(file, nowMS)
+	db, e := sql.Open("sqlite", file)
 	if e != nil {
+		t.Fatal(e)
+	}
+	// A database written by a release before login sessions were persisted.
+	if _, e = db.Exec(`CREATE TABLE accounts (
+ username TEXT PRIMARY KEY NOT NULL, salt TEXT NOT NULL, hash TEXT NOT NULL,
+ preferences TEXT NOT NULL DEFAULT '{}', revision INTEGER NOT NULL DEFAULT 0
+ ) STRICT; PRAGMA user_version=1;`); e != nil {
 		t.Fatal(e)
 	}
 	salt := "00112233445566778899aabbccddeeff"
@@ -233,24 +241,24 @@ func TestSQLiteCredentialsRemainCompatible(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	if _, e = a.DB().Exec("INSERT INTO accounts(username,salt,hash) VALUES(?,?,?)", "existing_user", salt, hex.EncodeToString(hash)); e != nil {
+	if _, e = db.Exec("INSERT INTO accounts(username,salt,hash,preferences,revision) VALUES(?,?,?, ?,7)", "existing_user", salt, hex.EncodeToString(hash), `{"evakage-theme":"dark"}`); e != nil {
 		t.Fatal(e)
 	}
-	if e = a.Close(); e != nil {
+	if e = db.Close(); e != nil {
 		t.Fatal(e)
 	}
-	a, e = newAccounts(file, nowMS)
+	a, e := newAccounts(file, nowMS)
 	if e != nil {
 		t.Fatal(e)
 	}
 	defer a.Close()
 	row, e := a.Get("existing_user")
-	if e != nil || row == nil || row.Salt != salt || row.Hash != hex.EncodeToString(hash) {
+	if e != nil || row == nil || row.Salt != salt || row.Hash != hex.EncodeToString(hash) || row.Revision != 7 || row.Preferences["evakage-theme"] != "dark" {
 		t.Fatal("existing credentials changed")
 	}
 	var version int
-	if e = a.DB().QueryRow("PRAGMA user_version").Scan(&version); e != nil || version != 1 {
-		t.Fatal("schema changed")
+	if e = a.DB().QueryRow("PRAGMA user_version").Scan(&version); e != nil || version != 2 {
+		t.Fatal("session schema migration failed")
 	}
 }
 

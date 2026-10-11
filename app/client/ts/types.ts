@@ -103,6 +103,8 @@ export interface Link {
   queueTimer: ReturnType<typeof setTimeout> | null;
   reconnectAttempts: number;
   gaveUp: boolean;
+  /** A direct attempt failed; keep help visible while background retries run. */
+  directFailed: boolean;
   trust: { known: boolean; firstSeen: number; previousName: string } | null;
   relayPreferredUntil?: number;
 }

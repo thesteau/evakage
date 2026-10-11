@@ -184,6 +184,13 @@
     </div>
     <p id="sessionFeedback" class="form-feedback session-feedback" role="status"></p>
 
+    <div id="connectionHelp" class="connection-help" role="region" aria-label="Connection help" hidden>
+      <strong>Direct connection unavailable</strong>
+      <p id="connectionHelpText" role="status"></p>
+      <p id="connectionHelpAdvice"></p>
+      <button id="retryConnectionBtn" class="ghost" type="button">Retry connection</button>
+    </div>
+
     <div id="joinRequests" class="join-requests" role="region" aria-label="Join requests" hidden></div>
 
     <div id="timeline" class="timeline" role="log" aria-label="Messages and files" aria-live="polite"></div>
@@ -226,6 +233,10 @@
         <div class="account-action">
           <button id="accountLogout" type="button" class="danger" disabled>Sign out</button>
           <span class="info-tip" tabindex="0" role="img" data-tip="Clears this device’s chats, received files and drafts. Files you saved outside the app stay on your device.">i</span>
+        </div>
+        <div class="account-action">
+          <button id="accountLogoutAll" type="button" class="danger" disabled>Sign out of all devices</button>
+          <span class="info-tip" tabindex="0" role="img" data-tip="Signs out every device, including this one. Connected devices clear their chats, received files and drafts. Keeps your account and saved settings.">i</span>
         </div>
         <details id="accountDeleteDetails" class="account-delete">
           <summary>Delete account</summary>

@@ -61,6 +61,7 @@ export function setupAccounts(callbacks: {
   const password = document.querySelector('#accountPassword') as HTMLInputElement;
   const status = document.querySelector('#accountStatus') as HTMLElement;
   const logout = document.querySelector('#accountLogout') as HTMLButtonElement;
+  const logoutAll = document.querySelector('#accountLogoutAll') as HTMLButtonElement;
   const signedInPanel = document.querySelector('#accountSignedIn') as HTMLElement;
   const accountButton = document.querySelector('#accountBtn') as HTMLButtonElement;
   const deleteForm = document.querySelector('#accountDeleteForm') as HTMLFormElement;
@@ -136,7 +137,7 @@ export function setupAccounts(callbacks: {
     accountButton.title = signedIn ? 'Account' : 'Login';
     if (!signedIn) revision = 0;
     adopt(value);
-    logout.disabled = deleteButton.disabled = busy || !signedIn;
+    logout.disabled = logoutAll.disabled = deleteButton.disabled = busy || !signedIn;
     status.textContent = signedIn ? `Signed in as ${value.username}` : '';
     form.hidden = signedIn;
     signedInPanel.hidden = !signedIn;
@@ -162,7 +163,7 @@ export function setupAccounts(callbacks: {
           {control.disabled = false;}
       }
       busy = false;
-      logout.disabled = deleteButton.disabled = !signedIn;
+      logout.disabled = logoutAll.disabled = deleteButton.disabled = !signedIn;
     }
   };
   document.querySelector('#accountBtn')?.addEventListener('click', () => {
@@ -185,6 +186,12 @@ export function setupAccounts(callbacks: {
   logout.addEventListener('click', () =>
     run(async () => {
       await request('logout', {});
+      callbacks.onSignOut();
+    }),
+  );
+  logoutAll.addEventListener('click', () =>
+    run(async () => {
+      await request('logout-all', {});
       callbacks.onSignOut();
     }),
   );
