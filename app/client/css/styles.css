@@ -224,6 +224,11 @@ button.ghost:hover { background: var(--panel-2); filter: none; }
 .form-feedback.danger { color: var(--danger); }
 .session-feedback { margin: 0; padding: 0 20px 8px; }
 .session-feedback:empty { display: none; }
+.connection-help { margin: 0 20px 12px; padding: 12px; border: 1px solid var(--warn); border-radius: 12px; font-size: .78rem; }
+.connection-help[hidden] { display: none; }
+.connection-help strong { color: var(--warn); }
+.connection-help p { margin: 8px 0; line-height: 1.5; }
+.connection-help button { font-size: inherit; }
 #refreshBtn[aria-busy="true"] svg { animation: refresh-spin 1s linear infinite; }
 @keyframes refresh-spin { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) {

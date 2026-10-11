@@ -93,6 +93,10 @@ type AppElements = {
   '#sessionMembers': HTMLElementTagNameMap['div'];
   '#leaveRoomBtn': HTMLElementTagNameMap['button'];
   '#secureState': HTMLElementTagNameMap['span'];
+  '#connectionHelp': HTMLElementTagNameMap['div'];
+  '#connectionHelpText': HTMLElementTagNameMap['p'];
+  '#connectionHelpAdvice': HTMLElementTagNameMap['p'];
+  '#retryConnectionBtn': HTMLButtonElement;
   '#timeline': HTMLElementTagNameMap['div'];
   '#messageForm': HTMLElementTagNameMap['form'];
   '#messageInput': HTMLElementTagNameMap['textarea'];
@@ -1138,6 +1142,7 @@ function createLink(peerId: string) {
     queueTimer: null,
     reconnectAttempts: 0,
     gaveUp: false,
+    directFailed: false,
     trust: null,
   };
   state.links.set(peerId, link);
@@ -1151,6 +1156,11 @@ function isSecure(link: Link | null | undefined): link is SecureLink {
   return Boolean(
     link?.crypto.key && link.crypto.identityVerified && link.dc?.readyState === 'open',
   );
+}
+
+function directConnectionFailed(link: Link | null | undefined) {
+  return Boolean(link && !isSecure(link) && (link.directFailed || link.gaveUp) &&
+    !link.incompatible && link.status !== 'untrusted');
 }
 
 // Every open conversation decides which pairwise links stay alive. One link can
@@ -1353,8 +1363,14 @@ async function ensureLink(peerId: string, force = false) {
       closePeerConnection(link.pc);
     } catch {}
   }
-  link.pc = new RTCPeerConnection({ iceServers: state.config.iceServers || [] });
+  link.pc = null;
   link.peerConnectedAt = state.peers.get(peerId)?.connectedAt;
+  try {
+    link.pc = new RTCPeerConnection({ iceServers: state.config.iceServers || [] });
+  } catch {
+    scheduleReconnect(peerId);
+    return;
+  }
   link.status = 'connecting';
   link.candidateQueue = [];
   resetCrypto(link);
@@ -1367,9 +1383,9 @@ async function ensureLink(peerId: string, force = false) {
   const initiator = state.self.id.localeCompare(peerId) < 0;
   if (initiator) {
     const pc = link.pc;
-    const dc = pc.createDataChannel('evakage-v1', { ordered: true });
-    setupDataChannel(link, dc);
     try {
+      const dc = pc.createDataChannel('evakage-v1', { ordered: true });
+      setupDataChannel(link, dc);
       const offer = await transportTask(pc, pc.createOffer());
       if (link.pc !== pc) return;
       await transportTask(pc, pc.setLocalDescription(offer));
@@ -1379,7 +1395,8 @@ async function ensureLink(peerId: string, force = false) {
       if (link.pc === pc) scheduleReconnect(peerId);
     }
   } else {
-    signal(peerId, { type: 'knock' });
+    // An explicit retry must also wake an offering peer whose budget expired.
+    signal(peerId, force ? { type: 'knock', retry: true } : { type: 'knock' });
   }
 }
 
@@ -1389,6 +1406,8 @@ async function ensureLink(peerId: string, force = false) {
 function scheduleReconnect(peerId: string) {
   const link = state.links.get(peerId);
   if (!link || link.reconnectTimer || link.incompatible || link.gaveUp) return;
+  link.directFailed = true;
+  link.status = 'failed';
   if (link.reconnectAttempts >= CAPS.reconnectAttempts) {
     link.gaveUp = true;
     link.status = 'unreachable';
@@ -1403,6 +1422,9 @@ function scheduleReconnect(peerId: string) {
     link.reconnectTimer = null;
     if (state.peers.has(peerId) && neededPeerIds().has(peerId)) ensureLink(peerId);
   }, delay);
+  renderPeers();
+  renderRooms();
+  renderSession();
 }
 
 function retryLink(peerId: string) {
@@ -1411,6 +1433,7 @@ function retryLink(peerId: string) {
   link.reconnectTimer = null;
   link.reconnectAttempts = 0;
   link.gaveUp = false;
+  link.directFailed = false;
   link.incompatible = false;
   ensureLink(peerId, true);
 }
@@ -1463,6 +1486,7 @@ async function handleSignal(peerId: string, data: any, connectedAt?: number) {
       known.peerConnectedAt = connectedAt;
       known.reconnectAttempts = 0;
       known.gaveUp = false;
+      known.directFailed = false;
       known.incompatible = false;
       resetCrypto(known);
       try {
@@ -1475,7 +1499,9 @@ async function handleSignal(peerId: string, data: any, connectedAt?: number) {
   }
   if (known?.incompatible) return;
   if (data.type === 'knock') {
-    await ensureLink(peerId);
+    if (data.retry === true && state.self && state.self.id.localeCompare(peerId) < 0)
+      {retryLink(peerId);}
+    else await ensureLink(peerId);
     return;
   }
 
@@ -1496,8 +1522,14 @@ async function handleSignal(peerId: string, data: any, connectedAt?: number) {
   }
   if (!link.pc || link.pc.connectionState === 'closed') {
     link.dc = null;
-    link.pc = new RTCPeerConnection({ iceServers: state.config.iceServers || [] });
+    link.pc = null;
     link.peerConnectedAt = connectedAt ?? state.peers.get(peerId)?.connectedAt;
+    try {
+      link.pc = new RTCPeerConnection({ iceServers: state.config.iceServers || [] });
+    } catch {
+      scheduleReconnect(peerId);
+      return;
+    }
     link.status = 'connecting';
     link.candidateQueue = [];
     resetCrypto(link);
@@ -1861,6 +1893,9 @@ async function handleCryptoProof(link: Link, message: any) {
   link.crypto.identityVerified = true;
   link.reconnectAttempts = 0;
   link.gaveUp = false;
+  link.directFailed = false;
+  clearTimeout(link.reconnectTimer ?? undefined);
+  link.reconnectTimer = null;
   clearTimeout(link.negotiationTimer ?? undefined);
   const previous = deviceTrust(link.peerId);
   link.trust = {
@@ -3815,14 +3850,18 @@ function renderPeersNow() {
       ? 'Your browser'
       : deviceTrust(peer.id)?.blocked
         ? 'Blocked'
-        : peer.relayOnly ? 'Online · via server' : formatStatus(link?.status || 'idle');
-    if (link?.gaveUp || link?.incompatible) statusTd.classList.add('danger');
+        : peer.relayOnly || (relayEnabled() && directConnectionFailed(link))
+          ? 'Online · via server' : formatStatus(link?.status || 'idle');
+    if (link?.incompatible || (link?.gaveUp && !relayEnabled())) statusTd.classList.add('danger');
     if (link?.protocol) statusTd.title = `Evakage protocol v${link.protocol}`;
+    if (directConnectionFailed(link)) {
+      statusTd.title = 'Direct connection unavailable. Open the conversation for connection help and to retry.';
+    }
 
     // The candidate path answers "is this actually peer-to-peer, or going
     // through TURN?" — worth keeping for a slow transfer, but not worth a
     // column of its own. It hangs off Status instead.
-    if (link?.path) {
+    if (link?.path && isSecure(link)) {
       const rtt = link.rttMs != null ? ` · ${Math.round(link.rttMs)} ms` : '';
       statusTd.title =
         link.path === 'relay'
@@ -4481,6 +4520,7 @@ function transferEstimate(file: FileRecord) {
 function renderSessionNow() {
   const conv = activeConversation();
   if (!conv) return;
+  renderConnectionHelp(conv);
 
   // Follow new entries only while reading the latest. Keep an older entry in
   // place when transfers update or recovered history is inserted above it.
@@ -4587,6 +4627,12 @@ function renderSessionNow() {
       secureState.title = 'This device exchanges signed, encrypted messages and files through the server relay.';
       secureState.classList.add('ready');
       secureState.classList.remove('unverified');
+    } else if (directConnectionFailed(link)) {
+      secureState.textContent = relayEnabled() && state.ws?.readyState === WebSocket.OPEN
+        ? 'Via server · direct connection unavailable'
+        : link?.gaveUp ? 'Direct connection unavailable' : 'Retrying direct connection…';
+      secureState.title = 'See connection help above. You can retry after checking browser and network permissions.';
+      secureState.classList.remove('ready', 'unverified');
     } else {
       secureState.textContent =
         link?.dc?.readyState === 'open' ? 'Verifying device identity…' : 'Connecting…';
@@ -4642,6 +4688,36 @@ function renderSessionNow() {
     }
   }
 }
+
+function renderConnectionHelp(conv: Conversation) {
+  const failed = onlineMembers(conv).filter((id) =>
+    deviceAllowed(id) && !deviceTrust(id)?.blocked && directConnectionFailed(state.links.get(id)),
+  );
+  const help = $('#connectionHelp');
+  help.hidden = !failed.length;
+  if (!failed.length) return;
+  const viaServer = relayEnabled() && state.ws?.readyState === WebSocket.OPEN;
+  $('#connectionHelpText').textContent = viaServer
+    ? 'Messages and files can still be sent encrypted through the server. A browser permission or network setting may be blocking the direct connection.'
+    : relayEnabled()
+      ? 'Check browser and network permissions on both devices, then retry. Reconnect to the server to use encrypted server delivery.'
+      : 'Check browser and network permissions on both devices, then retry. A direct connection is needed to send messages and files because server delivery is unavailable.';
+  const mac = detectPlatform() === 'macOS' || failed.some((id) => getPeer(id).platform === 'macOS');
+  $('#connectionHelpAdvice').textContent = mac
+    ? 'On the Mac, open System Settings → Privacy & Security → Local Network and allow the browser used for Evakage. Quit and reopen that browser, then retry. Also check Local network access in the browser’s site settings if available.'
+    : 'Allow Local network access in the browser’s site settings if available. A VPN, firewall, or Wi-Fi device isolation may also block direct connections. Check both devices.';
+}
+
+$('#retryConnectionBtn').addEventListener('click', () => {
+  const conv = activeConversation();
+  if (!conv) return;
+  for (const id of onlineMembers(conv)) {
+    if (deviceAllowed(id) && !deviceTrust(id)?.blocked && directConnectionFailed(state.links.get(id)))
+      {retryLink(id);}
+  }
+  renderPeers();
+  renderSession();
+});
 
 function renderMembers(conv: Conversation) {
   sessionMembers.textContent = '';
