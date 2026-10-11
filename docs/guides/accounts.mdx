@@ -34,16 +34,18 @@ Messages, files, private keys, pairings, trust records, and advertising consent 
 
 **Sign out** clears that browser's chats, received files, and drafts. It disconnects the browser from its peers and rooms. Signing back in does not restore account-chat history from other devices.
 
+**Sign out of all devices** signs out every session for your account, including the current browser. Connected devices clear their chats, received files, and drafts. Your account and saved settings remain available when you sign in again. Offline devices must sign in again when they reconnect.
+
 To delete an account, open **Account → Delete account** and confirm your password. This removes saved preferences and signs out connected devices.
 
 Files saved outside Evakage and other people's copies remain.
 
 ## For server operators
 
-Docker enables accounts by default and keeps the database in the `account-data` volume. Accounts and saved settings survive container replacement; login sessions do not.
+Docker enables accounts by default and keeps the database in the `account-data` volume. Accounts, saved settings, and valid login sessions survive container replacement. Sessions expire 30 days after sign-in or when revoked by sign-out or account deletion.
 
 To enable accounts when running from source, set `ACCOUNTS_DB=./data/accounts.sqlite` in your shell before running `npm run dev` from `app/`. The [development guide](/development#run-locally) includes commands for Bash and PowerShell. Set `ACCOUNTS_DB=` to disable accounts.
 
-The database contains usernames, salted password hashes, and selected settings. It contains no chat, files, or device private keys.
+The database contains usernames, salted password hashes, hashed login tokens with their expiry times, and selected settings. It contains no chat, files, or device private keys.
 
 Behind an HTTPS reverse proxy, set `TRUST_PROXY=1` and preserve the public host header. Follow the instructions for [proxy configuration](/hosting/configuration#https-reverse-proxies) and [account backups](/hosting/deployment#updates-and-backups).

@@ -86,6 +86,62 @@ test('account deletion confirms the password and clears chats on all signed-in d
   }
 });
 
+test('sign out of all devices clears connected browsers and keeps the account available', async ({ browser }) => {
+  const cleanup = [] as (() => Promise<void>)[];
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'evakage-browser-logout-all-'));
+  const { base } = await startServer(
+    { after: (fn) => cleanup.push(fn) },
+    { accountsDb: path.join(dir, 'accounts.sqlite') },
+  );
+  const contexts = [await browser.newContext(), await browser.newContext()];
+  const errors = [] as string[];
+  try {
+    const pages = await Promise.all(contexts.map((context) => context.newPage()));
+    const [first, second] = pages;
+    for (const [index, page] of pages.entries()) {
+      page.on('pageerror', (error) => errors.push(error.message));
+      await page.goto(base);
+      await expect(page.locator('#selfCode')).not.toHaveText('----');
+      await openAccount(page);
+      await page.locator('#accountUsername').fill('logout_all_owner');
+      await page.locator('#accountPassword').fill('correct horse battery staple');
+      await page.getByRole('button', { name: index === 0 ? 'Create account' : 'Sign in', exact: true }).click();
+      await expect(page.locator('#accountStatus')).toContainText('Signed in as logout_all_owner');
+      await page.locator('#accountDialog').getByRole('button', { name: 'Close' }).click();
+    }
+    for (const [page, other] of [[first, second], [second, first]]) {
+      const name = (await other.locator('#selfCode').getAttribute('data-device-name')) || '';
+      const row = page.locator('#peerRows tr').filter({ hasText: listedName(name) });
+      await expect(row).toContainText('This is yours');
+      await row.getByRole('button', { name: /^Open conversation with/ }).click();
+      await expect(page.locator('#secureState')).toContainText('Encrypted');
+    }
+    await chat(first, second, 'Clear this chat on every device');
+    await second.locator('#messageInput').fill('unsent private draft');
+    await openAccount(first);
+    await Promise.all([
+      first.waitForEvent('load'), second.waitForEvent('load'),
+      first.getByRole('button', { name: 'Sign out of all devices', exact: true }).click(),
+    ]);
+    for (const page of pages) {
+      await expect(page.locator('#selfCode')).not.toHaveText('----');
+      await expect(page.locator('#timeline')).toBeEmpty();
+      await expect(page.locator('#messageInput')).toHaveValue('');
+      await openAccount(page);
+      await expect(page.locator('#accountForm')).toBeVisible();
+    }
+    await first.locator('#accountUsername').fill('logout_all_owner');
+    await first.locator('#accountPassword').fill('correct horse battery staple');
+    await first.getByRole('button', { name: 'Sign in', exact: true }).click();
+    await expect(first.locator('#accountStatus')).toContainText('Signed in as logout_all_owner');
+    expect(errors).toEqual([]);
+  } finally {
+    for (const context of contexts) await context.close();
+    for (const fn of cleanup) await fn();
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+});
+
 peerTest(
   'hide and show control the list; blocked devices remain available for history and management',
   async ({ devices }) => {

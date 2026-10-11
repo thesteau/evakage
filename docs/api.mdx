@@ -161,9 +161,9 @@ await client.sendText(`room:${room.id}`, 'Hello room');
 await client.sendFile(`room:${room.id}`, './report.pdf');
 ```
 
-`joinRoom(code)` joins by invitation. Private rooms return `{ pending: true, id, name }` while the owner approves; listen for the `room` event for admission. Owners can call `approveRoom(roomId, deviceId, approve)` and `setRoomAccess(roomId, access)`. `leaveRoom(roomId)` leaves, and `logout()` revokes the account session. `rooms()` returns the latest room views. The CLI `chat` also accepts `login`, `create-room`, `join-room` and `leave-room` JSON commands with the corresponding fields.
+`joinRoom(code)` joins by invitation. Private rooms return `{ pending: true, id, name }` while the owner approves; listen for the `room` event for admission. Owners can call `approveRoom(roomId, deviceId, approve)` and `setRoomAccess(roomId, access)`. `leaveRoom(roomId)` leaves, `logout()` revokes the current account session, and `logoutAll()` revokes every session for that account, including the caller. `rooms()` returns the latest room views. The CLI `chat` also accepts `login`, `create-room`, `join-room` and `leave-room` JSON commands with the corresponding fields.
 
-Account credentials and cookies stay in process memory. After an account session expires or the server restarts, sign in again. Reconnecting can restore room seats while they still exist, but rooms are temporary and do not survive a server restart.
+The SDK keeps account credentials and cookies in client process memory. Server restarts preserve valid account sessions in the account database, so a running client can reconnect without signing in again. After a session expires or is revoked, or the client process restarts, sign in again. Reconnecting can restore room seats while they still exist, but rooms are temporary and do not survive a server restart.
 
 ## HTTP and WebSocket contract
 
@@ -178,6 +178,7 @@ Account credentials and cookies stay in process memory. After an account session
 | `/account/connect` | POST | One-use, device-bound socket ticket from `{ deviceId }` |
 | `/account/preferences` | PUT | Save JSON `{ preferences, revision }`; stale revisions return 409 |
 | `/account/logout` | POST | Revoke the current account session; JSON body `{}` |
+| `/account/logout-all` | POST | Revoke all sessions for the signed-in account, including the caller; JSON body `{}` |
 | `/account/delete` | DELETE | Delete the account with JSON `{ password }` |
 | `/blob/ID?token=CAPABILITY&offset=N` | PUT | Upload ciphertext at an exact byte offset |
 | `/blob/ID?token=CAPABILITY` | GET | Download ciphertext from the beginning |

@@ -1,5 +1,5 @@
 // Package server implements Evakage's device protocol. Content stays encrypted;
-// only account credentials and preferences are durable.
+// only account credentials, login sessions and preferences are durable.
 package server
 
 import (

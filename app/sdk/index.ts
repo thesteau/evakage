@@ -291,6 +291,7 @@ export class EvakageClient extends EventEmitter<ClientEvents> {
     await this.wait(m => m.type === 'account-peers' && m.signedIn === true, 'account-connect', () => this.send({ type: 'account-connect', token: reply.token }));
   }
   async logout() { await this.json('/account/logout', {}); }
+  async logoutAll() { await this.json('/account/logout-all', {}); }
   private roomAction(frame: Wire, match: (m: Wire) => boolean) {
     const run = this.roomsQueue.catch(() => {}).then(() => this.wait(match, frame.type, () => this.send(frame)));
     this.roomsQueue = run;
