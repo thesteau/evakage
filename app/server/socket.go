@@ -480,6 +480,10 @@ func (s *Server) readMessage(ws *socket, typ websocket.MessageType, data []byte)
 		d := obj(m["data"])
 		data := object{"type": d["type"]}
 		switch str(d["type"]) {
+		case "knock":
+			if retry, present := d["retry"]; present {
+				data["retry"] = retry
+			}
 		case "ice":
 			data["candidate"] = d["candidate"]
 		case "offer", "answer":

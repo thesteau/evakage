@@ -25,7 +25,8 @@ func validSignal(v any) bool {
 	}
 	switch str(d["type"]) {
 	case "knock":
-		return true
+		retry, present := d["retry"]
+		return !present || boolean(retry)
 	case "offer", "answer":
 		s := obj(d["sdp"])
 		return s != nil && s["type"] == d["type"] && required(s["sdp"], 96<<10) && len(str(s["sdp"])) <= 96<<10
