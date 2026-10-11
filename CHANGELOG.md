@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.1.1](https://github.com/thesteau/evakage/compare/v1.1.0...v1.1.1) (2026-10-11)
+
+
+### Bug Fixes
+
+* connection issues on macos devices ([5b49ab8](https://github.com/thesteau/evakage/commit/5b49ab860267ab74191aaf8b888a1bbbe940ed99))
+* connection issues on macos devices ([5cea57c](https://github.com/thesteau/evakage/commit/5cea57cc54189c65847db73b62d55b4e31cca5f5))
+* logout kickout issue and add sign out of all sessions ([b531c02](https://github.com/thesteau/evakage/commit/b531c02c64f92b11222ffea5d70c1a607ed91538))
+* logout kickout issue and add sign out of all sessions ([d2bde92](https://github.com/thesteau/evakage/commit/d2bde9204a1128b78a9e584d2d15f0d1146e8a34))
+
 ## [1.1.0](https://github.com/thesteau/evakage/compare/v1.0.2...v1.1.0) (2026-10-09)
 
 
