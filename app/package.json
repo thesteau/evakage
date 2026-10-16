@@ -33,8 +33,8 @@
     "node": ">=22.13.0"
   },
   "devDependencies": {
-    "@playwright/test": "^1.63.0",
-    "@types/node": "^26.6.4",
+    "@playwright/test": "^1.64.0",
+    "@types/node": "^26.6.5",
     "@types/ws": "^8.18.2",
     "@typescript/native": "npm:typescript@^7.0.2",
     "eslint": "^10.12.0",
@@ -43,7 +43,7 @@
     "qrcode-generator": "2.0.4",
     "release-please": "17.11.2",
     "typescript": "npm:@typescript/typescript6@^6.0.2",
-    "typescript-eslint": "^8.71.1"
+    "typescript-eslint": "^8.71.2"
   },
   "dependencies": {
     "ws": "^8.22.0"
