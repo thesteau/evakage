@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.1.2](https://github.com/thesteau/evakage/compare/v1.1.1...v1.1.2) (2026-11-06)
+
+
+### Bug Fixes
+
+* resolve security issue ([7e966b9](https://github.com/thesteau/evakage/commit/7e966b9fe7f84897c09e6a39d73e636cb3782100))
+* resolve security issue ([2733e12](https://github.com/thesteau/evakage/commit/2733e1288565f8f4a0a4b5fb491c5b5a88b3be27))
+
 ## [1.1.1](https://github.com/thesteau/evakage/compare/v1.1.0...v1.1.1) (2026-10-11)
 
 
