@@ -33,20 +33,20 @@
     "node": ">=22.13.0"
   },
   "devDependencies": {
-    "@playwright/test": "^1.65.0",
+    "@playwright/test": "^1.65.1",
     "@types/node": "^26.6.6",
     "@types/ws": "^8.18.2",
     "@typescript/native": "npm:typescript@^7.0.2",
-    "eslint": "^10.14.0",
+    "eslint": "^10.15.0",
     "globals": "^17.14.0",
     "jsqr": "1.4.0",
     "qrcode-generator": "2.0.4",
     "release-please": "17.11.2",
     "typescript": "npm:@typescript/typescript6@^6.0.2",
-    "typescript-eslint": "^8.72.2"
+    "typescript-eslint": "^8.73.0"
   },
   "dependencies": {
-    "ws": "^8.22.2"
+    "ws": "^8.23.0"
   },
   "overrides": {
     "minimatch": "^11.0.1"
